@@ -840,11 +840,11 @@ impl ConfigModalState {
                 // Rounded Capsule Badges footer
                 lines.push(Line::from(""));
                 let mut dd_foot = Vec::new();
-                dd_foot.extend(key_pill("a", Color::Yellow));
+                dd_foot.extend(key_pill("A", Color::Yellow));
                 dd_foot.push(Span::raw(format!(" {}  ", lang.t(I18nKey::ConfigDropdownActionAdd))));
-                dd_foot.extend(key_pill("e", Color::Yellow));
+                dd_foot.extend(key_pill("E", Color::Yellow));
                 dd_foot.push(Span::raw(format!(" {}  ", lang.t(I18nKey::ConfigDropdownActionEdit))));
-                dd_foot.extend(key_pill("d", Color::Red));
+                dd_foot.extend(key_pill("D", Color::Red));
                 dd_foot.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigDropdownActionDelete))));
                 lines.push(Line::from(dd_foot));
             }

@@ -136,25 +136,18 @@ impl HelpModal {
         left_lines.push(Line::from(l_n));
         left_lines.push(Line::from(""));
 
-        // 9. Alt S (Scan VPS)
-        let mut l_s = key_pill("Alt", Color::Yellow);
-        l_s.push(Span::raw(" "));
-        l_s.extend(key_pill("S", Color::Yellow));
-        left_lines.push(Line::from(l_s));
-        left_lines.push(Line::from(""));
-
-        // 10. F1
+        // 9. F1
         left_lines.push(Line::from(key_pill("F1", Color::Cyan)));
         left_lines.push(Line::from(""));
 
-        // 11. Ctrl Q
+        // 10. Ctrl Q
         let mut l6 = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Red);
         l6.push(Span::raw(" "));
         l6.extend(key_pill("Q", Color::Red));
         left_lines.push(Line::from(l6));
         left_lines.push(Line::from(""));
 
-        // 12. Échap
+        // 11. Échap
         left_lines.push(Line::from(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Cyan)));
 
         let left_area = Rect::new(
@@ -183,8 +176,6 @@ impl HelpModal {
             Line::from(Span::styled(lang.t(I18nKey::HelpDescSessionModal), desc_style)),
             Line::from(""),
             Line::from(Span::styled(lang.t(I18nKey::HelpDescNewSession), desc_style)),
-            Line::from(""),
-            Line::from(Span::styled(lang.t(I18nKey::HelpDescScanHost), desc_style)),
             Line::from(""),
             Line::from(Span::styled(lang.t(I18nKey::HelpDescToggleHelp), desc_style)),
             Line::from(""),

@@ -259,10 +259,10 @@ impl SessionModalState {
             footer_spans.extend(key_pill("↵", Color::Cyan));
             footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionLoad)), Style::default().fg(Color::White)));
 
-            footer_spans.extend(key_pill("n", Color::Green));
+            footer_spans.extend(key_pill("N", Color::Green));
             footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionNew)), Style::default().fg(Color::White)));
 
-            footer_spans.extend(key_pill("d", Color::Red));
+            footer_spans.extend(key_pill("D", Color::Red));
             footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionDelete)), Style::default().fg(Color::White)));
 
             footer_spans.extend(key_pill("Esc", Color::DarkGray));
