@@ -376,14 +376,12 @@ fn test_clean_multiline_command() {
 
     let script_cmd = "#!/usr/bin/env bash\nwhile IFS= read -r line; do\n  echo \"$line\"\ndone";
     let cleaned_script = clean_multiline_command(script_cmd);
-    assert!(cleaned_script.starts_with("bash -c '"));
     assert!(cleaned_script.contains("while IFS="));
 
     let heredoc_cmd = "cat > ~/audit_systeme.md << 'EOF'\n# Audit Système - CachyOS\n\n## Informations Clés\n- **Version** : 7.1.8-1-cachyos\nEOF\ncat ~/audit_systeme.md";
     let cleaned_heredoc = clean_multiline_command(heredoc_cmd);
-    assert!(cleaned_heredoc.starts_with("bash -c '"));
     assert!(cleaned_heredoc.contains("# Audit Système - CachyOS"), "Markdown headings starting with # must not be stripped in heredocs");
-    assert!(cleaned_heredoc.contains("<< '\\''EOF'\\''") || cleaned_heredoc.contains("<< 'EOF'"));
+    assert!(cleaned_heredoc.contains("<< 'EOF'"));
     assert!(!cleaned_heredoc.contains("&& #"), "Heredoc body lines must not be joined with &&");
 }
 

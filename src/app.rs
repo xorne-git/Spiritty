@@ -1754,9 +1754,7 @@ pub fn clean_multiline_command(command: &str) -> String {
             .lines()
             .filter(|l| !l.trim().starts_with("#!"))
             .collect();
-        let script_body = script_lines.join("\n");
-        let escaped = script_body.replace('\'', "'\\''");
-        return format!("bash -c '{}'", escaped);
+        return script_lines.join("\n");
     }
 
     let raw_lines: Vec<&str> = trimmed
@@ -1790,9 +1788,7 @@ pub fn clean_multiline_command(command: &str) -> String {
             .into_iter()
             .filter(|l| !l.starts_with("#!"))
             .collect();
-        let script_body = script_lines.join("\n");
-        let escaped = script_body.replace('\'', "'\\''");
-        return format!("bash -c '{}'", escaped);
+        return script_lines.join("\n");
     }
 
     let lines: Vec<&str> = raw_lines
