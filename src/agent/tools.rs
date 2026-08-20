@@ -98,14 +98,9 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
             } else {
                 code_start.trim()
             };
-            let valid_lines: Vec<&str> = raw_block
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| is_executable_shell_line(l))
-                .collect();
 
-            if !valid_lines.is_empty() {
-                return Some(ToolInvocation::RunCommand(valid_lines.join("\n")));
+            if !raw_block.is_empty() {
+                return Some(ToolInvocation::RunCommand(raw_block.to_string()));
             }
         }
     }
