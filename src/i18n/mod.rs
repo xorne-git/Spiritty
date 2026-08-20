@@ -141,6 +141,15 @@ pub enum I18nKey {
     ChatWelcomeTitle,
     ChatWelcomeSubtitle,
 
+    // SSH & Host Management
+    SshDetected,
+    SshProfileLoaded,
+    SshScanPrompt,
+    SshScanSuccess,
+    SshScanFailed,
+    SshLocalRestored,
+    HelpDescScanHost,
+
     // Agent System Prompts
     AgentLanguageInstruction,
 }

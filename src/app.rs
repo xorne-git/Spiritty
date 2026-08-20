@@ -12,7 +12,7 @@ use crate::{
     event::AppEvent,
     pty::PtyProcess,
     session::{Session, SessionStorage},
-    system::SystemContext,
+    system::{ActiveSession, HostsStore, SystemContext},
     ui::components::{ConfigModalState, SessionModalAction, SessionModalState},
 };
 
@@ -104,6 +104,10 @@ pub struct App {
     pub clipboard_toast: Option<(std::time::Instant, usize)>,
     pub copied_current_selection: bool,
     pub current_session: Session,
+    pub hosts_store: HostsStore,
+    pub toast_message: Option<(std::time::Instant, String)>,
+    pub is_probing_host: bool,
+    pub probe_buffer: String,
 }
 
 impl App {
@@ -169,6 +173,10 @@ impl App {
             clipboard_toast: None,
             copied_current_selection: false,
             current_session,
+            hosts_store: HostsStore::load(),
+            toast_message: None,
+            is_probing_host: false,
+            probe_buffer: String::new(),
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -537,6 +545,12 @@ impl App {
             return;
         }
 
+        // Alt+S triggers remote host probe/scan when in SSH session
+        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+            self.trigger_host_scan();
+            return;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
             self.modal = match self.modal {
                 ModalState::Config(_) => ModalState::None,
@@ -676,6 +690,12 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
+
+        // Periodically poll active foreground session (every ~360ms)
+        if self.spinner_frame.is_multiple_of(4) {
+            self.poll_active_session();
+        }
+
         if let Some(ref mut capture) = self.active_pty_tool {
             if capture.start_time.elapsed() > std::time::Duration::from_secs(30) {
                 if let Some(tx) = capture.result_tx.take() {
@@ -684,6 +704,57 @@ impl App {
                 self.active_pty_tool = None;
             }
         }
+    }
+
+    pub fn poll_active_session(&mut self) {
+        if let Some(child_pid) = self.pty.child_pid() {
+            let new_session = crate::system::detect_active_session(child_pid);
+            if new_session != self.system_context.active_session {
+                self.on_active_session_changed(new_session);
+            }
+        }
+    }
+
+    pub fn on_active_session_changed(&mut self, new_session: ActiveSession) {
+        match &new_session {
+            ActiveSession::Ssh { target, .. } => {
+                if let Some(profile) = self.hosts_store.get(target) {
+                    self.system_context.active_remote_profile = Some(profile.clone());
+                    self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
+                } else {
+                    self.system_context.active_remote_profile = None;
+                    self.set_toast(format!("🌐 SSH: {} — [Alt+S] pour scanner l'hôte", target));
+                }
+            }
+            ActiveSession::Container { runtime, container_id } => {
+                self.system_context.active_remote_profile = None;
+                self.set_toast(format!("📦 {}: {}", runtime, container_id));
+            }
+            ActiveSession::Local { .. } => {
+                let was_ssh = self.system_context.active_session.is_ssh();
+                self.system_context.active_remote_profile = None;
+                if was_ssh {
+                    self.set_toast("🖥️ Retour à l'environnement local".to_string());
+                }
+            }
+        }
+        self.system_context.active_session = new_session;
+    }
+
+    pub fn trigger_host_scan(&mut self) {
+        if !self.system_context.active_session.is_ssh() {
+            self.set_toast("ℹ️ Le scan est réservé aux sessions SSH distantes".to_string());
+            return;
+        }
+        self.is_probing_host = true;
+        self.probe_buffer.clear();
+        let probe_cmd = HostsStore::generate_probe_command();
+        let _ = self.pty.write_all(format!("{}\n", probe_cmd).as_bytes());
+        self.set_toast("🌐 Scan de l'environnement distant en cours...".to_string());
+    }
+
+    pub fn set_toast(&mut self, msg: String) {
+        self.toast_message = Some((std::time::Instant::now(), msg));
     }
 
     pub fn all_command_proposals(&self) -> Vec<String> {
@@ -734,6 +805,7 @@ impl App {
                 let event_tx = self.event_tx.clone();
                 let mut agent = self.agent.clone();
                 let mut conversation = self.messages.clone();
+                let sys_ctx = self.system_context.clone();
 
                 tokio::spawn(async move {
                     if let Ok(tool_output) = result_rx.await {
@@ -756,7 +828,7 @@ impl App {
                             content: String::new(),
                             command_proposal: None,
                         });
-                        let _ = agent.send_prompt(conversation, event_tx);
+                        let _ = agent.send_prompt(conversation, &sys_ctx, event_tx);
                     }
                 });
 
@@ -892,8 +964,8 @@ impl App {
                     self.generation_start_time = Some(std::time::Instant::now());
                     self.current_turn_tokens = 0;
 
-                    // Trigger LLM streaming
-                    let _ = self.agent.send_prompt(self.messages.clone(), self.event_tx.clone());
+                    // Trigger LLM streaming with live system context
+                    let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
                 }
             }
 
@@ -1149,6 +1221,30 @@ impl App {
     }
 
     pub fn on_pty_output(&mut self, bytes: &[u8]) {
+        // 1. Capture remote host probe output if active
+        if self.is_probing_host {
+            self.probe_buffer.push_str(&String::from_utf8_lossy(bytes));
+            if self.probe_buffer.contains("SPIRITTY_PROBE_END") {
+                self.is_probing_host = false;
+                let target = self
+                    .system_context
+                    .active_session
+                    .ssh_target()
+                    .unwrap_or("remote-host")
+                    .to_string();
+
+                if let Some(profile) = HostsStore::parse_probe_output(&target, &self.probe_buffer) {
+                    let distro_name = profile.distro.clone();
+                    let _ = self.hosts_store.upsert(profile.clone());
+                    self.system_context.active_remote_profile = Some(profile);
+                    self.set_toast(format!("🌐 {} — Profil {} enregistré", target, distro_name));
+                } else {
+                    self.set_toast("⚠️ Échec de l'analyse du serveur distant".to_string());
+                }
+                self.probe_buffer.clear();
+            }
+        }
+
         if let Some(ref mut capture) = self.active_pty_tool {
             capture.output_bytes.extend_from_slice(bytes);
 

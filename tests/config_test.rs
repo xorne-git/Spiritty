@@ -71,6 +71,8 @@ fn test_custom_system_prompt() {
         terminal_emulator: "Ghostty v1.3.1".to_string(),
         package_managers: vec!["pacman".to_string()],
         desktop_env: Some("niri".to_string()),
+        active_session: spiritty::system::ActiveSession::Local { foreground_process: None },
+        active_remote_profile: None,
     };
 
     let mut config = Config::default();

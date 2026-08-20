@@ -127,6 +127,10 @@ impl PtyProcess {
         self.shell.rsplit('/').next().unwrap_or(&self.shell)
     }
 
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
     pub fn screen(&self) -> &VtScreen {
         &self.screen
     }

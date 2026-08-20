@@ -288,7 +288,23 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
         }
     }
 
+    if let Some((time, ref msg)) = app.toast_message {
+        if time.elapsed().as_millis() < 4000 {
+            left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            left_spans.push(Span::styled(msg.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        }
+    }
+
     let mut right_spans: Vec<Span<'static>> = Vec::new();
+
+    // If SSH session is active, show Alt+S Scan shortcut in footer
+    if app.system_context.active_session.is_ssh() {
+        right_spans.extend(key_pill("Alt", Color::Yellow));
+        right_spans.push(Span::raw(" "));
+        right_spans.extend(key_pill("S", Color::Yellow));
+        right_spans.push(Span::styled(" Scan VPS ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        right_spans.push(Span::raw(" "));
+    }
 
     // Auto-Approve badge with F3 shortcut
     use crate::config::AutoApproveLevel;

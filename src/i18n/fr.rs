@@ -79,6 +79,15 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::ChatWelcomeTitle => "Bienvenue sur Spiritty !",
         I18nKey::ChatWelcomeSubtitle => "Posez vos questions système ou demandez de l'aide sur votre terminal.",
 
+        // SSH & Host Management
+        I18nKey::SshDetected => "Session SSH détectée vers",
+        I18nKey::SshProfileLoaded => "Profil serveur chargé",
+        I18nKey::SshScanPrompt => "Appuyez sur [Alt + S] pour scanner l'environnement de ce serveur.",
+        I18nKey::SshScanSuccess => "Environnement serveur profilé avec succès et enregistré.",
+        I18nKey::SshScanFailed => "Échec de l'analyse de l'hôte distant.",
+        I18nKey::SshLocalRestored => "Retour à l'environnement local.",
+        I18nKey::HelpDescScanHost => "Scanner et enregistrer l'environnement du serveur SSH distant",
+
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => "Réponds toujours en français de façon concise et technique.",
     }

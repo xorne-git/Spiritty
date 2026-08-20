@@ -46,6 +46,7 @@ impl AgentEngine {
     pub fn send_prompt(
         &mut self,
         messages: Vec<ChatMessage>,
+        sys_ctx: &crate::system::SystemContext,
         event_tx: UnboundedSender<AppEvent>,
     ) -> Result<()> {
         self.is_generating = true;
@@ -53,8 +54,7 @@ impl AgentEngine {
         let config = self.config.clone();
         let lang = config.get_language();
         let auto_approve = config.auto_approve;
-        let sys_ctx = crate::system::SystemContext::detect();
-        let system_prompt = build_system_prompt(lang, &sys_ctx, &config);
+        let system_prompt = build_system_prompt(lang, sys_ctx, &config);
 
         tokio::spawn(async move {
             // Format history cleanly for the LLM without UI control pills but preserving command blocks

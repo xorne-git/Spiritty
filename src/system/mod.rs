@@ -1,4 +1,9 @@
 pub mod clipboard;
+pub mod hosts;
+pub mod process_watcher;
+
+pub use hosts::{HostProfile, HostsStore};
+pub use process_watcher::{detect_active_session, ActiveSession};
 
 use std::env;
 use std::fs;
@@ -13,6 +18,8 @@ pub struct SystemContext {
     pub terminal_emulator: String,
     pub package_managers: Vec<String>,
     pub desktop_env: Option<String>,
+    pub active_session: ActiveSession,
+    pub active_remote_profile: Option<HostProfile>,
 }
 
 impl SystemContext {
@@ -66,10 +73,23 @@ impl SystemContext {
             terminal_emulator,
             package_managers,
             desktop_env,
+            active_session: ActiveSession::Local { foreground_process: None },
+            active_remote_profile: None,
         }
     }
 
     pub fn to_prompt_context(&self) -> String {
+        if let Some(ref remote_profile) = self.active_remote_profile {
+            return remote_profile.to_prompt_context();
+        }
+
+        if let ActiveSession::Ssh { ref target, .. } = self.active_session {
+            return format!(
+                "Environnement distant SSH actif de l'utilisateur (Cible : {}) :\n- L'utilisateur est actuellement connecté via SSH sur le serveur distant '{}'.\n- Les spécificités complètes de cet hôte distant n'ont pas encore été scannées. Privilégiez des commandes POSIX universelles et proposez de vérifier l'OS (ex: cat /etc/os-release ou uname -a) si nécessaire.\n- IMPORTANT : Toutes vos propositions de commandes et inspections s'exécutent sur CE SERVEUR DISTANT via SSH.",
+                target, target
+            );
+        }
+
         let pms = if self.package_managers.is_empty() {
             "non détecté".to_string()
         } else {
@@ -79,7 +99,7 @@ impl SystemContext {
         let wm = self.desktop_env.as_deref().unwrap_or("Terminal/Console");
 
         format!(
-            "Environnement système détecté de l'utilisateur :\n- Distribution : {}\n- Noyau : {}\n- Shell : {}\n- Gestionnaires de paquets disponibles : {} (N'utilisez JAMAIS d'autres gestionnaires non présents comme dpkg/rpm/apt s'ils ne sont pas listés !)\n- Environnement graphique : {}\n- Services : systemd (pensez toujours à vérifier à la fois 'systemctl' et 'systemctl --user' pour les services utilisateur comme dms, pipewire, etc.)",
+            "Environnement système détecté de l'utilisateur (Machine Locale) :\n- Distribution : {}\n- Noyau : {}\n- Shell : {}\n- Gestionnaires de paquets disponibles : {} (N'utilisez JAMAIS d'autres gestionnaires non présents comme dpkg/rpm/apt s'ils ne sont pas listés !)\n- Environnement graphique : {}\n- Services : systemd (pensez toujours à vérifier à la fois 'systemctl' et 'systemctl --user' pour les services utilisateur comme dms, pipewire, etc.)",
             self.distro, self.kernel, self.shell, pms, wm
         )
     }
