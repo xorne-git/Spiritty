@@ -315,6 +315,9 @@ impl App {
     }
 
     pub fn new_session(&mut self) {
+        if self.agent.is_generating {
+            self.stop_agent_generation();
+        }
         self.save_current_session();
         let active_provider = self.config.default_provider.display_name();
         let active_model = self.config.get_active_provider_config().model.clone();
@@ -326,6 +329,13 @@ impl App {
         self.chat_input.clear();
         self.cursor_pos = 0;
         self.reset_chat_scroll();
+        self.modal = ModalState::None;
+        let lang = self.config.get_language();
+        self.set_toast(if lang == Language::Fr {
+            "✨ Nouvelle session démarrée".to_string()
+        } else {
+            "✨ New session started".to_string()
+        });
     }
 
     pub fn trigger_context_probe(&self) {

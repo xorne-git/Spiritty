@@ -129,6 +129,13 @@ impl HelpModal {
         left_lines.push(Line::from(l_h));
         left_lines.push(Line::from(""));
 
+        // 8. Ctrl N
+        let mut l_n = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
+        l_n.push(Span::raw(" "));
+        l_n.extend(key_pill("N", Color::Cyan));
+        left_lines.push(Line::from(l_n));
+        left_lines.push(Line::from(""));
+
         // 9. Alt S (Scan VPS)
         let mut l_s = key_pill("Alt", Color::Yellow);
         l_s.push(Span::raw(" "));

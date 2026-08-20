@@ -160,3 +160,31 @@ fn test_session_storage_roundtrip() {
     let verify_del = SessionStorage::load(&session.id);
     assert!(verify_del.is_err());
 }
+
+#[tokio::test]
+async fn test_app_new_session_shortcut() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::App;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "Première question".to_string(),
+        command_proposal: None,
+    });
+    app.chat_input = "Draft en cours".to_string();
+
+    let initial_id = app.current_session.id.clone();
+
+    // Trigger Ctrl+N keypress
+    let key_ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+    app.handle_key(key_ctrl_n);
+
+    // New session must have been created
+    assert_ne!(app.current_session.id, initial_id);
+    assert!(app.messages.is_empty());
+    assert!(app.chat_input.is_empty());
+    assert!(app.toast_message.is_some());
+}

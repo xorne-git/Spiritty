@@ -21,10 +21,14 @@ pub struct Session {
     pub prompt_history: Vec<String>,
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+static SESSION_SEQ: AtomicUsize = AtomicUsize::new(1);
+
 impl Session {
     pub fn new(provider: &str, model: &str) -> Self {
+        let seq = SESSION_SEQ.fetch_add(1, Ordering::Relaxed);
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        let timestamp_id = chrono::Local::now().format("sess_%Y%m%d_%H%M%S").to_string();
+        let timestamp_id = format!("sess_{}_{:04}", chrono::Local::now().format("%Y%m%d_%H%M%S"), seq % 10000);
 
         Self {
             id: timestamp_id,
