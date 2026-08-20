@@ -432,6 +432,24 @@ async fn test_stop_agent_generation() {
 }
 
 #[test]
+fn test_format_command_for_pty() {
+    use spiritty::app::format_command_for_pty;
+
+    // 1. Simple cd command
+    assert_eq!(format_command_for_pty("cd /var/log", "fish"), "cd /var/log\n");
+
+    // 2. Simple single line in fish
+    assert_eq!(format_command_for_pty("free -h", "fish"), "bash -c 'free -h'\n");
+
+    // 3. Multiline heredoc script in fish or bash -> must be single line base64 pipe
+    let multiline_heredoc = "cat > ~/audit.md << EOF\n# Title\nEOF";
+    let formatted = format_command_for_pty(multiline_heredoc, "fish");
+    assert!(formatted.starts_with("echo '"));
+    assert!(formatted.ends_with("' | base64 -d | bash\n"));
+    assert_eq!(formatted.matches('\n').count(), 1); // Strictly single line
+}
+
+#[test]
 fn test_parse_command_execution_request() {
     use spiritty::app::parse_command_execution_request;
 

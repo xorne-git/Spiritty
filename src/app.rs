@@ -1942,20 +1942,42 @@ fn is_clean_command_line(line: &str) -> bool {
 }
 
 /// Formats a command for reliable execution in the PTY.
-/// When the user shell is non-POSIX (like Fish or Nushell), wraps commands in `bash -c '...'`
-/// so all bashisms, wildcards, pipelines, and variable expressions execute seamlessly,
-/// while preserving interactive builtins like `cd`.
-fn format_command_for_pty(command: &str, user_shell: &str) -> String {
+/// - If the command is a single-line command (no unescaped newlines):
+///   - If `cd ...`: executed directly
+///   - If running in non-bash shell (Fish, Nu, etc.) and not already `bash -c`: wraps in `bash -c '...'`
+/// - If the command is a multiline script / heredoc (contains `\n` or `<<`):
+///   - Base64 encodes the script body and pipes to `base64 -d | bash` on a SINGLE terminal line,
+///     preventing any line-by-line keystroke splitting in interactive shells.
+pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
     let clean = clean_multiline_command(command);
+    if clean.is_empty() {
+        return String::new();
+    }
+
+    let is_cd = clean.starts_with("cd ") || clean == "cd";
+    if is_cd {
+        return format!("{}\n", clean);
+    }
+
+    // Check if the command contains newlines or is a heredoc / multiline script
+    if clean.contains('\n') || clean.contains("<<") {
+        // Strip any outer wrapping `bash -c '...'` to get the raw script if it was wrapped
+        let raw_script = if clean.starts_with("bash -c '") && clean.ends_with('\'') {
+            &clean["bash -c '".len()..clean.len() - 1]
+        } else {
+            &clean
+        };
+        let b64 = crate::system::clipboard::base64_encode(raw_script.as_bytes());
+        return format!("echo '{}' | base64 -d | bash\n", b64);
+    }
 
     let is_non_bash = user_shell.contains("fish")
         || user_shell.contains("nu")
         || user_shell.contains("csh")
         || user_shell.contains("tcsh");
-    let is_cd = clean.starts_with("cd ") || clean == "cd";
     let is_already_bash = clean.starts_with("bash -c");
 
-    if is_non_bash && !is_cd && !is_already_bash {
+    if is_non_bash && !is_already_bash {
         let escaped = clean.replace('\'', "'\\''");
         return format!("bash -c '{}'\n", escaped);
     }
