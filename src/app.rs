@@ -92,6 +92,7 @@ pub struct App {
     pub detected_context_window: Arc<AtomicUsize>,
     pub active_pty_tool: Option<PtyToolCapture>,
     pub chat_scroll_from_bottom: u16,
+    pub chat_scroll_extra_down: u16,
     pub chat_history: Vec<String>,
     pub history_index: Option<usize>,
     pub input_draft: String,
@@ -161,6 +162,7 @@ impl App {
             detected_context_window,
             active_pty_tool: None,
             chat_scroll_from_bottom: 0,
+            chat_scroll_extra_down: 0,
             chat_history: Vec::new(),
             history_index: None,
             input_draft: String::new(),
@@ -238,15 +240,33 @@ impl App {
     }
 
     pub fn scroll_chat_up(&mut self, lines: u16) {
-        self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(lines);
+        if self.chat_scroll_extra_down > 0 {
+            let rem = lines.saturating_sub(self.chat_scroll_extra_down);
+            self.chat_scroll_extra_down = self.chat_scroll_extra_down.saturating_sub(lines);
+            if rem > 0 {
+                self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(rem);
+            }
+        } else {
+            self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(lines);
+        }
     }
 
     pub fn scroll_chat_down(&mut self, lines: u16) {
-        self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_sub(lines);
+        if self.chat_scroll_from_bottom > 0 {
+            let rem = lines.saturating_sub(self.chat_scroll_from_bottom);
+            self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_sub(lines);
+            if rem > 0 {
+                self.chat_scroll_extra_down = (self.chat_scroll_extra_down + rem).min(12);
+            }
+        } else {
+            // Force-scroll / overscroll down past estimated end by up to 12 rows
+            self.chat_scroll_extra_down = (self.chat_scroll_extra_down + lines).min(12);
+        }
     }
 
     pub fn reset_chat_scroll(&mut self) {
         self.chat_scroll_from_bottom = 0;
+        self.chat_scroll_extra_down = 0;
     }
 
     pub fn save_current_session(&mut self) {
@@ -1032,10 +1052,18 @@ impl App {
                 }
             }
             KeyCode::Home => {
-                self.cursor_pos = 0;
+                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.scroll_chat_up(500);
+                } else {
+                    self.cursor_pos = 0;
+                }
             }
             KeyCode::End => {
-                self.cursor_pos = self.chat_input.len();
+                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.reset_chat_scroll();
+                } else {
+                    self.cursor_pos = self.chat_input.len();
+                }
             }
             KeyCode::PageUp => {
                 self.scroll_chat_up(15);

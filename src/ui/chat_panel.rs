@@ -261,7 +261,8 @@ impl<'a> ChatPanel<'a> {
         let max_scroll = total_visual_lines.saturating_sub(visible_height);
 
         let scroll_from_bottom = self.app.chat_scroll_from_bottom.min(max_scroll);
-        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
+        let extra_down = self.app.chat_scroll_extra_down;
+        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom).saturating_add(extra_down);
 
         let messages_paragraph = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -274,6 +275,11 @@ impl<'a> ChatPanel<'a> {
                 (
                     format!(" ▲ -{} / {} l. ", scroll_from_bottom, total_visual_lines),
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+                )
+            } else if extra_down > 0 {
+                (
+                    format!(" ▼ +{} l. ", extra_down),
+                    Style::default().bg(Color::Rgb(40, 75, 130)).fg(Color::White).add_modifier(Modifier::BOLD),
                 )
             } else {
                 (

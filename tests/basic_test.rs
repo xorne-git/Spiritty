@@ -286,6 +286,38 @@ async fn test_chat_scrolling_repro() {
     );
 }
 
+#[tokio::test]
+async fn test_chat_overscroll_down() {
+    use spiritty::app::App;
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+
+    assert_eq!(app.chat_scroll_from_bottom, 0);
+    assert_eq!(app.chat_scroll_extra_down, 0);
+
+    // Scrolling down while at the bottom initiates overscroll
+    app.scroll_chat_down(3);
+    assert_eq!(app.chat_scroll_extra_down, 3);
+    assert_eq!(app.chat_scroll_from_bottom, 0);
+
+    app.scroll_chat_down(5);
+    assert_eq!(app.chat_scroll_extra_down, 8);
+
+    // Scrolling up consumes overscroll first before scrolling into history
+    app.scroll_chat_up(4);
+    assert_eq!(app.chat_scroll_extra_down, 4);
+    assert_eq!(app.chat_scroll_from_bottom, 0);
+
+    app.scroll_chat_up(6);
+    assert_eq!(app.chat_scroll_extra_down, 0);
+    assert_eq!(app.chat_scroll_from_bottom, 2);
+
+    // Resetting clears both
+    app.reset_chat_scroll();
+    assert_eq!(app.chat_scroll_from_bottom, 0);
+    assert_eq!(app.chat_scroll_extra_down, 0);
+}
+
 #[test]
 fn test_markdown_heading_rendering() {
     let md = "# Title 1\n## Title 2\n### Title 3\n#### Title 4\n##### Title 5\n###### Title 6\nNormal text";
