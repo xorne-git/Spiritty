@@ -44,6 +44,9 @@ impl SessionStorage {
                 if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
                     if let Ok(content) = fs::read_to_string(&path) {
                         if let Ok(session) = serde_json::from_str::<Session>(&content) {
+                            if session.messages.is_empty() {
+                                continue;
+                            }
                             headers.push(SessionHeader {
                                 id: session.id,
                                 title: session.title,

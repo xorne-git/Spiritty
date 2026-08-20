@@ -69,6 +69,7 @@ pub struct PtyToolCapture {
     pub result_tx: Option<tokio::sync::oneshot::Sender<String>>,
     pub output_bytes: Vec<u8>,
     pub start_time: std::time::Instant,
+    pub last_output_time: std::time::Instant,
 }
 
 pub struct App {
@@ -291,26 +292,34 @@ impl App {
 
     pub fn load_session(&mut self, session_id: &str) {
         self.save_current_session();
-        if let Ok(loaded) = SessionStorage::load(session_id) {
-            self.messages = loaded.messages.clone();
-            // Restore prompt history
-            if !loaded.prompt_history.is_empty() {
-                self.chat_history = loaded.prompt_history.clone();
-            } else {
-                // Fallback: extract from previous user messages
-                self.chat_history = loaded
-                    .messages
-                    .iter()
-                    .filter(|m| m.role == MessageRole::User && !m.content.starts_with("💻 `") && !m.content.starts_with("[RÉSULTAT"))
-                    .map(|m| m.content.clone())
-                    .collect();
+        match SessionStorage::load(session_id) {
+            Ok(loaded) => {
+                let title = loaded.title.clone();
+                let count = loaded.messages.len();
+                self.messages = loaded.messages.clone();
+                // Restore prompt history
+                if !loaded.prompt_history.is_empty() {
+                    self.chat_history = loaded.prompt_history.clone();
+                } else {
+                    // Fallback: extract from previous user messages
+                    self.chat_history = loaded
+                        .messages
+                        .iter()
+                        .filter(|m| m.role == MessageRole::User && !m.content.starts_with("💻 `") && !m.content.starts_with("[RÉSULTAT"))
+                        .map(|m| m.content.clone())
+                        .collect();
+                }
+                self.history_index = None;
+                self.input_draft.clear();
+                self.current_session = loaded;
+                self.chat_input.clear();
+                self.cursor_pos = 0;
+                self.reset_chat_scroll();
+                self.set_toast(format!("📂 Session '{}' restaurée ({} messages)", title, count));
             }
-            self.history_index = None;
-            self.input_draft.clear();
-            self.current_session = loaded;
-            self.chat_input.clear();
-            self.cursor_pos = 0;
-            self.reset_chat_scroll();
+            Err(e) => {
+                self.set_toast(format!("⚠️ Erreur chargement session : {}", e));
+            }
         }
     }
 
@@ -576,12 +585,6 @@ impl App {
             return;
         }
 
-        // Alt+S triggers remote host probe/scan when in SSH session
-        if key.modifiers.contains(KeyModifiers::ALT) && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
-            self.trigger_host_scan();
-            return;
-        }
-
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
             self.modal = match self.modal {
                 ModalState::Config(_) => ModalState::None,
@@ -728,9 +731,31 @@ impl App {
         }
 
         if let Some(ref mut capture) = self.active_pty_tool {
-            if capture.start_time.elapsed() > std::time::Duration::from_secs(30) {
+            let elapsed_since_start = capture.start_time.elapsed();
+            let elapsed_since_last_output = capture.last_output_time.elapsed();
+
+            // Settle completion heuristic:
+            // When output has been received, and no new output has arrived for >= 350ms (idle after output/prompt),
+            // and at least 300ms has elapsed since command invocation, complete the capture seamlessly!
+            if !capture.output_bytes.is_empty()
+                && elapsed_since_start >= std::time::Duration::from_millis(300)
+                && elapsed_since_last_output >= std::time::Duration::from_millis(350)
+            {
+                let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
+                let clean_output = clean_pty_output(&raw_text, &capture.command);
+                let final_summary = if clean_output.is_empty() {
+                    "(Commande exécutée avec succès dans le terminal)".to_string()
+                } else {
+                    format!("Sortie dans le terminal:\n{}", clean_output)
+                };
+
                 if let Some(tx) = capture.result_tx.take() {
-                    let _ = tx.send("(Délai d'attente de 30s dépassé pour la commande)".to_string());
+                    let _ = tx.send(final_summary);
+                }
+                self.active_pty_tool = None;
+            } else if elapsed_since_start > std::time::Duration::from_secs(45) {
+                if let Some(tx) = capture.result_tx.take() {
+                    let _ = tx.send("(Délai d'attente de 45s dépassé pour la commande)".to_string());
                 }
                 self.active_pty_tool = None;
             }
@@ -754,7 +779,7 @@ impl App {
                     self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
                 } else {
                     self.system_context.active_remote_profile = None;
-                    self.set_toast(format!("🌐 SSH: {} — [Alt+S] pour scanner l'hôte", target));
+                    self.set_toast(format!("🌐 SSH: {}", target));
                 }
             }
             ActiveSession::Container { runtime, container_id } => {
@@ -805,6 +830,18 @@ impl App {
 
     pub fn latest_command_proposal(&self) -> Option<String> {
         self.all_command_proposals().into_iter().next()
+    }
+
+    pub fn current_active_shell(&self) -> &str {
+        match &self.system_context.active_session {
+            crate::system::ActiveSession::Ssh { .. } => "bash",
+            crate::system::ActiveSession::Local { foreground_process: Some(proc) }
+                if proc == "bash" || proc == "zsh" || proc == "sh" || proc == "dash" || proc == "ash" =>
+            {
+                proc.as_str()
+            }
+            _ => self.pty.shell(),
+        }
     }
 
     pub fn execute_command_by_index(&mut self, index: usize, auto_run: bool) -> bool {
@@ -865,8 +902,9 @@ impl App {
 
                 return true;
             } else {
-                let shell = self.pty.shell();
-                let pty_cmd = format_command_for_pty(&cmd, shell);
+                let shell = self.current_active_shell();
+                let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+                let pty_cmd = format_command_for_pty_with_session(&cmd, shell, is_remote, false);
                 let _ = self.pty.write_all(pty_cmd.as_bytes());
                 self.last_injected_cmd = Some(cmd.clone());
                 self.focus = Focus::Terminal;
@@ -988,6 +1026,9 @@ impl App {
                     self.generation_start_time = Some(std::time::Instant::now());
                     self.current_turn_tokens = 0;
 
+                    // Switch focus to Terminal so user can immediately type shell commands while AI responds
+                    self.focus = Focus::Terminal;
+
                     // Trigger LLM streaming with live system context
                     let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
                 }
@@ -1014,6 +1055,15 @@ impl App {
             }
             KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.cursor_pos = self.chat_input.len();
+            }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+J is ASCII linefeed (universal multiline newline shortcut)
+                self.chat_input.insert(self.cursor_pos, '\n');
+                self.cursor_pos += 1;
+            }
+            KeyCode::Char('\n') | KeyCode::Char('\r') => {
+                self.chat_input.insert(self.cursor_pos, '\n');
+                self.cursor_pos += 1;
             }
             KeyCode::Char(c) => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
@@ -1236,19 +1286,22 @@ impl App {
         command: String,
         result_tx: tokio::sync::oneshot::Sender<String>,
     ) {
-        let shell = self.pty.shell();
-        let formatted_cmd = format_command_for_pty(&command, shell);
+        let shell = self.current_active_shell();
+        let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+        let formatted_cmd = format_command_for_pty_with_session(&command, shell, is_remote, true);
 
         let _ = self.pty.write_all(formatted_cmd.as_bytes());
 
         // Switch focus to Terminal so user can interact if prompt/pager opens
         self.focus = Focus::Terminal;
 
+        let now = std::time::Instant::now();
         self.active_pty_tool = Some(PtyToolCapture {
             command,
             result_tx: Some(result_tx),
             output_bytes: Vec::new(),
-            start_time: std::time::Instant::now(),
+            start_time: now,
+            last_output_time: now,
         });
     }
 
@@ -1279,13 +1332,16 @@ impl App {
 
         if let Some(ref mut capture) = self.active_pty_tool {
             capture.output_bytes.extend_from_slice(bytes);
+            capture.last_output_time = std::time::Instant::now();
 
             if let Ok(text) = std::str::from_utf8(&capture.output_bytes) {
                 // Check for OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07 or fallback __SPIRITTY_DONE__:<status>
-                let sentinel_pattern = if let Some(pos) = text.find("777;spiritty_done;") {
+                let sentinel_pattern = if let Some(pos) = text.rfind("\x1b]777;spiritty_done;") {
+                    Some((pos, 20, true))
+                } else if let Some(pos) = text.rfind("777;spiritty_done;") {
                     Some((pos, 18, true))
                 } else {
-                    text.find("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
+                    text.rfind("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
                 };
 
                 if let Some((pos, prefix_len, is_osc)) = sentinel_pattern {
@@ -1312,7 +1368,6 @@ impl App {
                             let _ = tx.send(final_summary);
                         }
                         self.active_pty_tool = None;
-                        self.focus = Focus::Chat;
                     }
                 }
             }
@@ -1320,6 +1375,11 @@ impl App {
     }
 
     pub fn on_agent_new_turn(&mut self) {
+        if let Some(last) = self.messages.last() {
+            if last.role == MessageRole::Assistant && last.content.trim().is_empty() {
+                return;
+            }
+        }
         self.messages.push(ChatMessage {
             role: MessageRole::Assistant,
             content: String::new(),
@@ -1339,13 +1399,11 @@ impl App {
 
         self.agent.is_generating = false;
         self.pending_tool_approval = None;
-        self.focus = Focus::Chat;
         self.chat_scroll_from_bottom = 0;
-        if let Some(last_msg) = self.messages.last() {
-            if last_msg.role == MessageRole::Assistant && last_msg.content.trim().is_empty() {
-                self.messages.pop();
-            }
-        }
+
+        // Clean up any trailing empty assistant placeholders
+        self.messages.retain(|m| !m.content.trim().is_empty() || m.role != MessageRole::Assistant);
+
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
                 last_msg.command_proposal = extract_command_proposal(&last_msg.content);
@@ -1414,8 +1472,15 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         return false;
     }
 
-    // 2. Reject process trees, log formats, systemd status trees
-    if trimmed.contains('├') || trimmed.contains('└') || trimmed.contains('│') || trimmed.contains("──") {
+    // 2. Reject process trees, log formats, systemd status trees, transition arrows
+    if trimmed.contains('├')
+        || trimmed.contains('└')
+        || trimmed.contains('│')
+        || trimmed.contains("──")
+        || trimmed.contains('→')
+        || trimmed.contains("->")
+        || trimmed.contains("=>")
+    {
         return false;
     }
 
@@ -1429,6 +1494,8 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
             || low.starts_with("puis ")
             || low.starts_with("ensuite ")
             || low.starts_with("this will ")
+            || low.contains(" puis ")
+            || low.contains(" vers ")
     }) {
         return false;
     }
@@ -1455,10 +1522,38 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
     false
 }
 
+/// Repairs AI glitches where the model outputs an empty code block like:
+/// ```bash\n \n```\n<script>
+/// and wraps the following script back into a proper ```bash\n<script>\n``` block.
+pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
+    let empty_fences = [
+        "```bash\n \n```\n",
+        "```bash\n\n```\n",
+        "```sh\n \n```\n",
+        "```sh\n\n```\n",
+        "```\n \n```\n",
+        "```\n\n```\n",
+    ];
+
+    for fence in empty_fences {
+        if let Some(pos) = text.find(fence) {
+            let before = &text[..pos];
+            let after = &text[pos + fence.len()..];
+            let trimmed_after = after.trim_end_matches('`').trim();
+            if !trimmed_after.is_empty() {
+                return format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
+            }
+        }
+    }
+
+    text.to_string()
+}
+
 /// Extracts all proposed shell commands from markdown code blocks (excluding output/tools/trees)
 pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
+    let repaired = repair_prematurely_closed_code_blocks(text);
     let mut list = Vec::new();
-    let mut remaining = text;
+    let mut remaining = repaired.as_str();
 
     while let Some(start_idx) = remaining.find("```") {
         let after_fence = &remaining[start_idx + 3..];
@@ -1748,13 +1843,9 @@ pub fn clean_multiline_command(command: &str) -> String {
         return trimmed.to_string();
     }
 
-    // 2. Heredocs (`<<EOF`, `<< 'EOF'`, `<<-EOF`, etc.): preserve full multiline structure verbatim!
+    // 2. Heredocs (`<<EOF`, `<< 'EOF'`, `<<-EOF`, etc.): strip chatter and preserve full multiline structure verbatim!
     if trimmed.contains("<<") {
-        let script_lines: Vec<&str> = trimmed
-            .lines()
-            .filter(|l| !l.trim().starts_with("#!"))
-            .collect();
-        return script_lines.join("\n");
+        return clean_heredoc_script(trimmed);
     }
 
     let raw_lines: Vec<&str> = trimmed
@@ -1908,6 +1999,10 @@ fn is_clean_command_line(line: &str) -> bool {
         || l.starts_with("? ")
         || l.starts_with("! ")
         || l.starts_with("📌")
+        || l.starts_with('✓')
+        || l.starts_with('✔')
+        || l.starts_with('✅')
+        || l.starts_with('❌')
         || l.starts_with('>')
         || l.starts_with('|')
         || l.starts_with("</")
@@ -1924,12 +2019,20 @@ fn is_clean_command_line(line: &str) -> bool {
         || lower.starts_with("l'utilisateur ")
         || lower.starts_with("vous pouvez ")
         || lower.starts_with("cette commande ")
+        || lower.starts_with("vérifie ")
+        || lower.starts_with("verifie ")
+        || lower.starts_with("fichier ")
+        || lower.starts_with("note ")
+        || lower.starts_with("note :")
+        || lower.starts_with("exécute ")
+        || lower.starts_with("execute ")
         || lower.starts_with("puis ")
         || lower.starts_with("ensuite ")
         || lower.starts_with("in order to ")
         || lower.starts_with("if you ")
         || lower.starts_with("here is ")
         || lower.starts_with("this will ")
+        || lower.starts_with("check ")
     {
         return false;
     }
@@ -1937,14 +2040,174 @@ fn is_clean_command_line(line: &str) -> bool {
     true
 }
 
+/// Extracts a clean heredoc script by discarding conversational introductory or concluding text
+/// while preserving the full multiline body of the heredocs verbatim.
+pub fn clean_heredoc_script(script: &str) -> String {
+    let lines: Vec<&str> = script.lines().collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // 1. Find the first line where a command or heredoc starts
+    let first_cmd_idx = lines
+        .iter()
+        .position(|l| l.contains("<<") || is_clean_command_line(l))
+        .unwrap_or(0);
+
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut in_heredoc = false;
+    let mut active_delimiters: Vec<String> = Vec::new();
+
+    for &line in &lines[first_cmd_idx..] {
+        let trimmed = line.trim();
+
+        if in_heredoc {
+            result_lines.push(line);
+            // Check if this line closes the active heredoc
+            if let Some(last_delim) = active_delimiters.last() {
+                if trimmed == last_delim {
+                    active_delimiters.pop();
+                    if active_delimiters.is_empty() {
+                        in_heredoc = false;
+                    }
+                }
+            }
+        } else {
+            // Outside heredoc: only include line if it opens a heredoc or is a valid command line
+            if line.contains("<<") {
+                result_lines.push(line);
+                if let Some(delim) = extract_heredoc_delimiter(line) {
+                    active_delimiters.push(delim);
+                    in_heredoc = true;
+                }
+            } else if is_clean_command_line(line) {
+                result_lines.push(line);
+            }
+        }
+    }
+
+    let joined = result_lines.join("\n");
+    repair_missing_heredoc_terminator(&joined)
+}
+
+fn extract_heredoc_delimiter(line: &str) -> Option<String> {
+    let pos = line.find("<<")?;
+    let rest = &line[pos + 2..];
+    let rest_trimmed = rest.trim_start_matches(['-', ' ']);
+
+    if let Some(stripped) = rest_trimmed.strip_prefix('\'') {
+        let end = stripped.find('\'')?;
+        Some(stripped[..end].to_string())
+    } else if let Some(stripped) = rest_trimmed.strip_prefix('"') {
+        let end = stripped.find('"')?;
+        Some(stripped[..end].to_string())
+    } else {
+        let token: String = rest_trimmed
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !token.is_empty() && !token.chars().all(|c| c.is_numeric()) {
+            Some(token)
+        } else {
+            None
+        }
+    }
+}
+
+/// If a script contains a here-document (`<< EOF`, `<< 'EOF'`, `<< "EOF"`, `<<- EOF`, `<<ENDOFFILE`, etc.)
+/// but the model forgot to write the closing delimiter line before the end of the code block,
+/// automatically appends the missing delimiter on a new line so bash executes it cleanly.
+pub fn repair_missing_heredoc_terminator(script: &str) -> String {
+    let lines: Vec<&str> = script.lines().collect();
+    if lines.is_empty() {
+        return script.to_string();
+    }
+
+    let mut open_delimiters: Vec<String> = Vec::new();
+
+    for line in &lines {
+        let trimmed = line.trim();
+        // Check if this line closes the most recent open heredoc
+        if let Some(last_delim) = open_delimiters.last() {
+            if trimmed == last_delim {
+                open_delimiters.pop();
+                continue;
+            }
+        }
+
+        // Check if this line opens one or more here-documents: e.g. `cat << 'EOF'`, `cat <<EOF > file`, `<<-END`
+        let mut search_from = 0;
+        while let Some(pos) = line[search_from..].find("<<") {
+            let abs_pos = search_from + pos + 2;
+            let rest = &line[abs_pos..];
+            let rest_trimmed = rest.trim_start_matches(['-', ' ']);
+
+            // Extract the delimiter token (surrounded optionally by ' or " or naked)
+            let (delim, delim_end_pos) = if let Some(stripped) = rest_trimmed.strip_prefix('\'') {
+                if let Some(end) = stripped.find('\'') {
+                    (&stripped[..end], abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1)
+                } else {
+                    ("", abs_pos)
+                }
+            } else if let Some(stripped) = rest_trimmed.strip_prefix('"') {
+                if let Some(end) = stripped.find('"') {
+                    (&stripped[..end], abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1)
+                } else {
+                    ("", abs_pos)
+                }
+            } else {
+                let token: String = rest_trimmed
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                let token_len = token.len();
+                if !token.is_empty() {
+                    let d = &rest_trimmed[..token_len];
+                    (d, abs_pos + (rest.len() - rest_trimmed.len()) + token_len)
+                } else {
+                    ("", abs_pos)
+                }
+            };
+
+            if !delim.is_empty() && !delim.chars().all(|c| c.is_numeric()) {
+                open_delimiters.push(delim.to_string());
+            }
+
+            search_from = delim_end_pos.max(abs_pos + 1);
+            if search_from >= line.len() {
+                break;
+            }
+        }
+    }
+
+    if open_delimiters.is_empty() {
+        return script.to_string();
+    }
+
+    // Append missing delimiters in reverse order
+    let mut repaired = script.trim_end().to_string();
+    for delim in open_delimiters.into_iter().rev() {
+        repaired.push('\n');
+        repaired.push_str(&delim);
+    }
+    repaired.push('\n');
+    repaired
+}
+
 /// Formats a command for reliable execution in the PTY.
 /// - If the command is a single-line command (no unescaped newlines):
 ///   - If `cd ...`: executed directly
 ///   - If running in non-bash shell (Fish, Nu, etc.) and not already `bash -c`: wraps in `bash -c '...'`
 /// - If the command is a multiline script / heredoc (contains `\n` or `<<`):
-///   - Base64 encodes the script body and pipes to `base64 -d | bash` on a SINGLE terminal line,
-///     preventing any line-by-line keystroke splitting in interactive shells.
-pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
+///   - If running locally: writes the script to `/tmp/spiritty_exec.sh` and runs `bash -v /tmp/spiritty_exec.sh`,
+///     displaying commands cleanly in verbose human-readable format without Base64 clutter.
+///   - If running over remote SSH: Base64 encodes the script body and pipes to `base64 -d | bash -v` on a SINGLE terminal line.
+pub fn format_command_for_pty_with_session(
+    command: &str,
+    user_shell: &str,
+    is_remote: bool,
+    _is_tool_capture: bool,
+) -> String {
     let clean = clean_multiline_command(command);
     if clean.is_empty() {
         return String::new();
@@ -1952,7 +2215,7 @@ pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
 
     let is_cd = clean.starts_with("cd ") || clean == "cd";
     if is_cd {
-        return format!("{}\n", clean);
+        return format!(" {}\n", clean);
     }
 
     // Check if the command contains newlines or is a heredoc / multiline script
@@ -1963,8 +2226,23 @@ pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
         } else {
             &clean
         };
+
+        if !is_remote {
+            let temp_script_path = std::env::temp_dir().join("spiritty_exec.sh");
+            if std::fs::write(&temp_script_path, raw_script).is_ok() {
+                // Leading space prevents Fish, Bash, and Zsh from saving this command in shell history
+                return format!(" bash -v {}\n", temp_script_path.display());
+            }
+        }
+
         let b64 = crate::system::clipboard::base64_encode(raw_script.as_bytes());
-        return format!("echo '{}' | base64 -d | bash\n", b64);
+        return format!(" echo '{}' | base64 -d | bash -v\n", b64);
+    }
+
+    if is_remote {
+        // Over SSH, the remote shell is standard POSIX/Bash.
+        // Send pure clean command with leading space (prevents shell history pollution) without any sentinel noise!
+        return format!(" {}\n", clean);
     }
 
     let is_non_bash = user_shell.contains("fish")
@@ -1975,10 +2253,14 @@ pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
 
     if is_non_bash && !is_already_bash {
         let escaped = clean.replace('\'', "'\\''");
-        return format!("bash -c '{}'\n", escaped);
+        return format!(" bash -c '{}'\n", escaped);
     }
 
-    format!("{}\n", clean)
+    format!(" {}\n", clean)
+}
+
+pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
+    format_command_for_pty_with_session(command, user_shell, false, false)
 }
 
 /// Strips all ANSI escape sequences, CSI controls, and OSC strings from raw PTY text.

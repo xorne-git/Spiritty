@@ -188,3 +188,50 @@ async fn test_app_new_session_shortcut() {
     assert!(app.chat_input.is_empty());
     assert!(app.toast_message.is_some());
 }
+
+#[tokio::test]
+async fn test_app_load_session_shortcut() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::App;
+    use spiritty::session::{Session, SessionStorage};
+
+    let mut saved_session = Session::new("DeepSeek", "deepseek-v4-flash");
+    saved_session.id = "test_load_123".to_string();
+    saved_session.title = "Ma session de test".to_string();
+    saved_session.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "Question sauvegardée".to_string(),
+        command_proposal: None,
+    });
+    saved_session.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Réponse sauvegardée".to_string(),
+        command_proposal: None,
+    });
+    let _ = SessionStorage::save(&saved_session);
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+
+    // Open sessions modal with Ctrl+H
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+    assert!(matches!(app.modal, spiritty::app::ModalState::Sessions(_)));
+
+    // In modal, find and select "test_load_123"
+    if let spiritty::app::ModalState::Sessions(ref mut state) = app.modal {
+        if let Some(pos) = state.sessions.iter().position(|s| s.id == "test_load_123") {
+            state.selected_index = pos;
+        }
+    }
+
+    // Press Enter to load
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(app.modal, spiritty::app::ModalState::None));
+
+    assert_eq!(app.current_session.id, "test_load_123");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.messages[0].content, "Question sauvegardée");
+
+    let _ = SessionStorage::delete("test_load_123");
+}
+

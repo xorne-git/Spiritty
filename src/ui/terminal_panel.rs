@@ -28,7 +28,7 @@ impl<'a> TerminalPanel<'a> {
                     )
                 } else {
                     (
-                        format!("🌐 SSH: {} [Alt+S Scan]", target),
+                        format!("🌐 SSH: {}", target),
                         Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD),
                     )
                 }

@@ -87,7 +87,7 @@ impl AgentEngine {
                             let trimmed = l.trim();
                             if trimmed.starts_with("💻 `") {
                                 if let Some(start) = trimmed.find("💻 `") {
-                                    let after = &trimmed[start + 4..];
+                                    let after = &trimmed[start + "💻 `".len()..];
                                     if let Some(end) = after.find('`') {
                                         let cmd = &after[..end];
                                         clean_lines.push(format!("```bash\n{}\n```", cmd));

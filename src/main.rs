@@ -36,15 +36,13 @@ async fn main() -> Result<()> {
         SetCursorStyle::DefaultUserShape
     )?;
 
-    let supports_enhancement = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
-    if supports_enhancement {
-        let _ = execute!(
-            stdout,
-            crossterm::event::PushKeyboardEnhancementFlags(
-                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            )
-        );
-    }
+    // Enable Kitty/Disambiguate keyboard protocol for Shift+Enter and modifier distinction
+    let _ = execute!(
+        stdout,
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        )
+    );
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -67,9 +65,7 @@ async fn main() -> Result<()> {
 
     // Restore terminal state cleanly
     let _ = execute!(terminal.backend_mut(), SetCursorStyle::DefaultUserShape);
-    if supports_enhancement {
-        let _ = execute!(terminal.backend_mut(), crossterm::event::PopKeyboardEnhancementFlags);
-    }
+    let _ = execute!(terminal.backend_mut(), crossterm::event::PopKeyboardEnhancementFlags);
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),

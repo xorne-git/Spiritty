@@ -91,3 +91,4 @@ Lors de l'implémentation de nouvelles fonctionnalités :
 1. Consulter [ARCHITECTURE.md](file:///home/xorne/Projets/Spiritty/ARCHITECTURE.md) pour respecter les invariants de conception.
 2. Mettre à jour [ROADMAP.md](file:///home/xorne/Projets/Spiritty/ROADMAP.md) au fur et à mesure de l'avancement des tâches.
 3. Toujours vérifier la compilation (`cargo check`) et l'absence d'erreurs de lint (`cargo clippy`).
+4. **Gestion de Version & Commits :** Ne **JAMAIS** faire de `git commit` ou `git push` automatiquement de sa propre initiative. Les commits et pushs sont réservés à la **demande expresse** de l'utilisateur.

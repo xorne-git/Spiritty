@@ -1,6 +1,6 @@
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
@@ -281,12 +281,7 @@ impl<'a> ChatPanel<'a> {
 
         // Render scroll indicator badge on the top border (liseret)
         if area.width > 25 {
-            let (badge_text, badge_style) = if self.app.agent.is_generating {
-                (
-                    format!(" {} {} [Esc] Stop ", get_spinner_char(self.app.spinner_frame), if lang == Language::Fr { "Génération" } else { "Generating" }),
-                    Style::default().bg(Color::Rgb(70, 30, 30)).fg(Color::LightRed).add_modifier(Modifier::BOLD),
-                )
-            } else if scroll_from_bottom > 0 {
+            let (badge_text, badge_style) = if scroll_from_bottom > 0 {
                 (
                     format!(" ▲ -{} / {} l. ", scroll_from_bottom, content_visual_lines),
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
@@ -329,34 +324,39 @@ impl<'a> ChatPanel<'a> {
         let input_scroll = cursor_row.saturating_sub(needed_input_height.saturating_sub(1));
 
         if self.app.chat_input.is_empty() {
-            let placeholder_line = if self.app.agent.is_generating {
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} ", get_spinner_char(self.app.spinner_frame)),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        if lang == Language::Fr { "Génération en cours...  " } else { "Generating response...  " },
-                        Style::default().fg(Color::Cyan),
-                    ),
-                    Span::styled(
-                        "[Esc]",
-                        Style::default().bg(Color::Rgb(60, 25, 25)).fg(Color::LightRed).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        if lang == Language::Fr { " Arrêter" } else { " Stop" },
-                        Style::default().fg(Color::LightRed),
-                    ),
-                ])
+            let (placeholder_line, alignment) = if self.app.agent.is_generating {
+                (
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", get_spinner_char(self.app.spinner_frame)),
+                            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            "[Esc]",
+                            Style::default()
+                                .bg(Color::Rgb(65, 25, 25))
+                                .fg(Color::LightRed)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            if lang == Language::Fr { " Arrêter" } else { " Stop" },
+                            Style::default().fg(Color::LightRed),
+                        ),
+                    ]),
+                    Alignment::Center,
+                )
             } else {
-                Line::from(vec![
-                    Span::styled(
+                (
+                    Line::from(vec![Span::styled(
                         lang.t(I18nKey::ChatInputPlaceholder),
                         Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-                    ),
-                ])
+                    )]),
+                    Alignment::Left,
+                )
             };
-            let p = Paragraph::new(placeholder_line).wrap(Wrap { trim: false });
+            let p = Paragraph::new(placeholder_line)
+                .alignment(alignment)
+                .wrap(Wrap { trim: false });
             p.render(input_area, buf);
         } else {
             let input_paragraph = Paragraph::new(self.app.chat_input.as_str())
@@ -402,7 +402,8 @@ fn render_markdown_blocks(
     mut leading_prefix: Option<&str>,
     card_counter: &mut usize,
 ) {
-    let mut remaining = text;
+    let repaired = crate::app::repair_prematurely_closed_code_blocks(text);
+    let mut remaining = repaired.as_str();
 
     while let Some(start_idx) = remaining.find("```") {
         let text_before = &remaining[..start_idx];
@@ -432,15 +433,13 @@ fn render_markdown_blocks(
             }
             remaining = &code_rest[end_idx + 3..];
         } else {
-            // Streaming inside open code block
+            // Streaming inside open code block (still incomplete):
+            // Render as code snippet box while streaming; only promote to interactive Command Card (with Alt 1) once the block is closed!
             let code_content = code_rest.trim();
             if fence_tag.starts_with("tool:") {
                 // Internal tool call block: skip rendering while streaming
             } else if fence_tag == "output" || fence_tag == "result" {
                 render_tool_output_box(code_content, lines);
-            } else if crate::app::is_executable_command_block(fence_tag, code_content) {
-                *card_counter += 1;
-                render_command_card(*card_counter, code_content, fence_tag, lang, lines);
             } else {
                 render_code_snippet_box(code_content, fence_tag, lines);
             }

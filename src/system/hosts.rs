@@ -23,13 +23,13 @@ pub struct HostProfile {
 impl HostProfile {
     pub fn to_prompt_context(&self) -> String {
         let pms = if self.package_managers.is_empty() {
-            "non détecté / POSIX standard".to_string()
+            "none detected / POSIX standard".to_string()
         } else {
             self.package_managers.join(", ")
         };
 
         format!(
-            "Environnement distant SSH actif de l'utilisateur (Cible : {}) :\n- Hôte distant : {}\n- Distribution : {}\n- Noyau : {}\n- Utilisateur distant : {}\n- Gestionnaires de paquets distants : {} (Utilisez STRICTEMENT ces gestionnaires pour les paquets sur cette machine distante !)\n- Système d'init : {}\n- IMPORTANT : Toutes vos propositions de commandes et inspections s'exécutent sur CE SERVEUR DISTANT via SSH. Adaptez vos commandes à cette distribution (ex: apt sur Debian/Ubuntu, apk sur Alpine, dnf sur Fedora/RHEL).",
+            "Active SSH Remote Environment (Target: {}):\n- Remote Host: {}\n- Distribution: {}\n- Kernel: {}\n- Remote User: {}\n- Available Remote Package Managers: {} (STRICTLY use these package managers for packages on this remote machine!)\n- Init System: {}\n- IMPORTANT: All command proposals and inspections execute on THIS REMOTE SERVER via SSH. Adapt commands to this distribution (e.g. apt on Debian/Ubuntu, apk on Alpine, dnf on Fedora/RHEL).",
             self.target,
             self.hostname.as_deref().unwrap_or(&self.target),
             self.distro,

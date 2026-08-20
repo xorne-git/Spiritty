@@ -85,13 +85,13 @@ impl SystemContext {
 
         if let ActiveSession::Ssh { ref target, .. } = self.active_session {
             return format!(
-                "Environnement distant SSH actif de l'utilisateur (Cible : {}) :\n- L'utilisateur est actuellement connecté via SSH sur le serveur distant '{}'.\n- Les spécificités complètes de cet hôte distant n'ont pas encore été scannées. Privilégiez des commandes POSIX universelles et proposez de vérifier l'OS (ex: cat /etc/os-release ou uname -a) si nécessaire.\n- IMPORTANT : Toutes vos propositions de commandes et inspections s'exécutent sur CE SERVEUR DISTANT via SSH.",
+                "Active SSH Remote Environment (Target: {}):\n- The user is currently connected via SSH to remote server '{}'.\n- Full host profile not scanned yet. Use universal POSIX commands and suggest checking OS details (e.g. cat /etc/os-release or uname -a) if needed.\n- IMPORTANT: All command proposals and inspections execute on THIS REMOTE SERVER via SSH.",
                 target, target
             );
         }
 
         let pms = if self.package_managers.is_empty() {
-            "non détecté".to_string()
+            "none detected".to_string()
         } else {
             self.package_managers.join(", ")
         };
@@ -99,7 +99,7 @@ impl SystemContext {
         let wm = self.desktop_env.as_deref().unwrap_or("Terminal/Console");
 
         format!(
-            "Environnement système détecté de l'utilisateur (Machine Locale) :\n- Distribution : {}\n- Noyau : {}\n- Shell interactif du terminal : {} (IMPORTANT : l'interpréteur de commandes et d'outils est Bash/POSIX standard. Toutes vos propositions de commandes et inspections doivent être impérativement écrites en syntaxe Bash standard, jamais en syntaxe Fish).\n- Gestionnaires de paquets disponibles : {} (N'utilisez JAMAIS d'autres gestionnaires non présents comme dpkg/rpm/apt s'ils ne sont pas listés !)\n- Environnement graphique : {}\n- Services : systemd (pensez toujours à vérifier à la fois 'systemctl' et 'systemctl --user' pour les services utilisateur comme dms, pipewire, etc.)",
+            "User's Detected System Environment (Local Machine):\n- OS / Distribution: {}\n- Kernel: {}\n- Interactive Terminal Shell: {} (IMPORTANT: the command execution subshell is standard Bash/POSIX. All proposed commands and inspections must be strictly valid Bash syntax, never Fish syntax).\n- Available Package Managers: {} (NEVER use unlisted package managers like dpkg/rpm/apt if not present!)\n- Desktop Environment / Window Manager: {}\n- Init & Services: systemd (always check both 'systemctl' and 'systemctl --user' for user-level services like dms, pipewire, etc.)",
             self.distro, self.kernel, self.shell, pms, wm
         )
     }

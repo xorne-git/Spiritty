@@ -297,15 +297,6 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
 
     let mut right_spans: Vec<Span<'static>> = Vec::new();
 
-    // If SSH session is active, show Alt+S Scan shortcut in footer
-    if app.system_context.active_session.is_ssh() {
-        right_spans.extend(key_pill("Alt", Color::Yellow));
-        right_spans.push(Span::raw(" "));
-        right_spans.extend(key_pill("S", Color::Yellow));
-        right_spans.push(Span::styled(" Scan VPS ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-        right_spans.push(Span::raw(" "));
-    }
-
     // Auto-Approve badge with F3 shortcut
     use crate::config::AutoApproveLevel;
     let (auto_badge_color, auto_badge_text) = match app.config.auto_approve {

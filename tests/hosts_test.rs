@@ -140,7 +140,7 @@ fn test_hosts_store_persistence() {
 fn test_system_context_prompt_switching() {
     let mut ctx = SystemContext::detect();
     let local_prompt = ctx.to_prompt_context();
-    assert!(local_prompt.contains("Machine Locale"));
+    assert!(local_prompt.contains("Local Machine"));
 
     // Switch to unprofiled SSH
     ctx.active_session = ActiveSession::Ssh {
@@ -150,7 +150,7 @@ fn test_system_context_prompt_switching() {
         port: None,
     };
     let ssh_unprofiled_prompt = ctx.to_prompt_context();
-    assert!(ssh_unprofiled_prompt.contains("Environnement distant SSH actif"));
+    assert!(ssh_unprofiled_prompt.contains("Active SSH Remote Environment"));
     assert!(ssh_unprofiled_prompt.contains("root@remote-vps.com"));
 
     // Add profiled host

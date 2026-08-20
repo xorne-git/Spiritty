@@ -74,16 +74,24 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
 
 ---
 
-## 📌 Phase 4 : Contexte Système Avancé, Détection SSH & Auto-Remédiation (v0.4.0) [EN COURS ⏳]
-*Objectif : Donner à l'agent une conscience aiguë de la machine hôte (locale ou serveur distant SSH) et la capacité de diagnostiquer les erreurs.*
+## 📌 Phase 4 : Contexte Système Avancé, Détection SSH & Auto-Remédiation (v0.4.0) [TERMINÉ ✅]
+*Objectif : Donner à l'agent une conscience aiguë de la machine hôte (locale ou serveur distant SSH), une exécution silencieuse sans pollution de terminal et un shell 100% interactif en continu.*
 
 - [x] **Détection Dynamique des Sessions SSH & Multi-Host Profiling :**
   - Surveillance non bloquante en temps réel de l'arbre de processus sous le PTY (`/proc/<pid>/...`).
   - Détection automatique des connexions `ssh`, `sftp`, `mosh-client`, `docker`, `podman`.
   - Cache persistant des profils serveurs dans `~/.config/spiritty/hosts.json` (OS, distribution, noyau, gestionnaires de paquets, init system).
   - Basculement instantané et automatique du *System Prompt* de l'IA lors des connexions/déconnexions SSH.
-  - Scan d'hôte rapide d'un geste (`Alt + S`) pour profiler et mémoriser un nouveau serveur.
-  - Indicateurs visuels d'en-tête et de statut (`🌐 SSH: user@host (Distro)`).
+  - Indicateurs visuels d'en-tête et de statut épurés (`🌐 SSH: user@host (Distro)`).
+- [x] **Exécution Silencieuse et Shell Interactif en Continu :**
+  - Exécution 100% propre sans aucune sentinelle visible (`printf "\033]..."`) dans le terminal PTY.
+  - Saisie shell continue et non-bloquante pendant la réflexion et le streaming du modèle.
+  - Bascule automatique du focus sur le shell à la soumission du prompt pour une ergonomie optimale.
+  - Prévention de la pollution de l'historique shell (espace initial pour Fish, Bash, Zsh).
+- [x] **Éditeur de Prompt Multi-Lignes & Auto-Réparation Markdown :**
+  - Passage à la ligne fluide via `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter` et `Ctrl + J`.
+  - Auto-réparation à la volée des blocs de code fermés prématurément par les LLMs.
+  - Filtrage des faux blocs de commandes (flèches de transition, descriptions).
 - [x] **Extracteur de Contexte Système Local :**
   - Détection automatique de la distribution Linux (Arch, CachyOS, Ubuntu, Debian, Fedora, Alpine) ou macOS.
   - Détection des gestionnaires de paquets installés (`apt`, `pacman`, `dnf`, `brew`, `nix`, `cargo`, `yay`, `paru`, `flatpak`, `snap`).

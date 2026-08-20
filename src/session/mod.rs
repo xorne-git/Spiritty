@@ -98,17 +98,32 @@ impl Session {
             }
             match msg.role {
                 MessageRole::User => {
-                    let first_line = trimmed.lines().next().unwrap_or(trimmed);
-                    let snippet = clean_summary_snippet(first_line, 120);
-                    summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
+                    if let Some(start) = trimmed.find("💻 `") {
+                        let prefix_len = "💻 `".len();
+                        let after = &trimmed[start + prefix_len..];
+                        if let Some(end) = after.find('`') {
+                            let snippet = clean_summary_snippet(&after[..end], 120);
+                            summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
+                        } else {
+                            let snippet = clean_summary_snippet(trimmed, 120);
+                            summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
+                        }
+                    } else {
+                        let first_line = trimmed.lines().next().unwrap_or(trimmed);
+                        let snippet = clean_summary_snippet(first_line, 120);
+                        summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
+                    }
                 }
                 MessageRole::Assistant => {
-                    if trimmed.contains("💻 `") {
-                        if let Some(start) = trimmed.find("💻 `") {
-                            let after = &trimmed[start + 4..];
-                            if let Some(end) = after.find('`') {
-                                summary_points.push(format!("- 💻 Commande exécutée : `{}`", &after[..end]));
-                            }
+                    if let Some(start) = trimmed.find("💻 `") {
+                        let prefix_len = "💻 `".len();
+                        let after = &trimmed[start + prefix_len..];
+                        if let Some(end) = after.find('`') {
+                            let snippet = clean_summary_snippet(&after[..end], 120);
+                            summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
+                        } else {
+                            let snippet = clean_summary_snippet(trimmed, 120);
+                            summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
                         }
                     } else {
                         let first_line = trimmed.lines().next().unwrap_or(trimmed);

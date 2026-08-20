@@ -72,6 +72,14 @@ Les assistants CLI existants souffrent de deux écueils majeurs :
   - Bascule de focus au clic (`🖱`), défilement à la molette (`🖱 Molette / PgUp/PgDn`).
   - Sélection de texte à la souris et copie automatique dans le presse-papier système (Wayland / X11).
   - Modale de configuration dynamique (`Ctrl + P`) et modale d'aide aux touches (`F1`).
+- [x] **Conscience Système & Détection SSH Dynamique :**
+  - Profiling multi-serveurs automatique (`hosts.json`) et bascule instantanée du prompt lors des connexions SSH.
+  - Exécution 100% silencieuse sans pollution visuelle ni sentinelles dans le terminal.
+  - Shell live et non-bloquant : tapez vos commandes librement pendant la génération du modèle.
+- [x] **Éditeur de Prompt Multi-Lignes :**
+  - `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter` et `Ctrl + J` pour rédiger des prompts multi-lignes.
+- [x] **Niveaux d'Approbation (Auto-Approve) :**
+  - Cycle rapide avec `F3` : 🟢 Safe / 🟡 Sudo / 🔴 YOLO / ⚫ Off.
 - [x] **Internationalisation (i18n) :** Français et Anglais avec détection automatique via `$LANG`.
 
 ---
@@ -80,8 +88,11 @@ Les assistants CLI existants souffrent de deux écueils majeurs :
 
 | Raccourci | Action |
 | :--- | :--- |
+| `Entrée` | Envoyer le prompt (Chat) ou valider une commande (Terminal) |
+| `Shift + Entrée` / `Ctrl + J` | Insérer un retour à la ligne dans l'éditeur de prompt |
 | `Ctrl + Espace` ou `Shift + Tab` | Basculer le focus (Chat ↔ Terminal) |
 | `Alt + 1` .. `Alt + 9` | Exécuter directement la proposition de commande N |
+| `F3` | Changer le mode d'approbation automatique (Safe / Sudo / YOLO / Off) |
 | `Ctrl + H` | Ouvrir le gestionnaire de sessions |
 | `Ctrl + N` | Créer une nouvelle session vierge |
 | `Ctrl + P` | Ouvrir la configuration des modèles / API keys |

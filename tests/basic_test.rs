@@ -431,20 +431,71 @@ async fn test_stop_agent_generation() {
 
 #[test]
 fn test_format_command_for_pty() {
-    use spiritty::app::format_command_for_pty;
+    use spiritty::app::{format_command_for_pty, format_command_for_pty_with_session};
 
     // 1. Simple cd command
-    assert_eq!(format_command_for_pty("cd /var/log", "fish"), "cd /var/log\n");
+    assert_eq!(format_command_for_pty("cd /var/log", "fish"), " cd /var/log\n");
 
-    // 2. Simple single line in fish
-    assert_eq!(format_command_for_pty("free -h", "fish"), "bash -c 'free -h'\n");
+    // 2. Simple single line in local fish (wraps in bash -c with space)
+    assert_eq!(format_command_for_pty("free -h", "fish"), " bash -c 'free -h'\n");
 
-    // 3. Multiline heredoc script in fish or bash -> must be single line base64 pipe
+    // 3. Simple single line in local bash (no bash -c wrapping needed)
+    assert_eq!(format_command_for_pty("free -h", "bash"), " free -h\n");
+
+    // 4. Simple single line on remote SSH (tool capture -> pure clean command)
+    let remote_tool_cmd = format_command_for_pty_with_session("free -h", "fish", true, true);
+    assert_eq!(remote_tool_cmd, " free -h\n");
+
+    // 5. Simple single line on remote SSH (manual user Alt+1 -> pure clean command)
+    let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
+    assert_eq!(remote_user_cmd, " cat ~/audit_systeme.md\n");
+
+    // 6. Local multiline heredoc script -> runs clean verbose temporary script (with leading space to avoid history)
     let multiline_heredoc = "cat > ~/audit.md << EOF\n# Title\nEOF";
-    let formatted = format_command_for_pty(multiline_heredoc, "fish");
-    assert!(formatted.starts_with("echo '"));
-    assert!(formatted.ends_with("' | base64 -d | bash\n"));
-    assert_eq!(formatted.matches('\n').count(), 1); // Strictly single line
+    let formatted_local = format_command_for_pty(multiline_heredoc, "fish");
+    assert!(formatted_local.starts_with(" bash -v "));
+    assert!(formatted_local.ends_with("spiritty_exec.sh\n"));
+
+    // 7. Remote SSH multiline heredoc script -> single line base64 pipe
+    let formatted_remote = format_command_for_pty_with_session(multiline_heredoc, "fish", true, true);
+    assert!(formatted_remote.starts_with(" echo '"));
+    assert!(formatted_remote.ends_with("' | base64 -d | bash -v\n"));
+    assert_eq!(formatted_remote.matches('\n').count(), 1);
+}
+
+#[test]
+fn test_repair_missing_heredoc_terminator() {
+    use spiritty::app::repair_missing_heredoc_terminator;
+
+    // 1. Missing EOF
+    let truncated = "cat > ~/audit_systeme.md << 'EOF'\nAudit Système - CachyOS\nDate : 2026-08-20";
+    let repaired = repair_missing_heredoc_terminator(truncated);
+    assert_eq!(repaired, "cat > ~/audit_systeme.md << 'EOF'\nAudit Système - CachyOS\nDate : 2026-08-20\nEOF\n");
+
+    // 2. Missing ENDOFFILE
+    let truncated2 = "cat << 'ENDOFFILE' > ~/file.txt\nSome content";
+    let repaired2 = repair_missing_heredoc_terminator(truncated2);
+    assert_eq!(repaired2, "cat << 'ENDOFFILE' > ~/file.txt\nSome content\nENDOFFILE\n");
+
+    // 3. Already closed EOF
+    let valid = "cat > ~/audit.md << EOF\nContent\nEOF";
+    let repaired_valid = repair_missing_heredoc_terminator(valid);
+    assert_eq!(repaired_valid, valid);
+}
+
+#[test]
+fn test_clean_heredoc_script() {
+    use spiritty::app::clean_heredoc_script;
+
+    let messy_raw = "pour récupérer ces infos.\ncat > ~/audit_systeme.md << 'EOF'\ntotal   utilisé  libre\nMem:   $(free -h)\nEOF\n✓ Fichier mis à jour avec les vraies données du système !\nVérifie le contenu avec : cat ~/audit_systeme.md\ncat ~/audit_systeme.md";
+    let cleaned = clean_heredoc_script(messy_raw);
+    assert_eq!(
+        cleaned,
+        "cat > ~/audit_systeme.md << 'EOF'\ntotal   utilisé  libre\nMem:   $(free -h)\nEOF\ncat ~/audit_systeme.md"
+    );
+    assert!(!cleaned.contains("pour récupérer"));
+    assert!(!cleaned.contains("✓ Fichier"));
+    assert!(!cleaned.contains("Vérifie le contenu"));
 }
 
 #[test]
@@ -620,4 +671,52 @@ fn test_prompt_cursor_word_wrapping() {
     assert_eq!(c_row2, 2);
     assert_eq!(c_col2, c_col - 1);
 }
+
+#[tokio::test]
+async fn test_shift_enter_multiline_prompt() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::App;
+    use tokio::sync::mpsc;
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, 24, 80).unwrap();
+    app.focus = spiritty::app::Focus::Chat;
+
+    // Type "Line 1"
+    for c in "Line 1".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(app.chat_input, "Line 1");
+
+    // Press Shift+Enter -> inserts '\n'
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    assert_eq!(app.chat_input, "Line 1\n");
+
+    // Type "Line 2"
+    for c in "Line 2".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(app.chat_input, "Line 1\nLine 2");
+
+    // Press Ctrl+J -> inserts '\n'
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+    assert_eq!(app.chat_input, "Line 1\nLine 2\n");
+}
+
+#[test]
+fn test_repair_prematurely_closed_code_blocks() {
+    use spiritty::app::{extract_all_command_proposals, repair_prematurely_closed_code_blocks};
+
+    let glitched = "Je corrige avec le bon pattern :\n\n```bash\n \n```\nfor v in 7.4 8.4 8.5; do\n  sudo sed -i -e 's/a/b/' /etc/php/$v/fpm/php.ini\ndone\n\nsudo systemctl restart php-fpm`";
+    let repaired = repair_prematurely_closed_code_blocks(glitched);
+
+    assert!(repaired.contains("```bash\nfor v in 7.4 8.4 8.5; do"));
+    assert!(repaired.ends_with("sudo systemctl restart php-fpm\n```"));
+
+    let proposals = extract_all_command_proposals(glitched);
+    assert_eq!(proposals.len(), 1);
+    assert!(proposals[0].starts_with("for v in 7.4 8.4 8.5; do"));
+}
+
+
 
