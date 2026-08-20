@@ -318,6 +318,27 @@ async fn test_chat_overscroll_down() {
     assert_eq!(app.chat_scroll_extra_down, 0);
 }
 
+#[tokio::test]
+async fn test_empty_chat_badge_shows_zero() {
+    use spiritty::app::App;
+    use spiritty::ui::chat_panel::ChatPanel;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = App::new(event_tx, 55, 100).expect("create app");
+    let mut buf = Buffer::empty(Rect::new(0, 0, 100, 50));
+
+    let panel = ChatPanel::new(&app);
+    panel.render_panel(Rect::new(0, 0, 100, 50), &mut buf);
+
+    let top_header = (0..100)
+        .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
+        .collect::<String>();
+
+    assert!(top_header.contains("0 l."), "Empty chat panel header must show 0 l. instead of 4 l. (got: {})", top_header);
+}
+
 #[test]
 fn test_markdown_heading_rendering() {
     let md = "# Title 1\n## Title 2\n### Title 3\n#### Title 4\n##### Title 5\n###### Title 6\nNormal text";

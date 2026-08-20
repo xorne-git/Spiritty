@@ -251,14 +251,23 @@ impl<'a> ChatPanel<'a> {
             push_blank_line(&mut lines);
         }
 
-        // Always add 4 trailing blank lines at the very bottom so the last message and action buttons have generous breathing room
-        for _ in 0..4 {
-            lines.push(Line::from(""));
+        let content_visual_lines = compute_wrapped_lines_count(&lines, messages_area.width);
+
+        // Add 4 trailing blank lines at the bottom for breathing room only when there are messages
+        if !lines.is_empty() {
+            for _ in 0..4 {
+                lines.push(Line::from(""));
+            }
         }
 
-        let total_visual_lines = compute_wrapped_lines_count(&lines, messages_area.width);
+        let total_rendered_lines = if content_visual_lines > 0 {
+            content_visual_lines.saturating_add(4)
+        } else {
+            0
+        };
+
         let visible_height = messages_area.height;
-        let max_scroll = total_visual_lines.saturating_sub(visible_height);
+        let max_scroll = total_rendered_lines.saturating_sub(visible_height);
 
         let scroll_from_bottom = self.app.chat_scroll_from_bottom.min(max_scroll);
         let extra_down = self.app.chat_scroll_extra_down;
@@ -273,7 +282,7 @@ impl<'a> ChatPanel<'a> {
         if area.width > 25 {
             let (badge_text, badge_style) = if scroll_from_bottom > 0 {
                 (
-                    format!(" ▲ -{} / {} l. ", scroll_from_bottom, total_visual_lines),
+                    format!(" ▲ -{} / {} l. ", scroll_from_bottom, content_visual_lines),
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
                 )
             } else if extra_down > 0 {
@@ -283,7 +292,7 @@ impl<'a> ChatPanel<'a> {
                 )
             } else {
                 (
-                    format!(" 📜 {} l. ", total_visual_lines),
+                    format!(" 📜 {} l. ", content_visual_lines),
                     Style::default().fg(if is_focused { Color::Cyan } else { Color::DarkGray }),
                 )
             };
