@@ -10,6 +10,7 @@ use crate::{
     agent::AgentEngine,
     config::{Config, ProviderType},
     event::AppEvent,
+    i18n::Language,
     pty::PtyProcess,
     session::{Session, SessionStorage},
     system::{ActiveSession, HostsStore, SystemContext},
@@ -905,20 +906,13 @@ impl App {
             }
         }
 
-        // 2. Esc cancels active generation or active PTY tool
-        if key.code == KeyCode::Esc && self.agent.is_generating {
-            self.agent.is_generating = false;
-            self.pending_tool_approval = None;
-            self.active_pty_tool = None;
-            if let Some(last_msg) = self.messages.last_mut() {
-                if last_msg.role == MessageRole::Assistant {
-                    if last_msg.content.is_empty() {
-                        last_msg.content = "(Génération interrompue par l'utilisateur)".to_string();
-                    } else {
-                        last_msg.content.push_str("\n\n(Génération interrompue)");
-                    }
-                }
-            }
+        // 2. Esc or Ctrl+C / Ctrl+S cancels active generation or active PTY tool
+        let is_stop_key = key.code == KeyCode::Esc
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('s')));
+
+        if is_stop_key && self.agent.is_generating {
+            self.stop_agent_generation();
             return;
         }
 
@@ -1361,6 +1355,30 @@ impl App {
                     last_msg.content.push_str(&format!("\n\n⚠️ Erreur : {}", error));
                 }
             }
+        }
+    }
+
+    pub fn stop_agent_generation(&mut self) {
+        if self.agent.is_generating {
+            self.agent.stop_generation();
+            self.pending_tool_approval = None;
+            self.active_pty_tool = None;
+            if let Some(last_msg) = self.messages.last_mut() {
+                if last_msg.role == MessageRole::Assistant {
+                    if last_msg.content.trim().is_empty() {
+                        last_msg.content = "(Génération interrompue par l'utilisateur)".to_string();
+                    } else {
+                        last_msg.command_proposal = extract_command_proposal(&last_msg.content);
+                    }
+                }
+            }
+            let lang = self.config.get_language();
+            self.set_toast(if lang == Language::Fr {
+                "⏹ Génération interrompue".to_string()
+            } else {
+                "⏹ Generation stopped".to_string()
+            });
+            self.save_current_session();
         }
     }
 }

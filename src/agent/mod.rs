@@ -6,6 +6,7 @@ pub mod tools;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -22,6 +23,7 @@ pub struct AgentEngine {
     config: Config,
     provider: Arc<Box<dyn LlmProvider>>,
     pub is_generating: bool,
+    cancel_token: Option<CancellationToken>,
 }
 
 impl AgentEngine {
@@ -31,6 +33,7 @@ impl AgentEngine {
             config,
             provider,
             is_generating: false,
+            cancel_token: None,
         }
     }
 
@@ -43,13 +46,25 @@ impl AgentEngine {
         self.config = config;
     }
 
+    pub fn stop_generation(&mut self) {
+        if let Some(token) = self.cancel_token.take() {
+            token.cancel();
+        }
+        self.is_generating = false;
+    }
+
     pub fn send_prompt(
         &mut self,
         messages: Vec<ChatMessage>,
         sys_ctx: &crate::system::SystemContext,
         event_tx: UnboundedSender<AppEvent>,
     ) -> Result<()> {
+        self.stop_generation();
+
+        let cancel_token = CancellationToken::new();
+        self.cancel_token = Some(cancel_token.clone());
         self.is_generating = true;
+
         let provider = Arc::clone(&self.provider);
         let config = self.config.clone();
         let lang = config.get_language();
@@ -57,6 +72,11 @@ impl AgentEngine {
         let system_prompt = build_system_prompt(lang, sys_ctx, &config);
 
         tokio::spawn(async move {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    let _ = event_tx.send(AppEvent::AgentDone);
+                }
+                _ = async {
             // Format history cleanly for the LLM without UI control pills but preserving command blocks
             let mut conversation: Vec<ChatMessage> = messages
                 .into_iter()
@@ -233,6 +253,8 @@ impl AgentEngine {
                 // No tool call requested or final diagnostic reached: finish turn!
                 let _ = forward_event_tx.send(AppEvent::AgentDone);
                 break;
+            }
+                } => {}
             }
         });
 

@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     app::{App, Focus, MessageRole},
     i18n::{I18nKey, Language},
+    ui::get_spinner_char,
 };
 
 pub struct ChatPanel<'a> {
@@ -280,7 +281,12 @@ impl<'a> ChatPanel<'a> {
 
         // Render scroll indicator badge on the top border (liseret)
         if area.width > 25 {
-            let (badge_text, badge_style) = if scroll_from_bottom > 0 {
+            let (badge_text, badge_style) = if self.app.agent.is_generating {
+                (
+                    format!(" {} {} [Esc] Stop ", get_spinner_char(self.app.spinner_frame), if lang == Language::Fr { "Génération" } else { "Generating" }),
+                    Style::default().bg(Color::Rgb(70, 30, 30)).fg(Color::LightRed).add_modifier(Modifier::BOLD),
+                )
+            } else if scroll_from_bottom > 0 {
                 (
                     format!(" ▲ -{} / {} l. ", scroll_from_bottom, content_visual_lines),
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
@@ -323,12 +329,33 @@ impl<'a> ChatPanel<'a> {
         let input_scroll = cursor_row.saturating_sub(needed_input_height.saturating_sub(1));
 
         if self.app.chat_input.is_empty() {
-            let placeholder_line = Line::from(vec![
-                Span::styled(
-                    lang.t(I18nKey::ChatInputPlaceholder),
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
-                ),
-            ]);
+            let placeholder_line = if self.app.agent.is_generating {
+                Line::from(vec![
+                    Span::styled(
+                        format!("{} ", get_spinner_char(self.app.spinner_frame)),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        if lang == Language::Fr { "Génération en cours...  " } else { "Generating response...  " },
+                        Style::default().fg(Color::Cyan),
+                    ),
+                    Span::styled(
+                        "[Esc]",
+                        Style::default().bg(Color::Rgb(60, 25, 25)).fg(Color::LightRed).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        if lang == Language::Fr { " Arrêter" } else { " Stop" },
+                        Style::default().fg(Color::LightRed),
+                    ),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(
+                        lang.t(I18nKey::ChatInputPlaceholder),
+                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    ),
+                ])
+            };
             let p = Paragraph::new(placeholder_line).wrap(Wrap { trim: false });
             p.render(input_area, buf);
         } else {

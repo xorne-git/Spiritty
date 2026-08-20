@@ -409,6 +409,28 @@ fn test_sanitize_bash_command_syntax() {
     assert_eq!(sanitize_bash_command_syntax(awk_cmd), awk_cmd);
 }
 
+#[tokio::test]
+async fn test_stop_agent_generation() {
+    use spiritty::app::{App, ChatMessage, MessageRole};
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Génération partielle...".to_string(),
+        command_proposal: None,
+    });
+
+    app.agent.is_generating = true;
+    assert!(app.agent.is_generating);
+
+    app.stop_agent_generation();
+
+    assert!(!app.agent.is_generating);
+    assert_eq!(app.messages.last().unwrap().content, "Génération partielle...");
+    assert!(app.toast_message.is_some());
+}
+
 #[test]
 fn test_parse_command_execution_request() {
     use spiritty::app::parse_command_execution_request;
