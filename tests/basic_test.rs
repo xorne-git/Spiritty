@@ -388,6 +388,28 @@ fn test_clean_multiline_command() {
 }
 
 #[test]
+fn test_sanitize_bash_command_syntax() {
+    use spiritty::app::sanitize_bash_command_syntax;
+
+    // Compound brace missing trailing semicolon
+    let bad_compound = "{ echo \"# Title\" && echo \"done\" } > ~/file.md";
+    let fixed = sanitize_bash_command_syntax(bad_compound);
+    assert_eq!(fixed, "{ echo \"# Title\" && echo \"done\"; } > ~/file.md");
+
+    // Already valid compound brace with semicolon
+    let valid_compound = "{ echo \"a\"; echo \"b\"; } > ~/file.md";
+    assert_eq!(sanitize_bash_command_syntax(valid_compound), valid_compound);
+
+    // Parameter expansion ${VAR} must NOT be altered
+    let param_exp = "echo \"Session: ${XDG_SESSION_TYPE:-unknown}\"";
+    assert_eq!(sanitize_bash_command_syntax(param_exp), param_exp);
+
+    // Awk single-quoted scripts must NOT be altered
+    let awk_cmd = "awk '{print $1}'";
+    assert_eq!(sanitize_bash_command_syntax(awk_cmd), awk_cmd);
+}
+
+#[test]
 fn test_parse_command_execution_request() {
     use spiritty::app::parse_command_execution_request;
 

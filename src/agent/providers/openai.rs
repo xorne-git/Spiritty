@@ -59,6 +59,8 @@ struct ChatCompletionRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -125,6 +127,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             messages: api_messages,
             stream: true,
             max_tokens: Some(8192),
+            temperature: Some(0.2),
         };
 
         let url = format!("{}/chat/completions", self.base_url);

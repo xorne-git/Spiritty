@@ -1802,7 +1802,68 @@ pub fn clean_multiline_command(command: &str) -> String {
         result.push_str(l);
     }
 
-    result.trim().to_string()
+    sanitize_bash_command_syntax(result.trim())
+}
+
+/// Auto-corrects common LLM bash syntax errors, such as compound `{ ... }` blocks lacking `;` before `}`.
+pub fn sanitize_bash_command_syntax(cmd: &str) -> String {
+    let mut out = String::with_capacity(cmd.len() + 8);
+    let chars: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    let mut inside_single_quotes = false;
+    let mut inside_double_quotes = false;
+    let mut brace_stack: Vec<bool> = Vec::new(); // true = compound brace `{ ... }`
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' && !inside_double_quotes {
+            inside_single_quotes = !inside_single_quotes;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '"' && !inside_single_quotes {
+            inside_double_quotes = !inside_double_quotes;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+
+        if !inside_single_quotes && !inside_double_quotes {
+            if c == '{' {
+                // Determine if this is a compound command brace `{` (preceded by whitespace, start, or operator)
+                // vs parameter expansion `${VAR}` (preceded by `$`)
+                let is_param = if i > 0 { chars[i - 1] == '$' } else { false };
+                brace_stack.push(!is_param);
+                out.push(c);
+                i += 1;
+                continue;
+            } else if c == '}' {
+                if let Some(is_compound) = brace_stack.pop() {
+                    if is_compound {
+                        // Check preceding non-whitespace character in `out`
+                        let prev_non_ws = out.trim_end().chars().last();
+                        if let Some(prev) = prev_non_ws {
+                            if prev != ';' && prev != '&' && prev != '|' && prev != '\n' && prev != '{' {
+                                let trimmed_len = out.trim_end().len();
+                                out.truncate(trimmed_len);
+                                out.push(';');
+                                out.push(' ');
+                            }
+                        }
+                    }
+                }
+                out.push(c);
+                i += 1;
+                continue;
+            }
+        }
+
+        out.push(c);
+        i += 1;
+    }
+
+    out
 }
 
 fn is_clean_command_line(line: &str) -> bool {
