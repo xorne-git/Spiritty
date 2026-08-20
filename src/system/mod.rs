@@ -99,7 +99,7 @@ impl SystemContext {
         let wm = self.desktop_env.as_deref().unwrap_or("Terminal/Console");
 
         format!(
-            "Environnement système détecté de l'utilisateur (Machine Locale) :\n- Distribution : {}\n- Noyau : {}\n- Shell : {}\n- Gestionnaires de paquets disponibles : {} (N'utilisez JAMAIS d'autres gestionnaires non présents comme dpkg/rpm/apt s'ils ne sont pas listés !)\n- Environnement graphique : {}\n- Services : systemd (pensez toujours à vérifier à la fois 'systemctl' et 'systemctl --user' pour les services utilisateur comme dms, pipewire, etc.)",
+            "Environnement système détecté de l'utilisateur (Machine Locale) :\n- Distribution : {}\n- Noyau : {}\n- Shell interactif du terminal : {} (IMPORTANT : l'interpréteur de commandes et d'outils est Bash/POSIX standard. Toutes vos propositions de commandes et inspections doivent être impérativement écrites en syntaxe Bash standard, jamais en syntaxe Fish).\n- Gestionnaires de paquets disponibles : {} (N'utilisez JAMAIS d'autres gestionnaires non présents comme dpkg/rpm/apt s'ils ne sont pas listés !)\n- Environnement graphique : {}\n- Services : systemd (pensez toujours à vérifier à la fois 'systemctl' et 'systemctl --user' pour les services utilisateur comme dms, pipewire, etc.)",
             self.distro, self.kernel, self.shell, pms, wm
         )
     }

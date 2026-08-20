@@ -1715,7 +1715,12 @@ pub fn clean_multiline_command(command: &str) -> String {
         return String::new();
     }
 
-    // 1. Heredocs (`<<EOF`, `<< 'EOF'`, `<<-EOF`, etc.): preserve full multiline structure verbatim!
+    // 1. If already wrapped in `bash -c`, don't re-wrap
+    if trimmed.starts_with("bash -c") {
+        return trimmed.to_string();
+    }
+
+    // 2. Heredocs (`<<EOF`, `<< 'EOF'`, `<<-EOF`, etc.): preserve full multiline structure verbatim!
     if trimmed.contains("<<") {
         let script_lines: Vec<&str> = trimmed
             .lines()
