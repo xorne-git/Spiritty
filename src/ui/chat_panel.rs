@@ -185,9 +185,13 @@ impl<'a> ChatPanel<'a> {
                             if trimmed.starts_with("```") {
                                 continue;
                             }
-                            lines.push(Line::from(vec![
-                                Span::styled(format!("  {}", l), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-                            ]));
+                            if l.is_empty() {
+                                lines.push(Line::from(""));
+                            } else {
+                                lines.push(Line::from(vec![
+                                    Span::styled(format!("  {}", l), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
+                                ]));
+                            }
                         }
                         push_blank_line(&mut lines);
                         if !parsed.response.is_empty() {
@@ -228,9 +232,13 @@ impl<'a> ChatPanel<'a> {
             lines.push(Line::from(title_spans));
 
             for l in pending.command.lines() {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("  {}", l), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                ]));
+                if l.is_empty() {
+                    lines.push(Line::from(""));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {}", l), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    ]));
+                }
             }
 
             let mut footer_spans = vec![Span::raw("  ")];
@@ -816,9 +824,13 @@ fn render_tool_output_box(output: &str, lines: &mut Vec<Line<'static>>) {
 
     push_blank_line(lines);
     for l in output.lines() {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
-        ]));
+        if l.is_empty() {
+            lines.push(Line::from(""));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
+            ]));
+        }
     }
     push_blank_line(lines);
 }
@@ -842,9 +854,13 @@ fn render_code_snippet_box(code: &str, tag: &str, lines: &mut Vec<Line<'static>>
     }
 
     for l in code.lines() {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
-        ]));
+        if l.is_empty() {
+            lines.push(Line::from(""));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
+            ]));
+        }
     }
     push_blank_line(lines);
 }
@@ -874,9 +890,13 @@ fn render_command_card(card_idx: usize, cmd: &str, _tag: &str, lang: Language, l
     lines.push(Line::from(title_spans));
 
     for l in cmd.lines() {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", l), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
+        if l.is_empty() {
+            lines.push(Line::from(""));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}", l), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            ]));
+        }
     }
 
     let mut footer_spans = vec![Span::raw("  ")];

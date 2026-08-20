@@ -219,6 +219,73 @@ fn test_paragraph_wrapping_line_count() {
     assert_eq!(rendered_lines4, calculated4);
 }
 
+#[tokio::test]
+async fn test_chat_scrolling_repro() {
+    use spiritty::app::{App, ChatMessage, MessageRole};
+    use spiritty::ui::chat_panel::ChatPanel;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+    app.messages.clear();
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "L'utilisateur me salue simplement. Je dois répondre de manière concise et amicale en français, comme un assistant Spiritty. Pas besoin d'exécuter de commande ici - c'est juste une salutation.\n\nSalut ! 🦀 Je suis Spiritty, ton assistant terminal. Comment puis-je t'aider aujourd'hui ?".to_string(),
+        command_proposal: None,
+    });
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "Génère-moi un fichier ~/audit_systeme.md récapitulant les informations clés de mon noyau, shell et mémoire RAM.".to_string(),
+        command_proposal: None,
+    });
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "<think>\nL'utilisateur veut que je génère un fichier ~/audit_systeme.md avec des infos sur le noyau, le shell et la RAM. Je dois d'abord récupérer ces informations via tool:run_command, puis créer le fichier.\n\nJe vais exécuter les commandes nécessaires pour obtenir :\n- Version du noyau (uname -r)\n- Shell en cours (echo $SHELL ou whoami)\n- Informations sur la RAM (free -h)\n</think>\n```tool:run_command\nuname -r && echo \"---\" && whoami && echo \"---\" && free -h | head -2 && echo \"---\" && cat /etc/os-release | grep PRETTY_NAME\n```".to_string(),
+        command_proposal: None,
+    });
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "💻 `uname -r && echo \"---\" && whoami && echo \"---\" && free -h | head -2 && echo \"---\" && cat /etc/os-release | grep PRETTY_NAME`".to_string(),
+        command_proposal: None,
+    });
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "```bash\ncat > ~/audit_systeme.md << 'EOF'\n# Audit Système - CachyOS\n\n## Informations Clés\n\n### Noyau (Kernel)\n- **Version** : 7.1.8-1-cachyos\n- **Distribution** : CachyOS\n\n### Shell\n- **Shell actif** : xorne (alias pour fish)\n- **Utilisateur** : xorne\n\n### Mémoire RAM\n| Statut | Quantité |\n|--------|----------|\n| **Total** | 31 GiB |\n| **Utilisé** | 11 GiB |\n| **Libre** | 885 MiB |\n| **Disponible** | 19 GiB |\n\n### Résumé\n- **Utilisation RAM** : ~36% (11 GiB / 31 GiB)\n- **Etat** : ✅ Bon - La mémoire est correctement gérée avec suffisamment de ressources disponibles.\nEOF\n```".to_string(),
+        command_proposal: None,
+    });
+
+    let panel_area_big = Rect::new(0, 0, 100, 200);
+    let mut buf_big = Buffer::empty(panel_area_big);
+    let panel_big = ChatPanel::new(&app);
+    panel_big.render_panel(panel_area_big, &mut buf_big);
+
+    let mut b_52 = Buffer::empty(Rect::new(0, 0, 100, 52));
+    let panel = ChatPanel::new(&app);
+    panel.render_panel(Rect::new(0, 0, 100, 52), &mut b_52);
+
+    let rendered_text = (0..52)
+        .map(|y| {
+            (0..100)
+                .map(|x| b_52.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        rendered_text.contains("Alt") && rendered_text.contains("Exécuter"),
+        "The bottom action buttons [Alt 1 Exécuter] must be visible in the chat viewport!"
+    );
+    assert!(
+        rendered_text.contains("EOF"),
+        "The command content EOF must be visible in the chat viewport!"
+    );
+}
+
 #[test]
 fn test_markdown_heading_rendering() {
     let md = "# Title 1\n## Title 2\n### Title 3\n#### Title 4\n##### Title 5\n###### Title 6\nNormal text";
