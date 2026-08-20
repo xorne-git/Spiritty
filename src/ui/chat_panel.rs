@@ -345,7 +345,7 @@ impl<'a> ChatPanel<'a> {
                     ]),
                     Alignment::Center,
                 )
-            } else {
+            } else if self.app.messages.is_empty() {
                 (
                     Line::from(vec![Span::styled(
                         lang.t(I18nKey::ChatInputPlaceholder),
@@ -353,6 +353,8 @@ impl<'a> ChatPanel<'a> {
                     )]),
                     Alignment::Left,
                 )
+            } else {
+                (Line::from(""), Alignment::Left)
             };
             let p = Paragraph::new(placeholder_line)
                 .alignment(alignment)
