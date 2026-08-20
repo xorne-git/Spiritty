@@ -427,6 +427,8 @@ async fn test_stop_agent_generation() {
     assert!(!app.agent.is_generating);
     assert_eq!(app.messages.last().unwrap().content, "Génération partielle...");
     assert!(app.toast_message.is_some());
+
+    let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
 }
 
 #[test]

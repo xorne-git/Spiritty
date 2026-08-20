@@ -187,6 +187,9 @@ async fn test_app_new_session_shortcut() {
     assert!(app.messages.is_empty());
     assert!(app.chat_input.is_empty());
     assert!(app.toast_message.is_some());
+
+    let _ = SessionStorage::delete(&initial_id);
+    let _ = SessionStorage::delete(&app.current_session.id);
 }
 
 #[tokio::test]
@@ -212,6 +215,7 @@ async fn test_app_load_session_shortcut() {
 
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut app = App::new(event_tx, 55, 100).expect("create app");
+    let initial_app_id = app.current_session.id.clone();
 
     // Open sessions modal with Ctrl+H
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
@@ -233,5 +237,6 @@ async fn test_app_load_session_shortcut() {
     assert_eq!(app.messages[0].content, "Question sauvegardée");
 
     let _ = SessionStorage::delete("test_load_123");
+    let _ = SessionStorage::delete(&initial_app_id);
 }
 

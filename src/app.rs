@@ -272,7 +272,7 @@ impl App {
     }
 
     pub fn save_current_session(&mut self) {
-        if self.messages.is_empty() {
+        if self.messages.is_empty() || self.messages.iter().all(|m| m.content.trim().is_empty()) {
             return;
         }
         let active_provider = self.config.default_provider.display_name();

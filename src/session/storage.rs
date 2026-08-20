@@ -79,6 +79,9 @@ impl SessionStorage {
     }
 
     pub fn save(session: &Session) -> Result<()> {
+        if session.messages.is_empty() {
+            return Ok(());
+        }
         let dir = Self::sessions_dir()?;
         let file_path = dir.join(format!("{}.json", session.id));
         let json = serde_json::to_string_pretty(session)
