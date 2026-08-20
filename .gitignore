@@ -1,0 +1,18 @@
+# Rust build artifacts
+target/
+
+# Environment & Secrets
+.env
+.env.*
+*.local
+
+# IDE & OS files
+.DS_Store
+.idea/
+.vscode/
+.codewhale/
+*.swp
+*~
+
+# Spiritty local cache/config during dev
+*.log

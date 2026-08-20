@@ -1,0 +1,31 @@
+[package]
+name = "spiritty"
+version = "0.2.0"
+edition = "2021"
+authors = ["Spiritty Contributors"]
+description = "AI-powered split-screen terminal companion for sysadmins and power users"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+portable-pty = "0.8"
+vt100 = "0.15"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+anyhow = "1.0"
+thiserror = "2.0"
+unicode-width = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+async-trait = "0.1"
+eventsource-stream = "0.2"
+toml = "0.8"
+dirs = "5.0"
+arboard = "3.4"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
