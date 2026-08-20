@@ -46,6 +46,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescSessionModal => "Session Manager and History",
         I18nKey::HelpDescNewSession => "Start a new clean session",
         I18nKey::HelpDescAutoApprove => "Cycle Auto-Approve mode (Safe / Sudo / YOLO / Off)",
+        I18nKey::FooterApprovalLabel => "Approval: ",
         I18nKey::HelpDescToggleHelp => "Open or close this help window",
         I18nKey::HelpDescQuit => "Quit Spiritty",
         I18nKey::HelpDescCloseModal => "Close active modal",

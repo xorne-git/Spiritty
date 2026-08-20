@@ -12,7 +12,7 @@ use ratatui::{
 
 use crate::{
     app::{App, Focus, ModalState},
-    i18n::Language,
+    i18n::{I18nKey, Language},
 };
 use chat_panel::ChatPanel;
 use components::HelpModal;
@@ -305,6 +305,7 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
         AutoApproveLevel::Yolo => (Color::Red, "YOLO"),
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
+    right_spans.push(Span::styled(lang.t(I18nKey::FooterApprovalLabel), Style::default().fg(Color::DarkGray)));
     right_spans.extend(key_pill("F3", auto_badge_color));
     right_spans.push(Span::styled(format!(" {} ", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
 

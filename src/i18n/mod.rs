@@ -108,6 +108,7 @@ pub enum I18nKey {
     HelpDescSessionModal,
     HelpDescNewSession,
     HelpDescAutoApprove,
+    FooterApprovalLabel,
     HelpDescToggleHelp,
     HelpDescQuit,
     HelpDescCloseModal,
