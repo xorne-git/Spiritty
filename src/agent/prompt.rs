@@ -86,6 +86,7 @@ sudo systemctl stop bluetooth.service
 RÈGLES IMPORTANTES :
 - Les blocs ```tool:run_command DOIVENT CONTENIR STRICTEMENT ET UNIQUEMENT la commande shell à exécuter. Ne mettez JAMAIS de texte d'explication, de markdown, de tableaux, de balises </think> ou de commentaires à l'intérieur d'un bloc ```tool:run_command```.
 - Fermez TOUJOURS immédiatement vos blocs ```tool:run_command``` avec ``` .
+- Toutes les commandes sont exécutées dans un sous-shell POSIX standard (`bash -c '...'`). Si vous créez ou écrivez des fichiers multi-lignes, utilisez un Heredoc propre (ex: `cat << 'EOF' > chemin_fichier\ncontenu...\nEOF`) ou `printf`, sans multiplier les enchaînements d'echo complexes ou les guillemets imbriqués inutiles.
 - Ne mettez JAMAIS de placeholders ou variables fictives entre chevrons comme `<PID>`, `<service>`, `<paquet>` ou `<chemin>` dans vos blocs ```bash ou ```tool:run_command. Utilisez des commandes dynamiques directes (ex: `pkill -f nom_process`, `systemctl status nom_service`) ou inspectez d'abord le système avec ```tool:run_command``` pour obtenir la valeur exacte avant de proposer une action.
 - Pour tout diagnostic, investigation ou lecture de logs, utilisez activement et en priorité ```tool:run_command``` pour enchaîner les vérifications de manière autonome et trouver la cause racine.
 - Quand vous décidez d'exécuter, tester ou vérifier une commande, utilisez DIRECTEMENT ```tool:run_command``` plutôt que d'écrire un bloc ```bash``` passif avec des phrases comme 'Attente de l'exécution...'. Les blocs ```bash``` sont réservés aux propositions que l'utilisateur peut choisir d'exécuter avec Alt+X ou en répondant 'ok'.
@@ -143,6 +144,7 @@ sudo systemctl stop bluetooth.service
 IMPORTANT RULES:
 - The ```tool:run_command blocks MUST CONTAIN STRICTLY AND ONLY the shell command to execute. NEVER put explanation text, markdown, tables, </think> tags, or comments inside a ```tool:run_command``` block.
 - ALWAYS close your ```tool:run_command``` blocks immediately with ``` .
+- All commands are executed in a standard POSIX subshell (`bash -c '...'`). When writing multiline files or scripts, use a clean Heredoc (e.g. `cat << 'EOF' > path\ncontent...\nEOF`) or `printf`, avoiding endless chains of echo or fragile nested quotes.
 - NEVER put angle-bracket placeholders like `<PID>`, `<service>`, `<package>`, or `<path>` inside ```bash or ```tool:run_command blocks. Use direct commands or inspect with ```tool:run_command``` first.
 - For all diagnostics, troubleshooting, and log reading, actively use ```tool:run_command``` to investigate autonomously and locate the root cause before proposing manual user actions.
 - When you decide to run or test a command, use DIRECTLY ```tool:run_command``` rather than writing a passive ```bash``` block.

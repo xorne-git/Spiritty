@@ -1706,11 +1706,27 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
     lines.join("\n").trim().to_string()
 }
 
-/// Cleans and formats a multiline command into a valid single-line command.
-/// - If the command is a bash script (shebang #! or contains while/for/if/IFS), wraps it safely in `bash -c '...'` so it runs anywhere (e.g. inside Fish).
+/// Cleans and formats a multiline command into a valid single-line command or bash script wrapper.
+/// - If the command is a heredoc (`<<EOF`), script (shebang #!), or contains bash keywords (while/for/if/IFS), wraps it safely in `bash -c '...'` preserving newlines and markdown content verbatim.
 /// - Otherwise strips comments (# ...), empty lines, and line-continuation backslashes (\), preserving pipelines (|) and logical operators (&&, ||).
 pub fn clean_multiline_command(command: &str) -> String {
-    let raw_lines: Vec<&str> = command
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // 1. Heredocs (`<<EOF`, `<< 'EOF'`, `<<-EOF`, etc.): preserve full multiline structure verbatim!
+    if trimmed.contains("<<") {
+        let script_lines: Vec<&str> = trimmed
+            .lines()
+            .filter(|l| !l.trim().starts_with("#!"))
+            .collect();
+        let script_body = script_lines.join("\n");
+        let escaped = script_body.replace('\'', "'\\''");
+        return format!("bash -c '{}'", escaped);
+    }
+
+    let raw_lines: Vec<&str> = trimmed
         .lines()
         .map(|l| l.trim())
         .filter(|l| is_clean_command_line(l))
