@@ -30,7 +30,7 @@ sudo cp target/release/spiritty /usr/local/bin/
 
 ## 🎯 Pourquoi Spiritty ?
 
-J'administre des serveurs Linux depuis bientôt 25 ans. :)
+J'administre des serveurs Linux depuis bientôt 25 ans. 😊
 
 Les outils de terminal assistés par IA existants ne me convenaient pas : trop lourds, interfaces graphiques encombrantes, usines à gaz qui tentent de tout faire mais peinent à accomplir simplement les tâches réelles d'administration système du quotidien. En CLI pure, il n'existait quasiment rien d'adapté.
 
