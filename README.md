@@ -30,11 +30,15 @@ sudo cp target/release/spiritty /usr/local/bin/
 
 ## 🎯 Why Spiritty?
 
-Existing CLI assistants suffer from two major limitations:
-1. **Loss of Control:** They operate as opaque one-shot command lines without a persistent, interactive terminal.
-2. **Code-Only Focus:** They are designed to edit git repositories, not to administer servers, debug Linux services, configure networks, or inspect system logs.
+I have been administering Linux servers for nearly 25 years. :)
 
-**Spiritty bridges this gap** by providing an AI sysadmin co-pilot with strict **human-in-the-loop** safety, capable of understanding your OS environment, diagnosing errors, and executing actions directly in your live shell.
+Existing AI-assisted terminal tools simply didn't fit my workflow: bloated interfaces, overly complex setups trying to do everything while struggling with straightforward, everyday sysadmin tasks. In pure CLI/TUI, there was virtually nothing built for this purpose.
+
+So I decided to learn Rust and build the tool I actually needed: SSH into a VPS, audit and optimize Apache, PHP-FPM, or MySQL with the assistance of an LLM, hop onto another server and tell the model "*do the same here*", and keep moving seamlessly without ever leaving a purpose-built terminal workspace.
+
+**Spiritty** fills this gap by delivering a lightweight sysadmin co-pilot with strict **human-in-the-loop** safety, capable of understanding your OS environment, diagnosing errors, and executing actions cleanly and transparently.
+
+> *This is an early beta release. If you find this tool useful, that's awesome! All constructive feedback, bug reports, and suggestions are warmly welcome.*
 
 ---
 
