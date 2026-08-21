@@ -132,4 +132,4 @@ Les assistants CLI existants souffrent de deux écueils majeurs :
 
 ## 📄 Licence
 
-MIT ou Apache 2.0 (au choix).
+Ce projet est distribué sous licence [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
