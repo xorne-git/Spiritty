@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Spiritty Contributors"]
 description = "AI-powered split-screen terminal companion for sysadmins and power users"
 readme = "README.md"
-license = "AGPL-3.0-only"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 ratatui = "0.29"

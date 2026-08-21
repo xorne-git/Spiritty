@@ -132,4 +132,4 @@ Existing CLI assistants suffer from two major limitations:
 
 ## 📄 License
 
-This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+Dual-licensed under MIT or Apache 2.0.
