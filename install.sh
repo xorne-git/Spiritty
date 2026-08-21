@@ -20,16 +20,18 @@ REPO="xorne-git/Spiritty"
 BINARY_NAME="spiritty"
 
 print_banner() {
-    echo -e "${CYAN}${BOLD}"
-    echo "   _____       _      _ _   _         👻"
-    echo "  / ____|     (_)    (_) | | |        "
-    echo " | (___  _ __  _ _ __ _| |_| |_ _   _ "
-    echo "  \___ \| '_ \| | '__| | __| __| | | |"
-    echo "  ____) | |_) | | |  | | |_| |_| |_| |"
-    echo " |_____/| .__/|_|_|  |_|\__|\__|\__, |"
-    echo "        | |                      __/ |"
-    echo "        |_|                     |___/ "
-    echo -e "${NC}"
+    printf "${CYAN}${BOLD}"
+    cat << 'EOF'
+   _____       _      _ _   _         👻
+  / ____|     (_)    (_) | | |        
+ | (___  _ __  _ _ __ _| |_| |_ _   _ 
+  \___ \| '_ \| | '__| | __| __| | | |
+  ____) | |_) | | |  | | |_| |_| |_| |
+ |_____/| .__/|_|_|  |_|\__|\__|\__, |
+        | |                      __/ |
+        |_|                     |___/ 
+EOF
+    printf "${NC}\n"
     echo -e "${BOLD}L'assistant IA pour terminal nouvelle génération${NC}"
     echo -e "${GRAY}https://github.com/${REPO}${NC}"
     echo ""
