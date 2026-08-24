@@ -43,9 +43,9 @@ fn make_section_header<'a>(title: &'a str, color: Color, col_width: usize) -> Li
 
 impl HelpModal {
     pub fn render_modal(area: Rect, buf: &mut Buffer, lang: Language) {
-        // Use 85% of screen width (min 72, max 145) and 82% of screen height
+        // Use 85% of screen width (min 72, max 145) and 88% of screen height
         let modal_width = ((area.width as u32 * 85) / 100).clamp(72, 145) as u16;
-        let modal_height = ((area.height as u32 * 82) / 100).clamp(24, 38) as u16;
+        let modal_height = ((area.height as u32 * 88) / 100).clamp(24, 40) as u16;
 
         let x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
         let y = area.top() + (area.height.saturating_sub(modal_height)) / 2;
@@ -102,16 +102,12 @@ impl HelpModal {
             let key_col_w_left = 32.min(left_col_width.saturating_sub(22));
             let key_col_w_right = 16.min(right_col_width.saturating_sub(22));
 
-            let extra_spacing = inner_height >= 22;
-
             // --- LEFT COLUMN ---
             let mut left_lines = Vec::new();
 
             // 1. Navigation & Interface
             left_lines.push(make_section_header(lang.t(I18nKey::HelpSectionNavigation), Color::Cyan, left_col_width));
-            if extra_spacing {
-                left_lines.push(Line::from(""));
-            }
+            left_lines.push(Line::from(""));
 
             // Shift Tab ou Ctrl Espace
             let mut l_focus = key_pill(lang.t(I18nKey::HelpKeyShift), Color::Cyan);
@@ -122,9 +118,11 @@ impl HelpModal {
             l_focus.push(Span::raw(" "));
             l_focus.extend(key_pill(lang.t(I18nKey::HelpKeySpace), Color::Cyan));
             left_lines.push(make_help_row(l_focus, lang.t(I18nKey::HelpDescToggleFocus), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Clic Souris
             left_lines.push(make_help_row(key_pill(lang.t(I18nKey::HelpKeyMouseClick), Color::Cyan), lang.t(I18nKey::HelpDescMouseClick), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Molette / PgUp PgDn
             let mut l_scroll = key_pill(if lang == Language::Fr { "🖱 Molette" } else { "🖱 Scroll" }, Color::Cyan);
@@ -133,6 +131,7 @@ impl HelpModal {
             l_scroll.push(Span::raw(" "));
             l_scroll.extend(key_pill("PgDn", Color::Cyan));
             left_lines.push(make_help_row(l_scroll, lang.t(I18nKey::HelpDescScroll), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Alt Left/Right ou Glisser
             let mut l_resize = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Cyan);
@@ -141,17 +140,11 @@ impl HelpModal {
             l_resize.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
             l_resize.extend(key_pill(lang.t(I18nKey::HelpKeyDrag), Color::Cyan));
             left_lines.push(make_help_row(l_resize, lang.t(I18nKey::HelpDescResizePanels), key_col_w_left));
-
-            left_lines.push(Line::from("")); // Section separator
-            if extra_spacing {
-                left_lines.push(Line::from(""));
-            }
+            left_lines.push(Line::from(""));
 
             // 2. Agent IA & Diagnostic
             left_lines.push(make_section_header(lang.t(I18nKey::HelpSectionAgent), Color::Green, left_col_width));
-            if extra_spacing {
-                left_lines.push(Line::from(""));
-            }
+            left_lines.push(Line::from(""));
 
             // F3 / Ctrl Y
             let mut l_f3 = key_pill("F3", Color::Green);
@@ -160,6 +153,7 @@ impl HelpModal {
             l_f3.push(Span::raw(" "));
             l_f3.extend(key_pill("Y", Color::Green));
             left_lines.push(make_help_row(l_f3, lang.t(I18nKey::HelpDescAutoApprove), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Alt D / Alt X
             let mut l_diag = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Yellow);
@@ -170,12 +164,14 @@ impl HelpModal {
             l_diag.push(Span::raw(" "));
             l_diag.extend(key_pill("X", Color::DarkGray));
             left_lines.push(make_help_row(l_diag, lang.t(I18nKey::HelpDescDiagnoseError), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Ctrl M (MCP)
             let mut l_mcp = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Rgb(140, 100, 240));
             l_mcp.push(Span::raw(" "));
             l_mcp.extend(key_pill("M", Color::Rgb(140, 100, 240)));
             left_lines.push(make_help_row(l_mcp, lang.t(I18nKey::HelpDescMcpModal), key_col_w_left));
+            left_lines.push(Line::from(""));
 
             // Ctrl F (Search)
             let mut l_srch = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Yellow);
@@ -196,59 +192,57 @@ impl HelpModal {
 
             // 3. Sessions & Hôtes
             right_lines.push(make_section_header(lang.t(I18nKey::HelpSectionSessions), Color::Yellow, right_col_width));
-            if extra_spacing {
-                right_lines.push(Line::from(""));
-            }
+            right_lines.push(Line::from(""));
 
             // Ctrl P (Config)
             let mut l_cfg = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Magenta);
             l_cfg.push(Span::raw(" "));
             l_cfg.extend(key_pill("P", Color::Magenta));
             right_lines.push(make_help_row(l_cfg, lang.t(I18nKey::HelpDescConfigModal), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Ctrl B (Bookmarks)
             let mut l_bmk = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
             l_bmk.push(Span::raw(" "));
             l_bmk.extend(key_pill("B", Color::Cyan));
             right_lines.push(make_help_row(l_bmk, lang.t(I18nKey::HelpDescBookmarksModal), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Ctrl H (Sessions)
             let mut l_sess = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::LightCyan);
             l_sess.push(Span::raw(" "));
             l_sess.extend(key_pill("H", Color::LightCyan));
             right_lines.push(make_help_row(l_sess, lang.t(I18nKey::HelpDescSessionModal), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Ctrl E (Export)
             let mut l_exp = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Yellow);
             l_exp.push(Span::raw(" "));
             l_exp.extend(key_pill("E", Color::Yellow));
             right_lines.push(make_help_row(l_exp, lang.t(I18nKey::HelpDescExportSession), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Ctrl N (New session)
             let mut l_new = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
             l_new.push(Span::raw(" "));
             l_new.extend(key_pill("N", Color::Cyan));
             right_lines.push(make_help_row(l_new, lang.t(I18nKey::HelpDescNewSession), key_col_w_right));
-
-            right_lines.push(Line::from("")); // Section separator
-            if extra_spacing {
-                right_lines.push(Line::from(""));
-            }
+            right_lines.push(Line::from(""));
 
             // 4. Général & Contrôle
             right_lines.push(make_section_header(lang.t(I18nKey::HelpSectionGeneral), Color::LightCyan, right_col_width));
-            if extra_spacing {
-                right_lines.push(Line::from(""));
-            }
+            right_lines.push(Line::from(""));
 
             // F1
             right_lines.push(make_help_row(key_pill("F1", Color::Cyan), lang.t(I18nKey::HelpDescToggleHelp), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Ctrl Q
             let mut l_quit = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Red);
             l_quit.push(Span::raw(" "));
             l_quit.extend(key_pill("Q", Color::Red));
             right_lines.push(make_help_row(l_quit, lang.t(I18nKey::HelpDescQuit), key_col_w_right));
+            right_lines.push(Line::from(""));
 
             // Échap
             right_lines.push(make_help_row(key_pill(lang.t(I18nKey::HelpKeyClose), Color::DarkGray), lang.t(I18nKey::HelpDescCloseModal), key_col_w_right));
