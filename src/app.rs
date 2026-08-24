@@ -1195,35 +1195,19 @@ impl App {
 
         if let Some(ref mut capture) = self.active_pty_tool {
             let elapsed_since_start = capture.start_time.elapsed();
-            let elapsed_since_last_output = capture.last_output_time.elapsed();
-
             let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
             let is_waiting_password = is_waiting_for_password(&raw_text);
 
-            // Settle completion heuristic:
-            // When output has been received, and no new output has arrived for >= 350ms (idle after output/prompt),
-            // and at least 300ms has elapsed since command invocation, AND WE ARE NOT WAITING FOR A SUDO PASSWORD,
-            // complete the capture seamlessly!
-            if !capture.output_bytes.is_empty()
-                && !is_waiting_password
-                && elapsed_since_start >= std::time::Duration::from_millis(300)
-                && elapsed_since_last_output >= std::time::Duration::from_millis(350)
-            {
+            let timeout_secs = if is_waiting_password { 120 } else { 45 };
+            if elapsed_since_start > std::time::Duration::from_secs(timeout_secs) {
                 let clean_output = clean_pty_output(&raw_text, &capture.command);
-
                 let final_summary = if clean_output.is_empty() {
-                    "(Commande exécutée avec succès dans le terminal)".to_string()
+                    "(Délai d'attente dépassé pour la commande)".to_string()
                 } else {
-                    format!("Sortie dans le terminal:\n{}", clean_output)
+                    format!("(Délai d'attente dépassé après {}s. Sortie partielle capturée):\n{}", timeout_secs, clean_output)
                 };
-
                 if let Some(tx) = capture.result_tx.take() {
                     let _ = tx.send(final_summary);
-                }
-                self.active_pty_tool = None;
-            } else if elapsed_since_start > std::time::Duration::from_secs(if is_waiting_password { 120 } else { 45 }) {
-                if let Some(tx) = capture.result_tx.take() {
-                    let _ = tx.send("(Délai d'attente dépassé pour la commande)".to_string());
                 }
                 self.active_pty_tool = None;
             }
@@ -1906,41 +1890,40 @@ impl App {
                 password_prompt_detected = true;
             }
 
-            if let Ok(text) = std::str::from_utf8(&capture.output_bytes) {
-                // Check for OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07 or fallback __SPIRITTY_DONE__:<status>
-                let sentinel_pattern = if let Some(pos) = text.rfind("\x1b]777;spiritty_done;") {
-                    Some((pos, 20, true))
-                } else if let Some(pos) = text.rfind("777;spiritty_done;") {
-                    Some((pos, 18, true))
+            let text = &raw_text;
+            // Check for OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07 or fallback __SPIRITTY_DONE__:<status>
+            let sentinel_pattern = if let Some(pos) = text.rfind("\x1b]777;spiritty_done;") {
+                Some((pos, 20, true))
+            } else if let Some(pos) = text.rfind("777;spiritty_done;") {
+                Some((pos, 18, true))
+            } else {
+                text.rfind("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
+            };
+
+            if let Some((pos, prefix_len, is_osc)) = sentinel_pattern {
+                let after = &text[pos + prefix_len..];
+                let found_terminator = if is_osc {
+                    after.find('\x1b').or_else(|| after.find('\x07')).or_else(|| after.find('\n')).or_else(|| after.find('\r')).or_else(|| after.find('\\')).or_else(|| after.find(';'))
                 } else {
-                    text.rfind("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
+                    after.find('\n').or_else(|| after.find('\r'))
                 };
 
-                if let Some((pos, prefix_len, is_osc)) = sentinel_pattern {
-                    let after = &text[pos + prefix_len..];
-                    let found_terminator = if is_osc {
-                        after.find('\x1b').or_else(|| after.find('\x07')).or_else(|| after.find('\n')).or_else(|| after.find('\r'))
+                if let Some(end_idx) = found_terminator {
+                    let code_str = after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
+                    let exit_code: i32 = code_str.parse().unwrap_or(0);
+                    let raw_output = &text[..pos];
+
+                    let clean_output = clean_pty_output(raw_output, &capture.command);
+                    let final_summary = if clean_output.is_empty() {
+                        format!("(Commande exécutée avec succès dans le terminal - code {})", exit_code)
                     } else {
-                        after.find('\n').or_else(|| after.find('\r'))
+                        format!("Sortie dans le terminal (code {}):\n{}", exit_code, clean_output)
                     };
 
-                    if let Some(end_idx) = found_terminator {
-                        let code_str = after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
-                        let exit_code: i32 = code_str.parse().unwrap_or(0);
-                        let raw_output = &text[..pos];
-
-                        let clean_output = clean_pty_output(raw_output, &capture.command);
-                        let final_summary = if clean_output.is_empty() {
-                            format!("(Commande exécutée avec succès dans le terminal - code {})", exit_code)
-                        } else {
-                            format!("Sortie dans le terminal (code {}):\n{}", exit_code, clean_output)
-                        };
-
-                        if let Some(tx) = capture.result_tx.take() {
-                            let _ = tx.send(final_summary);
-                        }
-                        self.active_pty_tool = None;
+                    if let Some(tx) = capture.result_tx.take() {
+                        let _ = tx.send(final_summary);
                     }
+                    self.active_pty_tool = None;
                 }
             }
         }
@@ -2508,6 +2491,7 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
             && !t.contains("__spiritty")
             && !t.contains("__SPIRITTY")
             && !t.contains("printf '\\e]777")
+            && !t.contains("printf '\\033]777")
             && !lower.contains("password for")
             && !lower.contains("mot de passe de")
             && !lower.contains("mot de passe pour")
@@ -2515,7 +2499,15 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
     });
 
     if let Some(first) = lines.first() {
-        if first.contains(command) || first.contains("bash -c") {
+        let first_t = first.trim();
+        let cmd_t = command.trim();
+        if first_t == cmd_t
+            || first_t.contains(cmd_t)
+            || first_t.starts_with("bash -c")
+            || first_t.starts_with("bash /tmp/spiritty")
+            || first_t.contains("spiritty_exec.sh")
+            || (first_t.starts_with("(") && first_t.contains(cmd_t))
+        {
             lines.remove(0);
         }
     }
@@ -2898,22 +2890,35 @@ pub fn format_command_for_pty_with_session(
     command: &str,
     user_shell: &str,
     is_remote: bool,
-    _is_tool_capture: bool,
+    is_tool_capture: bool,
 ) -> String {
     let clean = clean_multiline_command(command);
     if clean.is_empty() {
         return String::new();
     }
 
+    let is_fish = user_shell.contains("fish");
+
     if is_remote {
-        // Over SSH, the remote shell is standard POSIX/Bash.
-        // Send pure human-readable command directly with leading space to avoid shell history pollution.
-        return format!(" {}\n", clean);
+        // Over SSH: standard POSIX shell
+        if is_tool_capture {
+            return format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", clean);
+        } else {
+            return format!(" {}\n", clean);
+        }
     }
 
     let is_cd = clean.starts_with("cd ") || clean == "cd";
     if is_cd {
-        return format!(" {}\n", clean);
+        if is_tool_capture {
+            if is_fish {
+                return format!(" {}; printf '\\e]777;spiritty_done;%d\\a' $status\n", clean);
+            } else {
+                return format!(" {}; printf '\\033]777;spiritty_done;%d\\007' $?\n", clean);
+            }
+        } else {
+            return format!(" {}\n", clean);
+        }
     }
 
     // Check if the command contains newlines or is a heredoc / multiline script
@@ -2927,11 +2932,19 @@ pub fn format_command_for_pty_with_session(
         let temp_script_path = std::env::temp_dir().join("spiritty_exec.sh");
         if std::fs::write(&temp_script_path, raw_script).is_ok() {
             // Leading space prevents Fish, Bash, and Zsh from saving this command in shell history
-            return format!(" bash {}\n", temp_script_path.display());
+            if is_tool_capture {
+                if is_fish {
+                    return format!(" bash {}; printf '\\e]777;spiritty_done;%d\\a' $status\n", temp_script_path.display());
+                } else {
+                    return format!(" bash {}; printf '\\033]777;spiritty_done;%d\\007' $?\n", temp_script_path.display());
+                }
+            } else {
+                return format!(" bash {}\n", temp_script_path.display());
+            }
         }
     }
 
-    let is_non_bash = user_shell.contains("fish")
+    let is_non_bash = is_fish
         || user_shell.contains("nu")
         || user_shell.contains("csh")
         || user_shell.contains("tcsh");
@@ -2939,10 +2952,22 @@ pub fn format_command_for_pty_with_session(
 
     if is_non_bash && !is_already_bash {
         let escaped = clean.replace('\'', "'\\''");
-        return format!(" bash -c '{}'\n", escaped);
+        if is_tool_capture {
+            if is_fish {
+                return format!(" bash -c '{}'; printf '\\e]777;spiritty_done;%d\\a' $status\n", escaped);
+            } else {
+                return format!(" bash -c '{}'; printf '\\033]777;spiritty_done;%d\\007' $?\n", escaped);
+            }
+        } else {
+            return format!(" bash -c '{}'\n", escaped);
+        }
     }
 
-    format!(" {}\n", clean)
+    if is_tool_capture {
+        format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", clean)
+    } else {
+        format!(" {}\n", clean)
+    }
 }
 
 pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {

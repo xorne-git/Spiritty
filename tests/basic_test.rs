@@ -444,11 +444,11 @@ fn test_format_command_for_pty() {
     // 3. Simple single line in local bash (no bash -c wrapping needed)
     assert_eq!(format_command_for_pty("free -h", "bash"), " free -h\n");
 
-    // 4. Simple single line on remote SSH (tool capture -> pure clean command)
+    // 4. Simple single line on remote SSH (tool capture -> command with sentinel)
     let remote_tool_cmd = format_command_for_pty_with_session("free -h", "fish", true, true);
-    assert_eq!(remote_tool_cmd, " free -h\n");
+    assert_eq!(remote_tool_cmd, " ( free -h ); printf '\\033]777;spiritty_done;%d\\007' $?\n");
 
-    // 5. Simple single line on remote SSH (manual user Alt+1 -> pure clean command)
+    // 5. Simple single line on remote SSH (manual user Alt+1 -> pure clean command without sentinel)
     let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
     assert_eq!(remote_user_cmd, " cat ~/audit_systeme.md\n");
 
@@ -458,9 +458,9 @@ fn test_format_command_for_pty() {
     assert!(formatted_local.starts_with(" bash "));
     assert!(formatted_local.ends_with("spiritty_exec.sh\n"));
 
-    // 7. Remote SSH multiline heredoc script -> clean direct script without Base64 noise
+    // 7. Remote SSH multiline heredoc script -> clean direct script with sentinel for tool capture
     let formatted_remote = format_command_for_pty_with_session(multiline_heredoc, "fish", true, true);
-    assert_eq!(formatted_remote, format!(" {}\n", multiline_heredoc));
+    assert_eq!(formatted_remote, format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", multiline_heredoc));
 }
 
 #[test]
