@@ -396,6 +396,20 @@ impl App {
                 }
                 self.history_index = None;
                 self.input_draft.clear();
+
+                // Restore active provider & model from loaded session
+                if let Some(p_type) = crate::config::ProviderType::from_key(&loaded.provider) {
+                    self.config.default_provider = p_type;
+                    if !loaded.model.is_empty() {
+                        let key = p_type.key_str();
+                        if let Some(p_cfg) = self.config.providers.get_mut(key) {
+                            p_cfg.model = loaded.model.clone();
+                        }
+                    }
+                    self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                    self.trigger_context_probe();
+                }
+
                 self.current_session = loaded;
                 self.chat_input.clear();
                 self.cursor_pos = 0;

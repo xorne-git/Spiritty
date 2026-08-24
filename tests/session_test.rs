@@ -235,8 +235,11 @@ async fn test_app_load_session_shortcut() {
     assert_eq!(app.current_session.id, "test_load_123");
     assert_eq!(app.messages.len(), 2);
     assert_eq!(app.messages[0].content, "Question sauvegardée");
+    assert_eq!(app.config.default_provider, spiritty::config::ProviderType::DeepSeek);
+    assert_eq!(app.config.providers.get("deepseek").unwrap().model, "deepseek-v4-flash");
 
     let _ = SessionStorage::delete("test_load_123");
     let _ = SessionStorage::delete(&initial_app_id);
 }
+
 

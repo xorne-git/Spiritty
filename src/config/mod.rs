@@ -58,15 +58,23 @@ impl ProviderType {
     }
 
     pub fn from_key(s: &str) -> Option<ProviderType> {
-        match s.to_lowercase().trim() {
-            "ollama" => Some(ProviderType::Ollama),
-            "lmstudio" | "lm_studio" | "lm-studio" => Some(ProviderType::LmStudio),
-            "gemini" | "google" => Some(ProviderType::Gemini),
-            "grok" | "xai" => Some(ProviderType::Grok),
-            "deepseek" => Some(ProviderType::DeepSeek),
-            "openai" | "chatgpt" => Some(ProviderType::OpenAI),
-            "anthropic" | "claude" => Some(ProviderType::Anthropic),
-            _ => None,
+        let trimmed = s.to_lowercase().trim().to_string();
+        if trimmed.contains("ollama") {
+            Some(ProviderType::Ollama)
+        } else if trimmed.contains("lmstudio") || trimmed.contains("lm_studio") || trimmed.contains("lm-studio") {
+            Some(ProviderType::LmStudio)
+        } else if trimmed.contains("gemini") || trimmed.contains("google") {
+            Some(ProviderType::Gemini)
+        } else if trimmed.contains("grok") || trimmed.contains("xai") {
+            Some(ProviderType::Grok)
+        } else if trimmed.contains("deepseek") {
+            Some(ProviderType::DeepSeek)
+        } else if trimmed.contains("openai") || trimmed.contains("chatgpt") || trimmed.contains("gpt") {
+            Some(ProviderType::OpenAI)
+        } else if trimmed.contains("anthropic") || trimmed.contains("claude") {
+            Some(ProviderType::Anthropic)
+        } else {
+            None
         }
     }
 
