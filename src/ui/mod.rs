@@ -1,6 +1,9 @@
 pub mod chat_panel;
 pub mod components;
 pub mod terminal_panel;
+pub mod theme;
+
+pub use theme::{ThemeId, ThemePalette};
 
 use ratatui::{
     buffer::Buffer,
@@ -47,14 +50,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.terminal_area = terminal_area;
 
     let buf = frame.buffer_mut();
+    let palette = app.theme.palette();
+    let (g1_r, g1_g, g1_b) = palette.gradient_start;
+    let (g2_r, g2_g, g2_b) = palette.gradient_end;
 
-    // 2.1 Fill Chat Panel with Vertical Gradient (Top Slate Navy -> Bottom Obsidian Midnight)
+    // 2.1 Fill Chat Panel with Vertical Gradient
     let chat_h = chat_area.height.max(1) as f32;
     for y in chat_area.top()..chat_area.bottom() {
         let t = (y - chat_area.top()) as f32 / chat_h;
-        let r = (24.0 * (1.0 - t) + 10.0 * t).round() as u8;
-        let g = (34.0 * (1.0 - t) + 14.0 * t).round() as u8;
-        let b = (48.0 * (1.0 - t) + 22.0 * t).round() as u8;
+        let r = (g2_r as f32 * (1.0 - t) + g1_r as f32 * t).round() as u8;
+        let g = (g2_g as f32 * (1.0 - t) + g1_g as f32 * t).round() as u8;
+        let b = (g2_b as f32 * (1.0 - t) + g1_b as f32 * t).round() as u8;
         let bg_color = Color::Rgb(r, g, b);
 
         for x in chat_area.left()..chat_area.right() {
@@ -64,13 +70,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    // 2.2 Fill Terminal Panel with Inverted Vertical Gradient (Top Obsidian Midnight -> Bottom Slate Navy)
+    // 2.2 Fill Terminal Panel with Inverted Vertical Gradient
     let term_h = terminal_area.height.max(1) as f32;
     for y in terminal_area.top()..terminal_area.bottom() {
         let t = (y - terminal_area.top()) as f32 / term_h;
-        let r = (10.0 * (1.0 - t) + 24.0 * t).round() as u8;
-        let g = (14.0 * (1.0 - t) + 34.0 * t).round() as u8;
-        let b = (22.0 * (1.0 - t) + 48.0 * t).round() as u8;
+        let r = (g1_r as f32 * (1.0 - t) + g2_r as f32 * t).round() as u8;
+        let g = (g1_g as f32 * (1.0 - t) + g2_g as f32 * t).round() as u8;
+        let b = (g1_b as f32 * (1.0 - t) + g2_b as f32 * t).round() as u8;
         let bg_color = Color::Rgb(r, g, b);
 
         for x in terminal_area.left()..terminal_area.right() {
@@ -83,7 +89,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // 2.3 Show subtle split drag guide only when actively dragging
     if app.is_dragging_split {
         let split_x = chat_area.right().saturating_sub(1);
-        let drag_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+        let drag_style = Style::default().fg(palette.warning).add_modifier(Modifier::BOLD);
         for y in workspace_area.top()..workspace_area.bottom() {
             buf.set_string(split_x, y, "│", drag_style);
         }
@@ -142,7 +148,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     if let Some(cell) = buf.cell_mut((col, row)) {
                         row_str.push_str(cell.symbol());
                         if sel.is_selecting {
-                            cell.set_style(Style::default().bg(Color::Rgb(40, 75, 130)).fg(Color::White));
+                            cell.set_style(Style::default().bg(palette.selection_bg).fg(palette.text_primary));
                         }
                     }
                 }
@@ -162,7 +168,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Render horizontal footer divider liseret (1px centered line)
-    let footer_div_style = Style::default().fg(Color::Cyan);
+    let footer_div_style = Style::default().fg(palette.accent_primary);
     for x in footer_divider_area.left()..footer_divider_area.right() {
         frame.buffer_mut().set_string(x, footer_divider_area.top(), "─", footer_div_style);
     }

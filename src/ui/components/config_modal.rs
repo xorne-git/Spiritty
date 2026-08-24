@@ -12,12 +12,14 @@ use std::collections::HashMap;
 use crate::{
     config::{Config, ProviderConfig, ProviderType},
     i18n::{I18nKey, Language},
+    ui::theme::ThemeId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigField {
     Provider,
     AutoApprove,
+    Theme,
     Model,
     BaseUrl,
     ApiKey,
@@ -28,7 +30,8 @@ impl ConfigField {
     pub fn next(&self) -> Self {
         match self {
             ConfigField::Provider => ConfigField::AutoApprove,
-            ConfigField::AutoApprove => ConfigField::Model,
+            ConfigField::AutoApprove => ConfigField::Theme,
+            ConfigField::Theme => ConfigField::Model,
             ConfigField::Model => ConfigField::BaseUrl,
             ConfigField::BaseUrl => ConfigField::ApiKey,
             ConfigField::ApiKey => ConfigField::SaveButton,
@@ -40,7 +43,8 @@ impl ConfigField {
         match self {
             ConfigField::Provider => ConfigField::SaveButton,
             ConfigField::AutoApprove => ConfigField::Provider,
-            ConfigField::Model => ConfigField::AutoApprove,
+            ConfigField::Theme => ConfigField::AutoApprove,
+            ConfigField::Model => ConfigField::Theme,
             ConfigField::BaseUrl => ConfigField::Model,
             ConfigField::ApiKey => ConfigField::BaseUrl,
             ConfigField::SaveButton => ConfigField::ApiKey,
@@ -58,6 +62,7 @@ pub enum DropdownAction {
 pub struct ConfigModalState {
     pub selected_provider: ProviderType,
     pub auto_approve: crate::config::AutoApproveLevel,
+    pub theme: ThemeId,
     pub active_field: ConfigField,
     pub is_dropdown_open: bool,
     pub dropdown_selected_idx: usize,
@@ -149,9 +154,12 @@ impl ConfigModalState {
         let api_key_input = p_cfg.api_key.unwrap_or_else(|| provider.default_env_var().map(|e| format!("ENV:{}", e)).unwrap_or_default());
         let api_key_cursor = api_key_input.chars().count();
 
+        let theme = ThemeId::parse_or_default(&config.get_theme());
+
         Self {
             selected_provider: provider,
             auto_approve: config.auto_approve,
+            theme,
             active_field: ConfigField::Provider,
             is_dropdown_open: false,
             dropdown_selected_idx,
@@ -251,6 +259,7 @@ impl ConfigModalState {
 
         config.default_provider = self.selected_provider;
         config.auto_approve = self.auto_approve;
+        config.theme = Some(self.theme.key_str().to_string());
         config.providers.insert(key, updated_provider);
 
         let _ = config.save();
@@ -469,6 +478,12 @@ impl ConfigModalState {
                 ConfigField::AutoApprove => {
                     self.auto_approve = self.auto_approve.prev();
                 }
+                ConfigField::Theme => {
+                    let all = ThemeId::all();
+                    let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
+                    let prev_idx = if current_idx == 0 { all.len() - 1 } else { current_idx - 1 };
+                    self.theme = all[prev_idx];
+                }
                 ConfigField::Model => {
                     if let Some(models) = self.models_per_provider.get(&prov_key) {
                         let len = models.len();
@@ -496,6 +511,12 @@ impl ConfigModalState {
                 }
                 ConfigField::AutoApprove => {
                     self.auto_approve = self.auto_approve.next();
+                }
+                ConfigField::Theme => {
+                    let all = ThemeId::all();
+                    let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
+                    let next_idx = (current_idx + 1) % all.len();
+                    self.theme = all[next_idx];
                 }
                 ConfigField::Model => {
                     if let Some(models) = self.models_per_provider.get(&prov_key) {
@@ -540,11 +561,22 @@ impl ConfigModalState {
                     self.auto_approve = self.auto_approve.next();
                     return false;
                 }
+                if self.active_field == ConfigField::Theme {
+                    let all = ThemeId::all();
+                    let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
+                    self.theme = all[(current_idx + 1) % all.len()];
+                    return false;
+                }
 
                 return self.save_config(config);
             }
             KeyCode::Char(' ') => match self.active_field {
                 ConfigField::AutoApprove => self.auto_approve = self.auto_approve.next(),
+                ConfigField::Theme => {
+                    let all = ThemeId::all();
+                    let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
+                    self.theme = all[(current_idx + 1) % all.len()];
+                }
                 ConfigField::Model => self.is_dropdown_open = true,
                 ConfigField::BaseUrl => {
                     insert_char_at(&mut self.base_url_input, self.url_cursor, ' ');
@@ -617,6 +649,7 @@ impl ConfigModalState {
 
         let f_provider = self.active_field == ConfigField::Provider;
         let f_auto = self.active_field == ConfigField::AutoApprove;
+        let f_theme = self.active_field == ConfigField::Theme;
         let f_model = self.active_field == ConfigField::Model;
         let f_url = self.active_field == ConfigField::BaseUrl;
         let f_key = self.active_field == ConfigField::ApiKey;
@@ -657,6 +690,21 @@ impl ConfigModalState {
         ));
         l_auto.extend(key_pill("→", auto_arrow_color));
         lines.push(Line::from(l_auto));
+        lines.push(Line::from(""));
+
+        // 3. Theme Selector Field
+        let theme_arrow_color = if f_theme { Color::Yellow } else { Color::Cyan };
+        let mut l_theme = vec![
+            Span::styled(lang.t(I18nKey::ConfigFieldTheme), Style::default().fg(if f_theme { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
+        ];
+        l_theme.extend(key_pill("←", theme_arrow_color));
+        let theme_name = format!(" {} ", self.theme.display_name());
+        l_theme.push(Span::styled(
+            format!("{:^32}", theme_name),
+            Style::default().fg(if f_theme { Color::Yellow } else { Color::Cyan }).add_modifier(Modifier::BOLD),
+        ));
+        l_theme.extend(key_pill("→", theme_arrow_color));
+        lines.push(Line::from(l_theme));
         lines.push(Line::from(""));
 
         // 3. Model Selection (with Dropdown trigger)

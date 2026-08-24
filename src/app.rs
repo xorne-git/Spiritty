@@ -14,7 +14,10 @@ use crate::{
     pty::PtyProcess,
     session::{Session, SessionStorage},
     system::{ActiveSession, HostsStore, SystemContext},
-    ui::components::{ConfigModalState, SessionModalAction, SessionModalState},
+    ui::{
+        components::{ConfigModalState, SessionModalAction, SessionModalState},
+        theme::ThemeId,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +114,7 @@ pub struct App {
     pub toast_message: Option<(std::time::Instant, String)>,
     pub is_probing_host: bool,
     pub probe_buffer: String,
+    pub theme: ThemeId,
 }
 
 impl App {
@@ -142,6 +146,9 @@ impl App {
         let active_model = config.get_active_provider_config().model.clone();
         let current_session = Session::new(active_provider, &active_model);
 
+        let split_ratio = config.get_split_ratio();
+        let theme = ThemeId::parse_or_default(&config.get_theme());
+
         let app = Self {
             focus: Focus::Chat, // Default focus on chat prompt
             chat_input: String::new(),
@@ -149,7 +156,7 @@ impl App {
             messages: Vec::new(),
             pty,
             should_quit: false,
-            split_ratio: 50, // 50% Chat / 50% Terminal
+            split_ratio,
             terminal_inner_size: (initial_rows, initial_cols),
             chat_area: Rect::default(),
             terminal_area: Rect::default(),
@@ -181,6 +188,7 @@ impl App {
             toast_message: None,
             is_probing_host: false,
             probe_buffer: String::new(),
+            theme,
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -361,6 +369,15 @@ impl App {
     pub fn adjust_split(&mut self, delta: i16) {
         let new_ratio = (self.split_ratio as i16 + delta).clamp(15, 85) as u16;
         self.split_ratio = new_ratio;
+        self.config.split_ratio = Some(new_ratio);
+        let _ = self.config.save();
+    }
+
+    pub fn set_theme(&mut self, theme_id: ThemeId) {
+        self.theme = theme_id;
+        self.config.theme = Some(theme_id.key_str().to_string());
+        let _ = self.config.save();
+        self.set_toast(format!("Thème : {}", theme_id.display_name()));
     }
 
     pub fn get_active_model_name(&self) -> String {
@@ -509,6 +526,10 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                if self.is_dragging_split {
+                    self.config.split_ratio = Some(self.split_ratio);
+                    let _ = self.config.save();
+                }
                 self.is_dragging_split = false;
                 if let Some(ref mut sel) = self.mouse_selection {
                     sel.end = (x, y);
@@ -647,6 +668,7 @@ impl App {
             }
             ModalState::Config(config_state) => {
                 let should_close = config_state.handle_key(key, &mut self.config);
+                self.theme = config_state.theme;
                 if should_close {
                     self.agent.reload_config(self.config.clone());
                     self.trigger_context_probe();
@@ -1415,6 +1437,7 @@ impl App {
     pub fn on_agent_error(&mut self, error: String) {
         self.agent.is_generating = false;
         self.pending_tool_approval = None;
+        self.active_pty_tool = None;
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
                 if last_msg.content.is_empty() {
@@ -1422,8 +1445,21 @@ impl App {
                 } else {
                     last_msg.content.push_str(&format!("\n\n⚠️ Erreur : {}", error));
                 }
+            } else {
+                self.messages.push(ChatMessage {
+                    role: MessageRole::Assistant,
+                    content: format!("⚠️ Erreur : {}", error),
+                    command_proposal: None,
+                });
             }
+        } else {
+            self.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: format!("⚠️ Erreur : {}", error),
+                command_proposal: None,
+            });
         }
+        self.set_toast(format!("Erreur : {}", error));
     }
 
     pub fn stop_agent_generation(&mut self) {

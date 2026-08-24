@@ -68,6 +68,7 @@ pub enum I18nKey {
     ConfigModalTitle,
     ConfigFieldProvider,
     ConfigFieldAutoApprove,
+    ConfigFieldTheme,
     ConfigFieldModel,
     ConfigFieldApiUrl,
     ConfigFieldApiKey,

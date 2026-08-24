@@ -105,13 +105,16 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
 ## 📌 Phase 5 : Finitions, Performances & Distribution v1.0.0 (v1.0.0)
 *Objectif : Produire un binaire ultra-rapide, stable et prêt pour une adoption large.*
 
-- [ ] **Ergonomie & Thèmes :**
-  - Thèmes prédéfinis (Catppuccin, Nord, Tokyo Night, Gruvbox, Monokai).
-  - Redimensionnement dynamique de la séparation gauche/droite (slider à la souris ou raccourci clavier).
+- [x] **Ergonomie & Thèmes :**
+  - 7 thèmes prédéfinis avec dégradés verticaux et palettes coordonnées : *Spiritty Dark*, *Catppuccin Mocha*, *Tokyo Night*, *Nord Arctic*, *Gruvbox Dark*, *Dracula*, *Monokai Pro*.
+  - Sélecteur interactif de thème dans la modale `Ctrl + P` avec prévisualisation dynamique instantanée.
+  - Redimensionnement fluide de la séparation gauche/droite à la souris (glisser-déposer) ou au clavier (`Alt + ←` / `Alt + →`).
+  - Persistance automatique de la taille des panneaux (`split_ratio`) et du thème actif dans `~/.config/spiritty/config.toml`.
+  - Diagnostics d'erreur explicites lors de pannes de connexion LLM (serveurs locaux éteints, timeout, erreurs réseau).
 - [ ] **Tests de Robustesse :**
   - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).
   - Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP`.
-- [ ] **Packaging & Distribution :**
-  - Binaire statique musl pour Linux (`x86_64`, `aarch64`).
-  - Binaire universel macOS.
-  - Dépôts : `cargo install spiritty`, PKGBUILD pour Arch Linux (AUR), Homebrew tap.
+- [x] **Packaging & Distribution Automatisée :**
+  - Script d'installation universel one-line `install.sh` (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) avec détection automatique de l'OS et de l'architecture (`x86_64`, `aarch64`, macOS).
+  - Pipeline de publication automatisé GitHub Actions multi-cibles (`release.yml`) générant les binaires allégés (`strip`) et les archives tarball sur chaque tag `v*`.
+  - Binaire statique et universel prêt pour `cargo install`, AUR et Homebrew.

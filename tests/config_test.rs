@@ -113,3 +113,30 @@ fn test_auto_approve_deserialization() {
     assert_eq!(cfg_false.auto_approve, AutoApproveLevel::Off);
 }
 
+#[test]
+fn test_split_ratio_and_theme_persistence() {
+    use spiritty::ui::theme::ThemeId;
+
+    // Test default
+    let cfg_default = Config::default();
+    assert_eq!(cfg_default.get_split_ratio(), 50);
+    assert_eq!(cfg_default.get_theme(), "spiritty_dark");
+
+    // Test custom toml serialization / deserialization
+    let toml_data = r#"
+split_ratio = 42
+theme = "tokyo_night"
+"#;
+    let cfg: Config = toml::from_str(toml_data).unwrap();
+    assert_eq!(cfg.get_split_ratio(), 42);
+    assert_eq!(cfg.get_theme(), "tokyo_night");
+    assert_eq!(ThemeId::parse_or_default(&cfg.get_theme()), ThemeId::TokyoNight);
+
+    // Test clamp on split_ratio
+    let clamped_low: Config = toml::from_str("split_ratio = 5").unwrap();
+    assert_eq!(clamped_low.get_split_ratio(), 15);
+
+    let clamped_high: Config = toml::from_str("split_ratio = 99").unwrap();
+    assert_eq!(clamped_high.get_split_ratio(), 85);
+}
+

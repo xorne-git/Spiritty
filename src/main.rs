@@ -49,7 +49,8 @@ async fn main() -> Result<()> {
 
     // Calculate initial split dimensions for the PTY (full screen height)
     let term_size = terminal.size()?;
-    let split_ratio = 50u16;
+    let initial_config = spiritty::config::Config::load();
+    let split_ratio = initial_config.get_split_ratio();
     let initial_rows = term_size.height.saturating_sub(3).max(1);
     let initial_cols = (((term_size.width as u32 * (100 - split_ratio as u32)) / 100) as u16)
         .saturating_sub(1)

@@ -19,24 +19,25 @@ impl<'a> TerminalPanel<'a> {
 impl<'a> TerminalPanel<'a> {
     pub fn render_panel(self, area: Rect, buf: &mut Buffer) -> Option<(u16, u16)> {
         let is_focused = self.app.focus == Focus::Terminal;
+        let palette = self.app.theme.palette();
         let (title_text, title_style) = match self.app.system_context.active_session {
             crate::system::ActiveSession::Ssh { ref target, .. } => {
                 if let Some(ref profile) = self.app.system_context.active_remote_profile {
                     (
                         format!("🌐 SSH: {} ({})", target, profile.distro.split_whitespace().next().unwrap_or(&profile.distro)),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default().fg(if is_focused { palette.warning } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
                     )
                 } else {
                     (
                         format!("🌐 SSH: {}", target),
-                        Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD),
+                        Style::default().fg(if is_focused { palette.warning } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
                     )
                 }
             }
             crate::system::ActiveSession::Container { ref runtime, ref container_id } => {
                 (
                     format!("📦 {}: {}", runtime, container_id),
-                    Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                    Style::default().fg(if is_focused { palette.accent_secondary } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
                 )
             }
             crate::system::ActiveSession::Local { ref foreground_process } => {
@@ -50,7 +51,7 @@ impl<'a> TerminalPanel<'a> {
                     format!("💻 {}", self.app.system_context.terminal_emulator)
                 };
                 let style = Style::default()
-                    .fg(if is_focused { Color::Cyan } else { Color::DarkGray })
+                    .fg(if is_focused { palette.accent_primary } else { palette.border_unfocused })
                     .add_modifier(Modifier::BOLD);
                 (text, style)
             }
@@ -71,12 +72,12 @@ impl<'a> TerminalPanel<'a> {
             let (badge_text, badge_style) = if scroll_offset > 0 {
                 (
                     format!("▲ -{} / {} l.", scroll_offset, total_lines),
-                    Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+                    Style::default().bg(palette.accent_primary).fg(Color::Black).add_modifier(Modifier::BOLD),
                 )
             } else {
                 (
                     format!("📜 {} l.", total_lines),
-                    Style::default().fg(if is_focused { Color::Cyan } else { Color::DarkGray }),
+                    Style::default().fg(if is_focused { palette.accent_primary } else { palette.border_unfocused }),
                 )
             };
 

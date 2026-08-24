@@ -143,7 +143,13 @@ impl AgentEngine {
                     }
                 }
 
-                let _ = stream_handle.await;
+                let stream_res = stream_handle.await;
+                if current_turn_text.is_empty() {
+                    if let Ok(Err(err)) = stream_res {
+                        let _ = forward_event_tx.send(AppEvent::AgentError(err.to_string()));
+                        return;
+                    }
+                }
 
                 // Check if the assistant requested a tool execution AND tool limit has not been exceeded
                 if tool_steps < MAX_TOOL_STEPS {

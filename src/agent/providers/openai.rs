@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
@@ -140,10 +140,34 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
         }
 
-        let response = req
-            .send()
-            .await
-            .with_context(|| format!("Failed to connect to {} at {}", self.name, url))?;
+        let send_res = timeout(Duration::from_secs(12), req.send()).await;
+
+        let response = match send_res {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                let err_msg = if self.name == "LM Studio" {
+                    format!(
+                        "Impossible de se connecter à LM Studio sur {} ({}). Vérifiez que LM Studio est lancé et que le serveur local est actif ('Start Server').",
+                        self.base_url, err
+                    )
+                } else {
+                    format!(
+                        "Échec de connexion vers {} sur {} : {}.",
+                        self.name, self.base_url, err
+                    )
+                };
+                let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+            Err(_) => {
+                let err_msg = format!(
+                    "Délai d'attente dépassé (timeout 12s) lors de la connexion à {} sur {}.",
+                    self.name, self.base_url
+                );
+                let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();

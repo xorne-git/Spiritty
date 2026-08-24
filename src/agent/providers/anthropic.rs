@@ -1,9 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::{timeout, Duration};
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -106,16 +107,34 @@ impl LlmProvider for AnthropicProvider {
         };
 
         let url = format!("{}/v1/messages", self.base_url);
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request_body)
-            .send()
-            .await
-            .with_context(|| format!("Failed to connect to Anthropic API at {}", url))?;
+        let send_res = timeout(
+            Duration::from_secs(12),
+            self.client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&request_body)
+                .send(),
+        )
+        .await;
+
+        let response = match send_res {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                let err_msg = format!(
+                    "Impossible de se connecter à l'API Anthropic Claude : {}. Vérifiez votre connexion Internet.",
+                    err
+                );
+                let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+            Err(_) => {
+                let err_msg = "Délai d'attente dépassé (timeout 12s) lors de la connexion à Anthropic Claude API.".to_string();
+                let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();

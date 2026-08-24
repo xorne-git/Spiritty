@@ -289,6 +289,10 @@ pub struct Config {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_ratio: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 impl Default for Config {
@@ -318,11 +322,21 @@ impl Default for Config {
             web_search: WebSearchConfig::default(),
             system_prompt: None,
             system_prompt_file: None,
+            split_ratio: Some(50),
+            theme: Some("spiritty_dark".to_string()),
         }
     }
 }
 
 impl Config {
+    pub fn get_split_ratio(&self) -> u16 {
+        self.split_ratio.unwrap_or(50).clamp(15, 85)
+    }
+
+    pub fn get_theme(&self) -> String {
+        self.theme.clone().unwrap_or_else(|| "spiritty_dark".to_string())
+    }
+
     pub fn get_language(&self) -> Language {
         if let Some(ref lang_str) = self.language {
             if let Some(lang) = Language::from_code(lang_str) {

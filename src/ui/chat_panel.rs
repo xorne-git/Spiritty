@@ -46,6 +46,7 @@ impl<'a> ChatPanel<'a> {
         }
 
         let lang = self.app.config.get_language();
+        let palette = self.app.theme.palette();
         let is_focused = self.app.focus == Focus::Chat;
         let spinner_char = crate::ui::get_spinner_char(self.app.spinner_frame);
         let title_text = format!("👻 Spiritty v{} ", env!("CARGO_PKG_VERSION"));
@@ -70,7 +71,7 @@ impl<'a> ChatPanel<'a> {
             area.top(),
             &title_text,
             Style::default()
-                .fg(if is_focused { Color::Cyan } else { Color::DarkGray })
+                .fg(if is_focused { palette.accent_primary } else { palette.border_unfocused })
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -105,7 +106,7 @@ impl<'a> ChatPanel<'a> {
                 MessageRole::System => {
                     for l in msg.content.lines() {
                         lines.push(Line::from(vec![
-                            Span::styled(l.to_string(), Style::default().fg(Color::DarkGray)),
+                            Span::styled(l.to_string(), Style::default().fg(palette.text_dim)),
                         ]));
                     }
                     push_blank_line(&mut lines);
@@ -114,15 +115,17 @@ impl<'a> ChatPanel<'a> {
                     if msg.content.starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '") {
                         let cmd_name = extract_tool_cmd_name(&msg.content);
                         lines.push(Line::from(vec![
-                            Span::styled("💻 ", Style::default().fg(Color::Yellow)),
-                            Span::styled(cmd_name.to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::styled("💻 ", Style::default().fg(palette.warning)),
+                            Span::styled(cmd_name.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                            Span::raw(" "),
+                            Span::styled("✓ Exécution silencieuse", Style::default().fg(palette.success)),
                         ]));
                     } else if msg.content.starts_with("[L'utilisateur a refusé l'exécution") {
                         lines.push(Line::from(vec![
-                            Span::styled("⚠️ ", Style::default().fg(Color::Yellow)),
+                            Span::styled("⚠️ ", Style::default().fg(palette.warning)),
                             Span::styled(
                                 if lang == Language::Fr { "Exécution refusée par l'utilisateur" } else { "Execution declined by user" },
-                                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                                Style::default().fg(palette.text_dim).add_modifier(Modifier::ITALIC),
                             ),
                         ]));
                     } else if msg.content.starts_with("💻 ") {
@@ -131,18 +134,18 @@ impl<'a> ChatPanel<'a> {
                         for (l_idx, line) in clean_cmd.lines().enumerate() {
                             if l_idx == 0 {
                                 lines.push(Line::from(vec![
-                                    Span::styled("💻 ", Style::default().fg(Color::Yellow)),
-                                    Span::styled(line.to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                    Span::styled("💻 ", Style::default().fg(palette.warning)),
+                                    Span::styled(line.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
                                 ]));
                             } else {
                                 lines.push(Line::from(vec![
                                     Span::raw("   "),
-                                    Span::styled(line.to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                                    Span::styled(line.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
                                 ]));
                             }
                         }
                     } else {
-                        render_user_message_block(&msg.content, &mut lines, messages_area.width);
+                        render_user_message_block(&msg.content, &mut lines, messages_area.width, &palette);
                     }
                     push_blank_line(&mut lines);
                 }
@@ -455,11 +458,11 @@ fn render_markdown_blocks(
     }
 }
 
-/// Renders user messages with vertical Cyan accent bar ▌ on every line and full-width solid dark navy background
-fn render_user_message_block(content: &str, lines: &mut Vec<Line<'static>>, width: u16) {
-    let user_bg = Color::Rgb(26, 36, 58);
-    let bar_style = Style::default().fg(Color::Cyan).bg(user_bg).add_modifier(Modifier::BOLD);
-    let text_style = Style::default().fg(Color::White).bg(user_bg);
+/// Renders user messages with vertical accent bar ▌ on every line and themed background
+fn render_user_message_block(content: &str, lines: &mut Vec<Line<'static>>, width: u16, palette: &crate::ui::ThemePalette) {
+    let user_bg = palette.selection_bg;
+    let bar_style = Style::default().fg(palette.accent_primary).bg(user_bg).add_modifier(Modifier::BOLD);
+    let text_style = Style::default().fg(palette.text_primary).bg(user_bg);
 
     let target_width = width as usize;
     let max_text_width = target_width.saturating_sub(2).max(1);
