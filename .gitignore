@@ -16,3 +16,5 @@ target/
 
 # Spiritty local cache/config during dev
 *.log
+deepseek-harness/
+dsh-debug/

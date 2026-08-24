@@ -46,11 +46,39 @@ impl PtyProcess {
         cmd.env("SYSTEMD_PAGER", "cat");
         cmd.env("PAGER", "cat");
 
+        let temp_dir = std::env::temp_dir().join("spiritty");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
         // Automatically configure shell hooks for silent OSC completion notification
-        if shell.contains("fish") {
-            cmd.args(["-C", "function __spiritty_post --on-event fish_postexec; printf '\\e]777;spiritty_done;%s\\a' $status; end"]);
-        } else if shell.contains("bash") {
-            cmd.env("PROMPT_COMMAND", "printf '\\e]777;spiritty_done;%s\\a' $?; ${PROMPT_COMMAND:-}");
+        if shell.contains("bash") {
+            let rc_path = temp_dir.join("bash_init.sh");
+            let rc_content = r#"
+[ -f /etc/bash.bashrc ] && . /etc/bash.bashrc
+[ -f ~/.bashrc ] && . ~/.bashrc
+__spiritty_done() {
+    local code=$?
+    printf '\033]777;spiritty_done;%s\007' "${code:-0}"
+}
+PROMPT_COMMAND="__spiritty_done${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+"#;
+            let _ = std::fs::write(&rc_path, rc_content);
+            cmd.args(["--rcfile", rc_path.to_str().unwrap_or("/tmp/spiritty/bash_init.sh")]);
+        } else if shell.contains("zsh") {
+            let zsh_dir = temp_dir.join("zsh");
+            let _ = std::fs::create_dir_all(&zsh_dir);
+            let zsh_rc = zsh_dir.join(".zshrc");
+            let zsh_content = r#"
+[ -f ~/.zshrc ] && . ~/.zshrc
+__spiritty_done() {
+    local code=$?
+    printf '\033]777;spiritty_done;%s\007' "${code:-0}"
+}
+precmd_functions+=(__spiritty_done)
+"#;
+            let _ = std::fs::write(&zsh_rc, zsh_content);
+            cmd.env("ZDOTDIR", zsh_dir.to_str().unwrap_or("/tmp/spiritty/zsh"));
+        } else if shell.contains("fish") {
+            cmd.args(["-C", "function __spiritty_post --on-event fish_postexec; printf '\\033]777;spiritty_done;%s\\007' $status; end"]);
         }
 
         // Inherit current working directory

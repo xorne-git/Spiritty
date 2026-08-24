@@ -544,6 +544,7 @@ IMPORTANT RULES:
 - ALL shell commands must ALWAYS be enclosed inside triple backticks (`tool:run_command` or `bash`). NEVER write bare shell commands in raw text without code blocks.
 - When root or elevated privileges are required, use `sudo <command>` directly. NEVER use `sudo -n` (the terminal is live and interactive, allowing the user to enter their sudo password directly).
 - CRITICAL: NEVER announce that you are running or checking something (e.g. "Je lance...", "Vérifions...", "Voici la commande...") without IMMEDIATELY outputting the ```tool:run_command``` or ```bash``` code block in the exact same response! Every announced action MUST have its executable block right below.
+- Propose direct, clean, human-readable commands (e.g. `cat ...`, `ls -la`, `curl ...`, `docker ps`). NEVER wrap your proposed commands in `bash -c '...'` and NEVER create temporary execution scripts in `/tmp` unless the user explicitly asks for a script file.
 - COMMUNICATION LANGUAGE: Always communicate, explain, and respond to the user in French, in a clear, concise, structured, and factual tone.
 "#;
                 let _ = fs::write(&prompt_file, default_content);

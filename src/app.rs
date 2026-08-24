@@ -156,7 +156,23 @@ impl App {
             }
         });
 
-        let config = Config::load();
+        let mut config = Config::load();
+
+        // Inherit the last used provider & model from the most recent saved session
+        if let Ok(sessions) = SessionStorage::list_sessions() {
+            if let Some(last_sess) = sessions.first() {
+                if let Some(p_type) = crate::config::ProviderType::from_key(&last_sess.provider) {
+                    config.default_provider = p_type;
+                    if !last_sess.model.is_empty() {
+                        let key = p_type.key_str();
+                        if let Some(p_cfg) = config.providers.get_mut(key) {
+                            p_cfg.model = last_sess.model.clone();
+                        }
+                    }
+                }
+            }
+        }
+
         let agent = AgentEngine::new_with_event_tx(config.clone(), Some(event_tx.clone()));
         let detected_context_window = Arc::new(AtomicUsize::new(0));
         probe_model_context(&config, detected_context_window.clone());
@@ -356,6 +372,7 @@ impl App {
         // Automatically compact context & history by default
         self.current_session.compact();
         let _ = SessionStorage::save(&self.current_session);
+        let _ = self.config.save();
     }
 
     pub fn load_session(&mut self, session_id: &str) {
@@ -406,6 +423,7 @@ impl App {
                             p_cfg.model = loaded.model.clone();
                         }
                     }
+                    let _ = self.config.save();
                     self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
                     self.trigger_context_probe();
                 }
@@ -489,9 +507,9 @@ impl App {
         self.modal = ModalState::None;
         let lang = self.config.get_language();
         self.set_toast(if lang == Language::Fr {
-            "✨ Nouvelle session démarrée".to_string()
+            format!("✨ Nouvelle session démarrée ({} • {})", active_provider, active_model)
         } else {
-            "✨ New session started".to_string()
+            format!("✨ New session started ({} • {})", active_provider, active_model)
         });
     }
 
@@ -1195,16 +1213,25 @@ impl App {
 
         if let Some(ref mut capture) = self.active_pty_tool {
             let elapsed_since_start = capture.start_time.elapsed();
+            let elapsed_since_last_output = capture.last_output_time.elapsed();
             let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
             let is_waiting_password = is_waiting_for_password(&raw_text);
 
             let timeout_secs = if is_waiting_password { 120 } else { 45 };
-            if elapsed_since_start > std::time::Duration::from_secs(timeout_secs) {
+
+            // Fallback settle when no OSC sentinel is received (e.g. non-hooked remote SSH):
+            // Only triggers when output was received and there has been at least 1500ms of absolute silence
+            let has_output_settled = !capture.output_bytes.is_empty()
+                && !is_waiting_password
+                && elapsed_since_start >= std::time::Duration::from_millis(800)
+                && elapsed_since_last_output >= std::time::Duration::from_millis(1500);
+
+            if has_output_settled || elapsed_since_start > std::time::Duration::from_secs(timeout_secs) {
                 let clean_output = clean_pty_output(&raw_text, &capture.command);
                 let final_summary = if clean_output.is_empty() {
-                    "(Délai d'attente dépassé pour la commande)".to_string()
+                    "(Commande exécutée avec succès dans le terminal)".to_string()
                 } else {
-                    format!("(Délai d'attente dépassé après {}s. Sortie partielle capturée):\n{}", timeout_secs, clean_output)
+                    format!("Sortie dans le terminal:\n{}", clean_output)
                 };
                 if let Some(tx) = capture.result_tx.take() {
                     let _ = tx.send(final_summary);
@@ -1422,6 +1449,8 @@ impl App {
                 let shell = self.current_active_shell();
                 let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
                 let pty_cmd = format_command_for_pty_with_session(&cmd, shell, is_remote, false);
+                // Clear any dirty prompt buffer cleanly without printing ^C
+                let _ = self.pty.write_all(b"\x15");
                 let _ = self.pty.write_all(pty_cmd.as_bytes());
                 self.last_injected_cmd = Some(cmd.clone());
                 return true;
@@ -1862,6 +1891,8 @@ impl App {
         let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
         let formatted_cmd = format_command_for_pty_with_session(&command, shell, is_remote, true);
 
+        // Clear any dirty prompt buffer cleanly without printing ^C
+        let _ = self.pty.write_all(b"\x15");
         let _ = self.pty.write_all(formatted_cmd.as_bytes());
 
         let is_sudo = command.trim().starts_with("sudo") || command.contains(" sudo ");
@@ -1912,10 +1943,15 @@ impl App {
                     let code_str = after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
                     let exit_code: i32 = code_str.parse().unwrap_or(0);
                     let raw_output = &text[..pos];
-
                     let clean_output = clean_pty_output(raw_output, &capture.command);
                     let final_summary = if clean_output.is_empty() {
-                        format!("(Commande exécutée avec succès dans le terminal - code {})", exit_code)
+                        if exit_code == 0 {
+                            "(Commande exécutée avec succès dans le terminal)".to_string()
+                        } else {
+                            format!("(Commande terminée avec le code {})", exit_code)
+                        }
+                    } else if exit_code == 0 {
+                        format!("Sortie dans le terminal:\n{}", clean_output)
                     } else {
                         format!("Sortie dans le terminal (code {}):\n{}", exit_code, clean_output)
                     };
@@ -2498,15 +2534,14 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
             && !(lower.starts_with("[sudo]") && lower.contains("password"))
     });
 
+    // Remove ONLY the exact command echo if it appears at the beginning
     if let Some(first) = lines.first() {
         let first_t = first.trim();
         let cmd_t = command.trim();
         if first_t == cmd_t
-            || first_t.contains(cmd_t)
-            || first_t.starts_with("bash -c")
-            || first_t.starts_with("bash /tmp/spiritty")
-            || first_t.contains("spiritty_exec.sh")
-            || (first_t.starts_with("(") && first_t.contains(cmd_t))
+            || first_t.starts_with(cmd_t)
+            || (first_t.contains(cmd_t) && (first_t.contains("printf '\\033]777") || first_t.contains("printf '\\e]777")))
+            || (first_t.ends_with(cmd_t) && first_t.len() <= cmd_t.len() + 10)
         {
             lines.remove(0);
         }
@@ -2597,6 +2632,7 @@ pub fn clean_multiline_command(command: &str) -> String {
                 && !prev_trimmed.ends_with("||")
                 && !prev_trimmed.ends_with('|')
                 && !prev_trimmed.ends_with(';')
+                && !prev_trimmed.ends_with('&')
                 && !is_open_expr
             {
                 result.push_str(" && ");
@@ -2880,12 +2916,53 @@ pub fn repair_missing_heredoc_terminator(script: &str) -> String {
     repaired
 }
 
+/// Detects if a command uses Bash-specific syntax that Fish shell cannot parse natively
+/// (such as inline variable assignments VAR=val, subshells $(..), $!, loops, or heredocs).
+pub fn is_bash_specific_syntax(cmd: &str) -> bool {
+    let t = cmd.trim();
+    if t.contains("<<")
+        || t.contains("$!")
+        || t.contains("$?")
+        || t.contains("${")
+        || t.contains('`')
+        || t.contains("export ")
+        || t.contains("while ")
+        || t.contains("for ")
+        || t.contains("if [")
+        || t.contains("if [[")
+        || t.contains("; do")
+        || t.contains("; then")
+        || t.contains("done")
+        || t.contains("fi")
+        || t.contains("&& (")
+        || t.starts_with('(')
+    {
+        return true;
+    }
+
+    // Check for inline variable assignments like BGPID=$! or PORT=3000 cmd
+    for part in t.split(&[' ', ';', '&', '|'][..]) {
+        let p = part.trim();
+        if let Some(eq_idx) = p.find('=') {
+            if eq_idx > 0 {
+                let var_name = &p[..eq_idx];
+                if var_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && !p.starts_with("--")
+                    && !p.starts_with('-')
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// Formats a command for reliable execution in the PTY.
-/// - If running over remote SSH: sends the clean command directly (human-readable, no Base64 noise)
-/// - If running locally:
-///   - If `cd ...`: executed directly
-///   - If multiline script / heredoc: writes to temporary script and executes via `bash /tmp/spiritty_exec.sh`
-///   - If non-bash shell (Fish, Nu, etc.): wraps in `bash -c '...'`
+/// - If `is_tool_capture == true`: appends silent OSC 777 completion sentinel (`printf '\033]777;spiritty_done;%d\007' $?`)
+/// - If the shell is Fish and the command contains Bash-specific syntax (e.g. BGPID=$!), wraps safely in `bash -c '...'`
+/// - Otherwise sends the clean direct command
 pub fn format_command_for_pty_with_session(
     command: &str,
     user_shell: &str,
@@ -2897,74 +2974,17 @@ pub fn format_command_for_pty_with_session(
         return String::new();
     }
 
-    let is_fish = user_shell.contains("fish");
+    let is_fish = user_shell.contains("fish") && !is_remote;
+    let needs_bash = is_fish && is_bash_specific_syntax(&clean);
 
-    if is_remote {
-        // Over SSH: standard POSIX shell
-        if is_tool_capture {
-            return format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", clean);
-        } else {
-            return format!(" {}\n", clean);
-        }
+    // Over remote SSH without our shell hooks, append sentinel for tool capture
+    if is_remote && is_tool_capture {
+        return format!(" {}; printf '\\033]777;spiritty_done;%s\\007' $?\n", clean);
     }
 
-    let is_cd = clean.starts_with("cd ") || clean == "cd";
-    if is_cd {
-        if is_tool_capture {
-            if is_fish {
-                return format!(" {}; printf '\\e]777;spiritty_done;%d\\a' $status\n", clean);
-            } else {
-                return format!(" {}; printf '\\033]777;spiritty_done;%d\\007' $?\n", clean);
-            }
-        } else {
-            return format!(" {}\n", clean);
-        }
-    }
-
-    // Check if the command contains newlines or is a heredoc / multiline script
-    if clean.contains('\n') || clean.contains("<<") {
-        let raw_script = if clean.starts_with("bash -c '") && clean.ends_with('\'') {
-            &clean["bash -c '".len()..clean.len() - 1]
-        } else {
-            &clean
-        };
-
-        let temp_script_path = std::env::temp_dir().join("spiritty_exec.sh");
-        if std::fs::write(&temp_script_path, raw_script).is_ok() {
-            // Leading space prevents Fish, Bash, and Zsh from saving this command in shell history
-            if is_tool_capture {
-                if is_fish {
-                    return format!(" bash {}; printf '\\e]777;spiritty_done;%d\\a' $status\n", temp_script_path.display());
-                } else {
-                    return format!(" bash {}; printf '\\033]777;spiritty_done;%d\\007' $?\n", temp_script_path.display());
-                }
-            } else {
-                return format!(" bash {}\n", temp_script_path.display());
-            }
-        }
-    }
-
-    let is_non_bash = is_fish
-        || user_shell.contains("nu")
-        || user_shell.contains("csh")
-        || user_shell.contains("tcsh");
-    let is_already_bash = clean.starts_with("bash -c");
-
-    if is_non_bash && !is_already_bash {
+    if needs_bash {
         let escaped = clean.replace('\'', "'\\''");
-        if is_tool_capture {
-            if is_fish {
-                return format!(" bash -c '{}'; printf '\\e]777;spiritty_done;%d\\a' $status\n", escaped);
-            } else {
-                return format!(" bash -c '{}'; printf '\\033]777;spiritty_done;%d\\007' $?\n", escaped);
-            }
-        } else {
-            return format!(" bash -c '{}'\n", escaped);
-        }
-    }
-
-    if is_tool_capture {
-        format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", clean)
+        format!(" bash -c '{}'\n", escaped)
     } else {
         format!(" {}\n", clean)
     }

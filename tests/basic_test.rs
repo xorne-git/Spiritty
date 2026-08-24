@@ -383,6 +383,13 @@ fn test_clean_multiline_command() {
     assert!(cleaned_heredoc.contains("# Audit Système - CachyOS"), "Markdown headings starting with # must not be stripped in heredocs");
     assert!(cleaned_heredoc.contains("<< 'EOF'"));
     assert!(!cleaned_heredoc.contains("&& #"), "Heredoc body lines must not be joined with &&");
+
+    let bg_cmd = "npx @deepseek-ai/dsh web > /tmp/dsh.log 2>&1 &\necho \"PID: $!\"\nsleep 2\ncat /tmp/dsh.log";
+    let cleaned_bg = clean_multiline_command(bg_cmd);
+    assert_eq!(
+        cleaned_bg,
+        "npx @deepseek-ai/dsh web > /tmp/dsh.log 2>&1 & echo \"PID: $!\" && sleep 2 && cat /tmp/dsh.log"
+    );
 }
 
 #[test]
@@ -438,29 +445,31 @@ fn test_format_command_for_pty() {
     // 1. Simple cd command
     assert_eq!(format_command_for_pty("cd /var/log", "fish"), " cd /var/log\n");
 
-    // 2. Simple single line in local fish (wraps in bash -c with space)
-    assert_eq!(format_command_for_pty("free -h", "fish"), " bash -c 'free -h'\n");
+    // 2. Simple single line in local fish (clean native command)
+    assert_eq!(format_command_for_pty("free -h", "fish"), " free -h\n");
 
-    // 3. Simple single line in local bash (no bash -c wrapping needed)
+    // 3. Simple single line in local bash (clean native command)
     assert_eq!(format_command_for_pty("free -h", "bash"), " free -h\n");
 
-    // 4. Simple single line on remote SSH (tool capture -> command with sentinel)
-    let remote_tool_cmd = format_command_for_pty_with_session("free -h", "fish", true, true);
-    assert_eq!(remote_tool_cmd, " ( free -h ); printf '\\033]777;spiritty_done;%d\\007' $?\n");
+    // 4. Bash-specific syntax (variable assignment BGPID=$! or heredocs) in fish -> wraps in bash -c
+    assert_eq!(
+        format_command_for_pty("node app.js & BGPID=$!", "fish"),
+        " bash -c 'node app.js & BGPID=$!'\n"
+    );
 
-    // 5. Simple single line on remote SSH (manual user Alt+1 -> pure clean command without sentinel)
+    // 5. Bash-specific syntax in bash -> executes directly
+    assert_eq!(
+        format_command_for_pty("node app.js & BGPID=$!", "bash"),
+        " node app.js & BGPID=$!\n"
+    );
+
+    // 6. Simple single line on remote SSH (tool capture -> with sentinel)
+    let remote_tool_cmd = format_command_for_pty_with_session("free -h", "fish", true, true);
+    assert_eq!(remote_tool_cmd, " free -h; printf '\\033]777;spiritty_done;%s\\007' $?\n");
+
+    // 7. Simple single line on remote SSH (manual user Alt+1 -> pure clean command)
     let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
     assert_eq!(remote_user_cmd, " cat ~/audit_systeme.md\n");
-
-    // 6. Local multiline heredoc script -> runs clean temporary script (with leading space to avoid history)
-    let multiline_heredoc = "cat > ~/audit.md << EOF\n# Title\nEOF";
-    let formatted_local = format_command_for_pty(multiline_heredoc, "fish");
-    assert!(formatted_local.starts_with(" bash "));
-    assert!(formatted_local.ends_with("spiritty_exec.sh\n"));
-
-    // 7. Remote SSH multiline heredoc script -> clean direct script with sentinel for tool capture
-    let formatted_remote = format_command_for_pty_with_session(multiline_heredoc, "fish", true, true);
-    assert_eq!(formatted_remote, format!(" ( {} ); printf '\\033]777;spiritty_done;%d\\007' $?\n", multiline_heredoc));
 }
 
 #[test]

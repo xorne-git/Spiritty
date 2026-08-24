@@ -111,7 +111,7 @@ impl SystemContext {
         let wm = self.desktop_env.as_deref().unwrap_or("Terminal/Console");
 
         let mut context = format!(
-            "User's Detected System Environment (Local Machine):\n- OS / Distribution: {}\n- Kernel: {}\n- Interactive Terminal Shell: {} (IMPORTANT: the command execution subshell is standard Bash/POSIX. All proposed commands and inspections must be strictly valid Bash syntax, never Fish syntax).\n- Available Package Managers: {} (NEVER use unlisted package managers like dpkg/rpm/apt if not present!)\n- Desktop Environment / Window Manager: {}\n- Init & Services: systemd (always check both 'systemctl' and 'systemctl --user' for user-level services like dms, pipewire, etc.)",
+            "User's Detected System Environment (Local Machine):\n- OS / Distribution: {}\n- Kernel: {}\n- Interactive Terminal Shell: {}\n- Available Package Managers: {} (NEVER use unlisted package managers like dpkg/rpm/apt if not present!)\n- Desktop Environment / Window Manager: {}\n- Init & Services: systemd (always check both 'systemctl' and 'systemctl --user' for user-level services like dms, pipewire, etc.)",
             self.distro, self.kernel, self.shell, pms, wm
         );
         if let Some(ref cwd) = self.current_dir {
