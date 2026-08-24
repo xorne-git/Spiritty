@@ -72,3 +72,54 @@ pub fn copy_to_clipboard(text: &str) {
     let _ = io::stdout().write_all(osc52.as_bytes());
     let _ = io::stdout().flush();
 }
+
+/// Universal clipboard paste reader: uses arboard and falls back to system CLI (wl-paste / xclip / pbpaste)
+pub fn get_clipboard_text() -> Option<String> {
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        if let Ok(text) = cb.get_text() {
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if let Ok(output) = std::process::Command::new("wl-paste").arg("-n").output() {
+                if output.status.success() {
+                    if let Ok(text) = String::from_utf8(output.stdout) {
+                        if !text.is_empty() {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("xclip").args(["-selection", "clipboard", "-o"]).output() {
+            if output.status.success() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    if !text.is_empty() {
+                        return Some(text);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("pbpaste").output() {
+            if output.status.success() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    if !text.is_empty() {
+                        return Some(text);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}

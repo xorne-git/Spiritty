@@ -21,6 +21,24 @@ use std::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI options before initializing raw terminal mode
+    let cli = spiritty::cli::CliOptions::parse_from_args(std::env::args());
+
+    if cli.show_version {
+        spiritty::cli::CliOptions::print_version();
+        return Ok(());
+    }
+
+    if cli.show_help {
+        spiritty::cli::CliOptions::print_help();
+        return Ok(());
+    }
+
+    if cli.list_sessions {
+        spiritty::cli::CliOptions::print_sessions_list()?;
+        return Ok(());
+    }
+
     // Setup panic hook to always restore terminal state on panic
     setup_panic_hook();
 
@@ -60,6 +78,28 @@ async fn main() -> Result<()> {
     let tick_rate = Duration::from_millis(90); // ~11 FPS for smooth, balanced spinner cadence
     let mut event_handler = EventHandler::new(tick_rate);
     let mut app = App::new(event_handler.sender(), initial_rows, initial_cols)?;
+
+    // Apply CLI session resumption or overrides
+    if cli.continue_last_session {
+        if let Ok(sessions) = spiritty::session::SessionStorage::list_sessions() {
+            if let Some(last) = sessions.first() {
+                app.load_session(&last.id);
+            }
+        }
+    } else if let Some(ref session_id) = cli.session_id {
+        app.load_session(session_id);
+    }
+
+    app.apply_cli_overrides(
+        cli.provider,
+        cli.model,
+        cli.auto_approve,
+        cli.ssh_target,
+    );
+
+    if let Some(ref prompt) = cli.initial_prompt {
+        app.submit_initial_prompt(prompt);
+    }
 
     // Main event loop
     let res = run_loop(&mut terminal, &mut app, &mut event_handler).await;
@@ -122,6 +162,10 @@ async fn run_loop(
                 }
                 AppEvent::AgentChunk(chunk) => app.on_agent_chunk(chunk),
                 AppEvent::AgentDone => app.on_agent_done(),
+                AppEvent::AgentUsage { prompt_tokens, completion_tokens, exact_speed } => {
+                    app.on_agent_usage(prompt_tokens, completion_tokens, exact_speed);
+                }
+                AppEvent::McpServersUpdated => app.on_mcp_servers_updated(),
                 AppEvent::AgentError(err) => app.on_agent_error(err),
                 AppEvent::AgentToolRequest { command, approval_tx } => {
                     app.on_agent_tool_request(command, approval_tx);
@@ -136,6 +180,15 @@ async fn run_loop(
                 AppEvent::AgentNewTurn => app.on_agent_new_turn(),
                 AppEvent::ModelsLoaded { provider_key, models } => {
                     app.on_models_loaded(provider_key, models);
+                }
+                AppEvent::RemoteHostProbed { target, output } => {
+                    app.on_remote_host_probed(target, output);
+                }
+                AppEvent::UpdatePricing => {
+                    app.trigger_pricing_update();
+                }
+                AppEvent::PricingUpdated(res) => {
+                    app.on_pricing_updated(res);
                 }
                 AppEvent::Tick => {
                     app.on_tick();

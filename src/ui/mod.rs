@@ -10,6 +10,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
+    widgets::Widget,
     Frame,
 };
 
@@ -18,7 +19,7 @@ use crate::{
     i18n::{I18nKey, Language},
 };
 use chat_panel::ChatPanel;
-use components::HelpModal;
+use components::{BookmarksModal, ExportModal, HelpModal};
 use terminal_panel::TerminalPanel;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -189,6 +190,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ModalState::Sessions(session_state) => {
             session_state.render_modal(size, frame.buffer_mut(), lang);
         }
+        ModalState::Bookmarks(bookmarks_state) => {
+            BookmarksModal::render_modal(size, frame.buffer_mut(), bookmarks_state, lang);
+        }
+        ModalState::Export(export_state) => {
+            ExportModal::render_modal(size, frame.buffer_mut(), export_state, lang);
+        }
+        ModalState::Mcp(mcp_state) => {
+            crate::ui::components::McpModal::new(mcp_state, lang).render(size, frame.buffer_mut());
+        }
         ModalState::None => {
             // Position cursor on the active pane only when no modal is open
             match app.focus {
@@ -214,96 +224,43 @@ pub fn get_spinner_char(frame: usize) -> &'static str {
     SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]
 }
 
-/// Renders the 1-line info bar at the bottom: Provider, Model, Tokens, Context Window, and F1 Help button
+/// Renders the 1-line info bar at the bottom: Left metrics have full priority, right shortcuts adapt to remaining space
 fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
-    if area.height == 0 || area.width < 10 {
+    if area.height == 0 || area.width < 5 {
         return;
     }
 
     let lang = app.config.get_language();
-    let provider_name = app.get_active_provider_name();
-    let model_name = app.get_active_model_name();
-    let tokens_used = app.get_total_tokens_used();
-    let ctx_used = app.get_context_used_tokens();
-    let ctx_total = app.get_context_window_limit();
-    let ctx_pct = (ctx_used as f64 / ctx_total as f64 * 100.0).clamp(0.0, 100.0);
-    let is_generating = app.agent.is_generating;
-    let is_active_generating = is_generating && app.pending_tool_approval.is_none();
-    let spinner_char = get_spinner_char(app.spinner_frame);
+    let width = area.width as usize;
 
-    let mut left_spans: Vec<Span<'static>> = Vec::new();
-    left_spans.push(Span::styled(" 󰚩 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-    left_spans.push(Span::styled(provider_name.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-    left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+    // 1. Build Left Metrics with full priority (reserving a tiny minimum for essential shortcuts if window allows)
+    let min_reserved_for_shortcuts = if width >= 30 { 14 } else if width >= 15 { 6 } else { 0 };
+    let max_left_width = width.saturating_sub(min_reserved_for_shortcuts);
 
-    if is_generating {
-        if is_active_generating {
-            left_spans.push(Span::styled(
-                format!("{} ", spinner_char),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ));
-            left_spans.push(Span::styled(
-                model_name,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            // Waiting for user validation: keep icon, stop animation
-            left_spans.push(Span::styled(
-                "● ",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ));
-            left_spans.push(Span::styled(
-                model_name,
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ));
-        }
-    } else {
-        left_spans.push(Span::styled(
-            model_name,
-            Style::default().fg(Color::LightCyan),
-        ));
+    let left_spans = build_left_metrics(app, lang, max_left_width);
+    let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
+
+    // 2. Compute available space for right shortcuts
+    let available_right_width = width.saturating_sub(left_width + 1);
+
+    // 3. Build Right Shortcuts adapting to remaining space (prioritizing F1 Help and Ctrl+P Config)
+    let right_spans = build_right_shortcuts(app, lang, available_right_width);
+    let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+
+    // 4. Combine Left Spans + Spaces + Right Spans
+    let spaces = width.saturating_sub(left_width + right_width);
+    let mut full_spans = Vec::new();
+    full_spans.extend(left_spans);
+    if spaces > 0 {
+        full_spans.push(Span::raw(" ".repeat(spaces)));
     }
+    full_spans.extend(right_spans);
 
-    left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-    left_spans.push(Span::styled("📊 ", Style::default().fg(Color::Magenta)));
-    left_spans.push(Span::styled(
-        format!("Ctx: {} / {} ({:.0}%)", format_token_count(ctx_used), format_token_count(ctx_total), ctx_pct),
-        Style::default().fg(Color::Gray),
-    ));
-    left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-    left_spans.push(Span::styled("⚡ ", Style::default().fg(Color::Yellow)));
-    let tok_text = if let Some(tps) = app.get_tokens_per_sec() {
-        format!("{} tok ({:.1} t/s)", format_token_count(tokens_used), tps)
-    } else {
-        format!("{} tokens", format_token_count(tokens_used))
-    };
-    left_spans.push(Span::styled(tok_text, Style::default().fg(Color::White)));
+    let line = Line::from(full_spans);
+    buf.set_line(area.x, area.y, &line, area.width);
+}
 
-    if let Some((time, len)) = app.clipboard_toast {
-        if time.elapsed().as_millis() < 2500 {
-            left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            left_spans.push(Span::styled("📋 ", Style::default().fg(Color::Green)));
-            left_spans.push(Span::styled(
-                if lang == Language::Fr {
-                    format!("Copié ({} car.)", len)
-                } else {
-                    format!("Copied ({} chars)", len)
-                },
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ));
-        }
-    }
-
-    if let Some((time, ref msg)) = app.toast_message {
-        if time.elapsed().as_millis() < 4000 {
-            left_spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            left_spans.push(Span::styled(msg.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-        }
-    }
-
-    let mut right_spans: Vec<Span<'static>> = Vec::new();
-
-    // Auto-Approve badge with F3 shortcut
+fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> Vec<Span<'static>> {
     use crate::config::AutoApproveLevel;
     let (auto_badge_color, auto_badge_text) = match app.config.auto_approve {
         AutoApproveLevel::Safe => (Color::Green, "Safe"),
@@ -311,38 +268,242 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
         AutoApproveLevel::Yolo => (Color::Red, "YOLO"),
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
-    right_spans.push(Span::styled(lang.t(I18nKey::FooterApprovalLabel), Style::default().fg(Color::DarkGray)));
-    right_spans.extend(key_pill("F3", auto_badge_color));
-    right_spans.push(Span::styled(format!(" {} ", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
 
-    right_spans.push(Span::raw(" "));
-    right_spans.extend(key_pill("Ctrl", Color::LightCyan));
-    right_spans.push(Span::raw(" "));
-    right_spans.extend(key_pill("H", Color::LightCyan));
-    right_spans.push(Span::styled(" Sessions ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+    let mut right = Vec::new();
 
-    right_spans.push(Span::raw(" "));
-    right_spans.extend(key_pill("F1", Color::Cyan));
-    right_spans.push(Span::styled(
-        if lang == Language::Fr { " Aide " } else { " Help " },
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-    ));
+    if available_width >= 82 {
+        // Tier 1: Full Powerline pills with all shortcuts
+        right.push(Span::styled(lang.t(I18nKey::FooterApprovalLabel), Style::default().fg(Color::DarkGray)));
+        right.extend(key_pill("F3", auto_badge_color));
+        right.push(Span::styled(format!(" {} ", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
 
-    let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
-    let right_width: usize = right_spans.iter().map(|s| s.width()).sum();
+        right.push(Span::raw(" "));
+        right.extend(key_pill("Ctrl", Color::Magenta));
+        right.push(Span::raw(" "));
+        right.extend(key_pill("P", Color::Magenta));
+        right.push(Span::styled(" Config ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
 
-    let mut full_spans = Vec::new();
-    if left_width + right_width <= area.width as usize {
-        let spaces = (area.width as usize).saturating_sub(left_width + right_width);
-        full_spans.extend(left_spans);
-        full_spans.push(Span::raw(" ".repeat(spaces)));
-        full_spans.extend(right_spans);
-    } else {
-        full_spans.extend(left_spans);
+        right.push(Span::raw(" "));
+        right.extend(key_pill("Ctrl", Color::Cyan));
+        right.push(Span::raw(" "));
+        right.extend(key_pill("B", Color::Cyan));
+        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        right.push(Span::raw(" "));
+        right.extend(key_pill("Ctrl", Color::Rgb(140, 100, 240)));
+        right.push(Span::raw(" "));
+        right.extend(key_pill("M", Color::Rgb(140, 100, 240)));
+        right.push(Span::styled(" MCP ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        right.push(Span::raw(" "));
+        right.extend(key_pill("Ctrl", Color::LightCyan));
+        right.push(Span::raw(" "));
+        right.extend(key_pill("H", Color::LightCyan));
+        right.push(Span::styled(" Sessions ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+
+        right.push(Span::raw(" "));
+        right.extend(key_pill("F1", Color::Cyan));
+        right.push(Span::styled(
+            if lang == Language::Fr { " Aide " } else { " Help " },
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ));
+    } else if available_width >= 50 {
+        // Tier 2: Compact badges with all shortcuts
+        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::raw("  "));
+
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("^B", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("^M", Style::default().fg(Color::Rgb(140, 100, 240)).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" MCP  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("^H", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Sess  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+    } else if available_width >= 36 {
+        // Tier 3: F3, ^P Config, ^B Hosts, F1 Aide
+        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::raw("  "));
+
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("^B", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+    } else if available_width >= 24 {
+        // Tier 4: F3, ^P Config, F1 Aide
+        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::raw("  "));
+
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+    } else if available_width >= 18 {
+        // Tier 5: Essential ^P Config + F1 Aide
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+    } else if available_width >= 12 {
+        // Tier 6: ^P Config F1
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    } else if available_width >= 6 {
+        // Tier 7: ^P F1
+        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::raw(" "));
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    } else if available_width >= 2 {
+        // Tier 8: F1
+        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
     }
 
-    let line = Line::from(full_spans);
-    buf.set_line(area.x, area.y, &line, area.width);
+    right
+}
+
+fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_width = 0;
+
+    let provider_name = app.get_active_provider_name();
+    let model_name = app.get_active_model_name();
+    let tokens_used = if app.current_session.total_tokens > 0 {
+        app.current_session.total_tokens
+    } else {
+        app.get_total_tokens_used()
+    };
+    let ctx_used = app.get_context_used_tokens();
+    let ctx_total = app.get_context_window_limit();
+    let ctx_pct = (ctx_used as f64 / ctx_total as f64 * 100.0).clamp(0.0, 100.0);
+    let is_generating = app.agent.is_generating;
+    let is_active_generating = is_generating && app.pending_tool_approval.is_none();
+    let spinner_char = get_spinner_char(app.spinner_frame);
+
+    // 1. Provider
+    let p_icon = Span::styled(" 󰚩 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    let p_name = Span::styled(provider_name.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    let p_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+
+    let p_w = p_icon.width() + p_name.width() + p_sep.width();
+    if current_width + p_w <= max_width {
+        current_width += p_w;
+        spans.push(p_icon);
+        spans.push(p_name);
+        spans.push(p_sep);
+    }
+
+    // 2. Model Name
+    let m_span = if is_generating {
+        if is_active_generating {
+            Span::styled(format!("{} {}", spinner_char, model_name), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(format!("● {}", model_name), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        }
+    } else {
+        Span::styled(model_name, Style::default().fg(Color::LightCyan))
+    };
+
+    let m_w = m_span.width();
+    if current_width + m_w <= max_width {
+        current_width += m_w;
+        spans.push(m_span);
+    } else {
+        // Try truncated model name
+        let available = max_width.saturating_sub(current_width);
+        if available >= 5 {
+            let trunc = format!("{}…", &m_span.content[..available.saturating_sub(2).min(m_span.content.len())]);
+            let s = Span::styled(trunc, m_span.style);
+            current_width += s.width();
+            spans.push(s);
+        }
+    }
+
+    // 3. Tokens & Speed
+    let t_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+    let t_icon = Span::styled("⚡ ", Style::default().fg(Color::Yellow));
+    let tok_str = if let Some(tps) = app.get_tokens_per_sec() {
+        format!("{} tok ({:.1} t/s)", format_token_count(tokens_used), tps)
+    } else {
+        format!("{} tok", format_token_count(tokens_used))
+    };
+    let t_val = Span::styled(tok_str, Style::default().fg(Color::White));
+    let t_w = t_sep.width() + t_icon.width() + t_val.width();
+
+    if current_width + t_w <= max_width {
+        current_width += t_w;
+        spans.push(t_sep);
+        spans.push(t_icon);
+        spans.push(t_val);
+    }
+
+    // 4. Cost estimation (if > $0.0001)
+    let cost = if let Ok(guard) = app.pricing_registry.try_read() {
+        app.current_session.estimated_cost_with_pricing(&guard)
+    } else {
+        app.current_session.estimated_cost_usd()
+    };
+    if cost > 0.00005 {
+        let c_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+        let c_icon = Span::styled("💵 ", Style::default().fg(Color::LightGreen));
+        let c_val = Span::styled(format!("${:.4}", cost), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD));
+        let c_w = c_sep.width() + c_icon.width() + c_val.width();
+
+        if current_width + c_w <= max_width {
+            current_width += c_w;
+            spans.push(c_sep);
+            spans.push(c_icon);
+            spans.push(c_val);
+        }
+    }
+
+    // 5. Context window usage
+    let ctx_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+    let ctx_icon = Span::styled("📊 ", Style::default().fg(Color::Magenta));
+    let ctx_str = format!("Ctx: {} / {} ({:.0}%)", format_token_count(ctx_used), format_token_count(ctx_total), ctx_pct);
+    let ctx_val = Span::styled(ctx_str, Style::default().fg(Color::Gray));
+    let ctx_w = ctx_sep.width() + ctx_icon.width() + ctx_val.width();
+
+    if current_width + ctx_w <= max_width {
+        current_width += ctx_w;
+        spans.push(ctx_sep);
+        spans.push(ctx_icon);
+        spans.push(ctx_val);
+    }
+
+    // 6. Toasts (Clipboard or Notification)
+    if let Some((time, len)) = app.clipboard_toast {
+        if time.elapsed().as_millis() < 2500 {
+            let toast_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+            let toast_icon = Span::styled("📋 ", Style::default().fg(Color::Green));
+            let msg = if lang == Language::Fr {
+                format!("Copié ({} car.)", len)
+            } else {
+                format!("Copied ({} chars)", len)
+            };
+            let toast_val = Span::styled(msg, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+            let toast_w = toast_sep.width() + toast_icon.width() + toast_val.width();
+            if current_width + toast_w <= max_width {
+                spans.push(toast_sep);
+                spans.push(toast_icon);
+                spans.push(toast_val);
+            }
+        }
+    }
+
+    spans
 }
 
 fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {

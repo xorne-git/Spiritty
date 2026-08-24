@@ -108,6 +108,36 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 
 ---
 
+## 🚀 Command-Line Options (CLI)
+
+Spiritty provides rich command-line arguments to streamline your terminal workflow:
+
+```bash
+# Resume the most recent session
+spiritty -c
+
+# Resume a specific session by ID or title prefix
+spiritty -s sess_20260824_0001
+spiritty -s nginx
+
+# Send an initial query directly at launch
+spiritty "Analyze memory usage and error logs"
+
+# Quick-connect directly to an SSH server
+spiritty --ssh root@vps-web.prod:22
+
+# Temporarily override model or auto-approve policy
+spiritty --model qwen2.5-coder:7b --yolo
+
+# List all saved sessions
+spiritty --list-sessions
+
+# Show full CLI help
+spiritty --help
+```
+
+---
+
 ## ⌨️ Primary Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -117,6 +147,10 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 | `Ctrl + Space` or `Shift + Tab` | Toggle focus (Chat ↔ Terminal) |
 | `Alt + 1` .. `Alt + 9` | Directly execute command proposal N |
 | `F3` | Cycle Auto-Approve policy (Safe / Sudo / YOLO / Off) |
+| `Ctrl + B` | Quick-Connect SSH servers & bookmarks manager |
+| `Ctrl + E` | Export current session to formatted Markdown report |
+| `Ctrl + F` | Search in chat history with real-time match navigation |
+| `Alt + D` | Proactive error diagnosis and auto-healing suggestion |
 | `Ctrl + H` | Open session manager modal |
 | `Ctrl + N` | Start a new clean session |
 | `Ctrl + P` | Open model & API key configuration |

@@ -171,3 +171,29 @@ fn test_system_context_prompt_switching() {
     assert!(ssh_profiled_prompt.contains("apk"));
     assert!(ssh_profiled_prompt.contains("OpenRC"));
 }
+
+#[test]
+fn test_detect_git_branch_and_compact_path() {
+    use spiritty::system::{detect_git_branch, format_compact_path};
+    use std::fs;
+
+    // Test compact path
+    if let Ok(home) = std::env::var("HOME") {
+        assert_eq!(format_compact_path(&home), "~");
+        assert_eq!(format_compact_path(&format!("{}/Projets/Spiritty", home)), "~/Projets/Spiritty");
+    }
+
+    // Test git branch detection in a temporary directory
+    let dir = tempdir().unwrap();
+    let git_dir = dir.path().join(".git");
+    fs::create_dir_all(&git_dir).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feat/awesome-feature\n").unwrap();
+
+    let branch = detect_git_branch(dir.path().to_str().unwrap());
+    assert_eq!(branch, Some("feat/awesome-feature".to_string()));
+
+    // Test detached head
+    fs::write(git_dir.join("HEAD"), "d68b70fa9900112233445566778899\n").unwrap();
+    let detached_branch = detect_git_branch(dir.path().to_str().unwrap());
+    assert_eq!(detached_branch, Some("d68b70f".to_string()));
+}

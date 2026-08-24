@@ -73,6 +73,8 @@ fn test_custom_system_prompt() {
         desktop_env: Some("niri".to_string()),
         active_session: spiritty::system::ActiveSession::Local { foreground_process: None },
         active_remote_profile: None,
+        current_dir: Some("~/Projets/Spiritty".to_string()),
+        git_branch: Some("main".to_string()),
     };
 
     let mut config = Config::default();

@@ -14,6 +14,10 @@ pub struct Session {
     pub provider: String,
     pub model: String,
     pub total_tokens: usize,
+    #[serde(default)]
+    pub prompt_tokens: usize,
+    #[serde(default)]
+    pub completion_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub compacted_summary: Option<String>,
     pub messages: Vec<ChatMessage>,
@@ -38,10 +42,24 @@ impl Session {
             provider: provider.to_string(),
             model: model.to_string(),
             total_tokens: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
             compacted_summary: None,
             messages: Vec::new(),
             prompt_history: Vec::new(),
         }
+    }
+
+    /// Calculates estimated session cost in USD using built-in defaults or cached registry
+    pub fn estimated_cost_usd(&self) -> f64 {
+        let registry = crate::pricing::PricingRegistry::default();
+        self.estimated_cost_with_pricing(&registry)
+    }
+
+    /// Calculates estimated session cost in USD with a specific PricingRegistry
+    pub fn estimated_cost_with_pricing(&self, registry: &crate::pricing::PricingRegistry) -> f64 {
+        let pricing = registry.get_pricing(&self.provider, &self.model);
+        pricing.calculate_cost(self.prompt_tokens, self.completion_tokens)
     }
 
     /// Synchronizes session with current chat messages, prompt history, total tokens, and active provider/model.

@@ -59,6 +59,14 @@ pub enum DropdownAction {
     Editing(String, usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigModalAction {
+    None,
+    Close,
+    SaveAndClose,
+    UpdatePricing,
+}
+
 pub struct ConfigModalState {
     pub selected_provider: ProviderType,
     pub auto_approve: crate::config::AutoApproveLevel,
@@ -99,37 +107,45 @@ fn remove_char_at(s: &mut String, idx: usize) {
     }
 }
 
-fn render_editable_text<'a>(text: &'a str, cursor: usize, is_focused: bool, placeholder: &'a str) -> Vec<Span<'a>> {
-    if !is_focused {
-        if text.is_empty() {
+fn render_editable_text<'a>(
+    text: &'a str,
+    cursor: usize,
+    is_focused: bool,
+    placeholder: &'a str,
+) -> Vec<Span<'a>> {
+    if text.is_empty() {
+        if is_focused {
+            return vec![Span::styled("█", Style::default().fg(Color::Cyan))];
+        } else {
             return vec![Span::styled(placeholder, Style::default().fg(Color::DarkGray))];
         }
+    }
+
+    if !is_focused {
         return vec![Span::styled(text, Style::default().fg(Color::White))];
     }
 
     let chars: Vec<char> = text.chars().collect();
     let mut spans = Vec::new();
 
-    if chars.is_empty() {
-        spans.push(Span::styled(" ", Style::default().bg(Color::Yellow).fg(Color::Black)));
-        return spans;
-    }
-
-    let cursor = cursor.min(chars.len());
-    let before: String = chars[..cursor].iter().collect();
-    if !before.is_empty() {
-        spans.push(Span::styled(before, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-    }
-
-    if cursor < chars.len() {
-        let cur_char = chars[cursor].to_string();
-        spans.push(Span::styled(cur_char, Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)));
-        let after: String = chars[(cursor + 1)..].iter().collect();
-        if !after.is_empty() {
-            spans.push(Span::styled(after, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-        }
+    if cursor >= chars.len() {
+        spans.push(Span::styled(text, Style::default().fg(Color::White)));
+        spans.push(Span::styled("█", Style::default().fg(Color::Cyan)));
     } else {
-        spans.push(Span::styled(" ", Style::default().bg(Color::Yellow).fg(Color::Black)));
+        let before: String = chars[..cursor].iter().collect();
+        let cursor_char = chars[cursor];
+        let after: String = chars[cursor + 1..].iter().collect();
+
+        if !before.is_empty() {
+            spans.push(Span::styled(before, Style::default().fg(Color::White)));
+        }
+        spans.push(Span::styled(
+            cursor_char.to_string(),
+            Style::default().bg(Color::Cyan).fg(Color::Black),
+        ));
+        if !after.is_empty() {
+            spans.push(Span::styled(after, Style::default().fg(Color::White)));
+        }
     }
 
     spans
@@ -137,62 +153,86 @@ fn render_editable_text<'a>(text: &'a str, cursor: usize, is_focused: bool, plac
 
 impl ConfigModalState {
     pub fn from_config(config: &Config) -> Self {
-        let provider = config.default_provider;
-        let p_cfg = config.get_active_provider_config();
-
+        let selected_provider = config.default_provider;
         let mut models_per_provider = HashMap::new();
+
         for p in ProviderType::all() {
-            models_per_provider.insert(p.key_str().to_string(), config.get_models_for_provider(*p));
+            let mut list = Vec::new();
+            if let Some(p_cfg) = config.providers.get(p.key_str()) {
+                if !p_cfg.models.is_empty() {
+                    list = p_cfg.models.clone();
+                }
+            }
+            if list.is_empty() {
+                list = p.popular_models().iter().map(|s| s.to_string()).collect();
+            }
+            models_per_provider.insert(p.key_str().to_string(), list);
         }
 
-        let current_models = models_per_provider.get(provider.key_str()).cloned().unwrap_or_default();
-        let dropdown_selected_idx = current_models.iter().position(|m| *m == p_cfg.model).unwrap_or(0);
+        let prov_key = selected_provider.key_str();
+        let (model_input, base_url_input, api_key_input) =
+            if let Some(p_cfg) = config.providers.get(prov_key) {
+                (
+                    p_cfg.model.clone(),
+                    p_cfg.base_url.clone().unwrap_or_default(),
+                    p_cfg.api_key.clone().unwrap_or_default(),
+                )
+            } else {
+                (
+                    selected_provider.default_model().to_string(),
+                    String::new(),
+                    String::new(),
+                )
+            };
 
-        let base_url_input = p_cfg.base_url.unwrap_or_else(|| provider.default_base_url().unwrap_or("").to_string());
-        let url_cursor = base_url_input.chars().count();
+        let dropdown_selected_idx = models_per_provider
+            .get(prov_key)
+            .and_then(|models| models.iter().position(|m| *m == model_input))
+            .unwrap_or(0);
 
-        let api_key_input = p_cfg.api_key.unwrap_or_else(|| provider.default_env_var().map(|e| format!("ENV:{}", e)).unwrap_or_default());
-        let api_key_cursor = api_key_input.chars().count();
-
-        let theme = ThemeId::parse_or_default(&config.get_theme());
+        let url_len = base_url_input.chars().count();
+        let key_len = api_key_input.chars().count();
+        let theme = ThemeId::parse_or_default(config.theme.as_deref().unwrap_or("spiritty_dark"));
 
         Self {
-            selected_provider: provider,
+            selected_provider,
+            active_field: ConfigField::Provider,
             auto_approve: config.auto_approve,
             theme,
-            active_field: ConfigField::Provider,
+            model_input,
+            base_url_input,
+            api_key_input,
+            url_cursor: url_len,
+            api_key_cursor: key_len,
             is_dropdown_open: false,
             dropdown_selected_idx,
             dropdown_action: DropdownAction::None,
             models_per_provider,
-            model_input: p_cfg.model,
-            base_url_input,
-            url_cursor,
-            api_key_input,
-            api_key_cursor,
         }
     }
 
     pub fn set_provider(&mut self, provider: ProviderType, config: &Config) {
         self.selected_provider = provider;
-        let key = provider.key_str();
-        if let Some(existing) = config.providers.get(key) {
-            self.model_input = existing.model.clone();
-            self.base_url_input = existing.base_url.clone().unwrap_or_else(|| provider.default_base_url().unwrap_or("").to_string());
-            self.api_key_input = existing.api_key.clone().unwrap_or_else(|| provider.default_env_var().map(|e| format!("ENV:{}", e)).unwrap_or_default());
+        let prov_key = provider.key_str();
+
+        if let Some(p_cfg) = config.providers.get(prov_key) {
+            self.model_input = p_cfg.model.clone();
+            self.base_url_input = p_cfg.base_url.clone().unwrap_or_default();
+            self.api_key_input = p_cfg.api_key.clone().unwrap_or_default();
         } else {
             self.model_input = provider.default_model().to_string();
-            self.base_url_input = provider.default_base_url().unwrap_or("").to_string();
-            self.api_key_input = provider.default_env_var().map(|e| format!("ENV:{}", e)).unwrap_or_default();
+            self.base_url_input = String::new();
+            self.api_key_input = String::new();
         }
 
         self.url_cursor = self.base_url_input.chars().count();
         self.api_key_cursor = self.api_key_input.chars().count();
 
-        let models = self.models_per_provider.get(key).map(|v| v.as_slice()).unwrap_or(&[]);
-        self.dropdown_selected_idx = models.iter().position(|m| *m == self.model_input).unwrap_or(0);
-        self.is_dropdown_open = false;
-        self.dropdown_action = DropdownAction::None;
+        self.dropdown_selected_idx = self
+            .models_per_provider
+            .get(prov_key)
+            .and_then(|models| models.iter().position(|m| *m == self.model_input))
+            .unwrap_or(0);
     }
 
     pub fn handle_paste(&mut self, text: String) {
@@ -234,13 +274,14 @@ impl ConfigModalState {
         }
     }
 
-    pub fn save_config(&self, config: &mut Config) -> bool {
+    pub fn save_config(&self, config: &mut Config) -> ConfigModalAction {
         let key = self.selected_provider.key_str().to_string();
         let base_url = if self.base_url_input.trim().is_empty() {
             None
         } else {
             Some(self.base_url_input.trim().to_string())
         };
+
         let api_key = if self.api_key_input.trim().is_empty() {
             None
         } else {
@@ -263,15 +304,25 @@ impl ConfigModalState {
         config.providers.insert(key, updated_provider);
 
         let _ = config.save();
-        true // Close modal on save
+        ConfigModalAction::SaveAndClose
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent, config: &mut Config) -> bool {
-        // Global save shortcut anywhere in the modal: Shift+Enter, Ctrl+Enter, Ctrl+S, F2
+    pub fn handle_key(&mut self, key: KeyEvent, config: &mut Config) -> ConfigModalAction {
         let is_save_shortcut = (matches!(key.code, KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r'))
             && (key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)))
             || (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')))
             || key.code == KeyCode::F(2);
+
+        let is_paste = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT))
+            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
+
+        if is_paste {
+            if let Some(text) = crate::system::clipboard::get_clipboard_text() {
+                self.handle_paste(text);
+                return ConfigModalAction::None;
+            }
+        }
 
         let prov_key = self.selected_provider.key_str().to_string();
 
@@ -287,7 +338,6 @@ impl ConfigModalState {
             return self.save_config(config);
         }
 
-        // 1. Dropdown is open
         if self.is_dropdown_open {
             match &mut self.dropdown_action {
                 DropdownAction::Adding(input, cursor) => match key.code {
@@ -302,117 +352,118 @@ impl ConfigModalState {
                             self.model_input = new_model;
                         }
                         self.dropdown_action = DropdownAction::None;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Esc => {
                         self.dropdown_action = DropdownAction::None;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Left => {
                         *cursor = cursor.saturating_sub(1);
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Right => {
                         if *cursor < input.chars().count() {
                             *cursor += 1;
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Home => {
                         *cursor = 0;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::End => {
                         *cursor = input.chars().count();
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Char(c) => {
                         insert_char_at(input, *cursor, c);
                         *cursor += 1;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Backspace => {
                         if *cursor > 0 {
                             remove_char_at(input, *cursor - 1);
                             *cursor -= 1;
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Delete => {
                         if *cursor < input.chars().count() {
                             remove_char_at(input, *cursor);
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
-                    _ => return false,
+                    _ => return ConfigModalAction::None,
                 },
                 DropdownAction::Editing(input, cursor) => match key.code {
                     KeyCode::Enter => {
-                        let edited = input.trim().to_string();
-                        if !edited.is_empty() {
-                            let idx = self.dropdown_selected_idx;
-                            let models = self.models_per_provider.entry(prov_key).or_default();
-                            if idx < models.len() {
-                                models[idx] = edited.clone();
-                                self.model_input = edited;
+                        let edited_model = input.trim().to_string();
+                        let idx = self.dropdown_selected_idx;
+                        if !edited_model.is_empty() {
+                            if let Some(models) = self.models_per_provider.get_mut(&prov_key) {
+                                if idx < models.len() {
+                                    models[idx] = edited_model.clone();
+                                    self.model_input = edited_model;
+                                }
                             }
                         }
                         self.dropdown_action = DropdownAction::None;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Esc => {
                         self.dropdown_action = DropdownAction::None;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Left => {
                         *cursor = cursor.saturating_sub(1);
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Right => {
                         if *cursor < input.chars().count() {
                             *cursor += 1;
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Home => {
                         *cursor = 0;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::End => {
                         *cursor = input.chars().count();
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Char(c) => {
                         insert_char_at(input, *cursor, c);
                         *cursor += 1;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Backspace => {
                         if *cursor > 0 {
                             remove_char_at(input, *cursor - 1);
                             *cursor -= 1;
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Delete => {
                         if *cursor < input.chars().count() {
                             remove_char_at(input, *cursor);
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
-                    _ => return false,
+                    _ => return ConfigModalAction::None,
                 },
                 DropdownAction::None => match key.code {
                     KeyCode::Up => {
                         self.dropdown_selected_idx = self.dropdown_selected_idx.saturating_sub(1);
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Down => {
                         let count = self.models_per_provider.get(&prov_key).map(|v| v.len()).unwrap_or(0);
                         if count > 0 && self.dropdown_selected_idx + 1 < count {
                             self.dropdown_selected_idx += 1;
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if let Some(models) = self.models_per_provider.get(&prov_key) {
@@ -421,11 +472,11 @@ impl ConfigModalState {
                             }
                         }
                         self.is_dropdown_open = false;
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Char('a') | KeyCode::Char('+') => {
                         self.dropdown_action = DropdownAction::Adding(String::new(), 0);
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Char('e') | KeyCode::F(2) => {
                         let current_name = self.models_per_provider
@@ -435,7 +486,7 @@ impl ConfigModalState {
                             .unwrap_or_default();
                         let len = current_name.chars().count();
                         self.dropdown_action = DropdownAction::Editing(current_name, len);
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Char('d') | KeyCode::Delete => {
                         let idx = self.dropdown_selected_idx;
@@ -448,20 +499,19 @@ impl ConfigModalState {
                                 self.model_input = new_sel.clone();
                             }
                         }
-                        return false;
+                        return ConfigModalAction::None;
                     }
                     KeyCode::Esc => {
                         self.is_dropdown_open = false;
-                        return false;
+                        return ConfigModalAction::None;
                     }
-                    _ => return false,
+                    _ => return ConfigModalAction::None,
                 },
             }
         }
 
-        // 2. Main modal navigation
         match key.code {
-            KeyCode::Esc => return true, // Close modal on Esc when dropdown is closed
+            KeyCode::Esc => return ConfigModalAction::Close,
             KeyCode::Tab | KeyCode::Down => {
                 self.active_field = self.active_field.next();
             }
@@ -555,20 +605,25 @@ impl ConfigModalState {
             KeyCode::Enter => {
                 if self.active_field == ConfigField::Model {
                     self.is_dropdown_open = true;
-                    return false;
+                    return ConfigModalAction::None;
                 }
                 if self.active_field == ConfigField::AutoApprove {
                     self.auto_approve = self.auto_approve.next();
-                    return false;
+                    return ConfigModalAction::None;
                 }
                 if self.active_field == ConfigField::Theme {
                     let all = ThemeId::all();
                     let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
                     self.theme = all[(current_idx + 1) % all.len()];
-                    return false;
+                    return ConfigModalAction::None;
                 }
 
                 return self.save_config(config);
+            }
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if self.active_field != ConfigField::BaseUrl && self.active_field != ConfigField::ApiKey =>
+            {
+                return ConfigModalAction::UpdatePricing;
             }
             KeyCode::Char(' ') => match self.active_field {
                 ConfigField::AutoApprove => self.auto_approve = self.auto_approve.next(),
@@ -621,7 +676,7 @@ impl ConfigModalState {
             },
             _ => {}
         }
-        false
+        ConfigModalAction::None
     }
 
     pub fn render_modal(&self, area: Rect, buf: &mut Buffer, lang: Language) {
@@ -772,6 +827,9 @@ impl ConfigModalState {
         footer.push(Span::styled("+", Style::default().fg(Color::Yellow)));
         footer.extend(key_pill("S", Color::Yellow));
         footer.push(Span::raw(format!(" {}    ", lang.t(I18nKey::ConfigButtonSave))));
+
+        footer.extend(key_pill("U", Color::Rgb(140, 100, 240)));
+        footer.push(Span::raw(format!(" {}    ", lang.t(I18nKey::ConfigActionUpdatePricing))));
 
         footer.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
         footer.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigNavClose))));

@@ -58,14 +58,30 @@ struct ChatCompletionRequest<'a> {
     messages: Vec<Message<'a>>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
 }
 
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
 #[derive(Deserialize)]
 struct ChatCompletionChunk {
+    #[serde(default)]
     choices: Vec<ChunkChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiUsage {
+    prompt_tokens: Option<usize>,
+    completion_tokens: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +142,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             model: &self.model,
             messages: api_messages,
             stream: true,
+            stream_options: Some(StreamOptions { include_usage: true }),
             max_tokens: Some(8192),
             temperature: Some(0.2),
         };
@@ -190,6 +207,16 @@ impl LlmProvider for OpenAiCompatibleProvider {
                         }
 
                         if let Ok(chunk) = serde_json::from_str::<ChatCompletionChunk>(data) {
+                            if let Some(usage) = chunk.usage {
+                                let prompt_toks = usage.prompt_tokens.unwrap_or(0);
+                                let comp_toks = usage.completion_tokens.unwrap_or(0);
+                                let _ = event_tx.send(AppEvent::AgentUsage {
+                                    prompt_tokens: prompt_toks,
+                                    completion_tokens: comp_toks,
+                                    exact_speed: None,
+                                });
+                            }
+
                             for choice in chunk.choices {
                                 if let Some(content) = choice.delta.content {
                                     if !content.is_empty() {

@@ -45,9 +45,28 @@ impl HostProfile {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostBookmark {
+    pub target: String,
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub is_favorite: bool,
+    pub added_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HostEntry {
+    pub target: String,
+    pub alias: Option<String>,
+    pub is_favorite: bool,
+    pub profile: Option<HostProfile>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HostsStore {
     pub profiles: HashMap<String, HostProfile>,
+    #[serde(default)]
+    pub bookmarks: Vec<HostBookmark>,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -55,6 +74,10 @@ pub struct HostsStore {
 impl HostsStore {
     pub fn load() -> Self {
         let path = Self::default_path().unwrap_or_else(|_| PathBuf::from("hosts.json"));
+        Self::load_from_path(path)
+    }
+
+    pub fn load_from_path(path: PathBuf) -> Self {
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(mut store) = serde_json::from_str::<HostsStore>(&content) {
@@ -66,6 +89,7 @@ impl HostsStore {
 
         Self {
             profiles: HashMap::new(),
+            bookmarks: Vec::new(),
             path,
         }
     }
@@ -78,13 +102,92 @@ impl HostsStore {
         Ok(config_dir.join("hosts.json"))
     }
 
+    pub fn add_bookmark(&mut self, target: String, alias: Option<String>) -> Result<()> {
+        if let Some(bm) = self.bookmarks.iter_mut().find(|b| b.target == target) {
+            bm.alias = alias;
+            bm.is_favorite = true;
+        } else {
+            self.bookmarks.push(HostBookmark {
+                target,
+                alias,
+                is_favorite: true,
+                added_at: Utc::now().to_rfc3339(),
+            });
+        }
+        self.save()
+    }
+
+    pub fn remove_bookmark(&mut self, target: &str) -> Result<()> {
+        self.bookmarks.retain(|b| b.target != target);
+        self.profiles.remove(target);
+        self.save()
+    }
+
+    pub fn toggle_favorite(&mut self, target: &str) -> Result<()> {
+        if let Some(bm) = self.bookmarks.iter_mut().find(|b| b.target == target) {
+            bm.is_favorite = !bm.is_favorite;
+        } else {
+            self.bookmarks.push(HostBookmark {
+                target: target.to_string(),
+                alias: None,
+                is_favorite: true,
+                added_at: Utc::now().to_rfc3339(),
+            });
+        }
+        self.save()
+    }
+
+    pub fn is_favorite(&self, target: &str) -> bool {
+        self.bookmarks.iter().any(|b| b.target == target && b.is_favorite)
+    }
+
+    pub fn get_alias(&self, target: &str) -> Option<&str> {
+        self.bookmarks.iter().find(|b| b.target == target).and_then(|b| b.alias.as_deref())
+    }
+
+    pub fn list_all_entries(&self) -> Vec<HostEntry> {
+        let mut entries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // 1. Add all bookmarks
+        for bm in &self.bookmarks {
+            let profile = self.get(&bm.target).cloned();
+            seen.insert(bm.target.clone());
+            entries.push(HostEntry {
+                target: bm.target.clone(),
+                alias: bm.alias.clone(),
+                is_favorite: bm.is_favorite,
+                profile,
+            });
+        }
+
+        // 2. Add remaining cached profiles not in bookmarks
+        for (target, profile) in &self.profiles {
+            if !seen.contains(target) {
+                entries.push(HostEntry {
+                    target: target.clone(),
+                    alias: None,
+                    is_favorite: false,
+                    profile: Some(profile.clone()),
+                });
+            }
+        }
+
+        // Sort favorites first, then alphabetically
+        entries.sort_by(|a, b| {
+            b.is_favorite.cmp(&a.is_favorite).then_with(|| a.target.cmp(&b.target))
+        });
+
+        entries
+    }
+
     pub fn get(&self, target: &str) -> Option<&HostProfile> {
-        // Try exact match first (e.g. root@vps-01:2222 or root@vps-01)
+        // 1. Exact match (e.g. root@vps-01:2222 or root@vps-01 or xorne.net)
         if let Some(profile) = self.profiles.get(target) {
             return Some(profile);
         }
 
-        // Try matching without port if target contains port
+        // 2. Try matching without port if target contains port
         if let Some(pos) = target.rfind(':') {
             let without_port = &target[..pos];
             if let Some(profile) = self.profiles.get(without_port) {
@@ -92,10 +195,32 @@ impl HostsStore {
             }
         }
 
-        // Try matching hostname only
-        if let Some(pos) = target.find('@') {
-            let host_only = &target[pos + 1..];
-            if let Some(profile) = self.profiles.get(host_only) {
+        // 3. Try matching hostname only (if target is user@host or user@host:port)
+        let host_part = if let Some(pos) = target.find('@') {
+            let after_at = &target[pos + 1..];
+            if let Some(p_pos) = after_at.rfind(':') {
+                &after_at[..p_pos]
+            } else {
+                after_at
+            }
+        } else if let Some(p_pos) = target.rfind(':') {
+            &target[..p_pos]
+        } else {
+            target
+        };
+
+        if let Some(profile) = self.profiles.get(host_part) {
+            return Some(profile);
+        }
+
+        // 4. Flexible match across all stored profiles
+        for (p_key, profile) in &self.profiles {
+            if p_key == host_part
+                || p_key.ends_with(&format!("@{}", host_part))
+                || target.ends_with(&format!("@{}", p_key))
+                || profile.hostname.as_deref() == Some(host_part)
+                || profile.target.contains(host_part)
+            {
                 return Some(profile);
             }
         }
@@ -120,7 +245,7 @@ impl HostsStore {
 
     /// Generates the one-liner probe command to inspect a remote host via shell PTY
     pub fn generate_probe_command() -> &'static str {
-        "printf 'SPIRITTY_PROBE_START\\n'; cat /etc/os-release 2>/dev/null; uname -r 2>/dev/null; whoami 2>/dev/null; hostname 2>/dev/null; which apt pacman dnf yum apk brew zypper nix systemctl rc-service 2>/dev/null; printf 'SPIRITTY_PROBE_END\\n'"
+        "printf 'SPIRITTY_PROBE_START\\n'; (command cat /etc/os-release || cat /etc/os-release) 2>/dev/null; uname -r 2>/dev/null; whoami 2>/dev/null; hostname 2>/dev/null; which apt pacman dnf yum apk brew zypper nix systemctl rc-service 2>/dev/null; printf 'SPIRITTY_PROBE_END\\n'"
     }
 
     /// Parses output from the probe command and creates a HostProfile
@@ -128,15 +253,17 @@ impl HostsStore {
         let start_marker = "SPIRITTY_PROBE_START";
         let end_marker = "SPIRITTY_PROBE_END";
 
-        let section = if let Some(start_idx) = raw_output.find(start_marker) {
-            let after_start = &raw_output[start_idx + start_marker.len()..];
+        let clean_raw = strip_ansi_codes(raw_output);
+
+        let section = if let Some(start_idx) = clean_raw.find(start_marker) {
+            let after_start = &clean_raw[start_idx + start_marker.len()..];
             if let Some(end_idx) = after_start.find(end_marker) {
                 &after_start[..end_idx]
             } else {
                 after_start
             }
         } else {
-            raw_output
+            &clean_raw
         };
 
         let lines: Vec<&str> = section.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
@@ -144,7 +271,10 @@ impl HostsStore {
             return None;
         }
 
-        let mut distro = "Linux (Unknown)".to_string();
+        let mut pretty_name: Option<String> = None;
+        let mut name: Option<String> = None;
+        let mut id_name: Option<String> = None;
+        let mut version_str: Option<String> = None;
         let mut kernel = "unknown".to_string();
         let mut user = "root".to_string();
         let mut hostname = None;
@@ -153,18 +283,56 @@ impl HostsStore {
 
         let mut non_os_release_lines = Vec::new();
 
-        for line in &lines {
-            if line.starts_with("PRETTY_NAME=") {
-                distro = line.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string();
-            } else if line.starts_with("NAME=") && distro == "Linux (Unknown)" {
-                distro = line.trim_start_matches("NAME=").trim_matches('"').to_string();
-            } else if line.contains('=') {
-                // other os-release variables (ID, VERSION_ID, etc.)
+        for &raw_l in &lines {
+            if let Some(idx) = raw_l.find("PRETTY_NAME=") {
+                let val = raw_l[idx + "PRETTY_NAME=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                if !val.is_empty() {
+                    pretty_name = Some(val);
+                }
+            } else if let Some(idx) = raw_l.find("NAME=") {
+                let val = raw_l[idx + "NAME=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                if !val.is_empty() {
+                    name = Some(val);
+                }
+            } else if let Some(idx) = raw_l.find("ID=") {
+                let val = raw_l[idx + "ID=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                if !val.is_empty() {
+                    id_name = Some(val);
+                }
+            } else if let Some(idx) = raw_l.find("VERSION_ID=") {
+                let val = raw_l[idx + "VERSION_ID=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                if !val.is_empty() {
+                    version_str = Some(val);
+                }
+            } else if raw_l.contains('=') {
+                // other os-release variables (VERSION_CODENAME, ID_LIKE, etc.)
                 continue;
             } else {
-                non_os_release_lines.push(*line);
+                non_os_release_lines.push(raw_l);
             }
         }
+
+        let distro = if let Some(pn) = pretty_name {
+            pn
+        } else if let Some(n) = name {
+            if let Some(v) = version_str {
+                format!("{} {}", n, v)
+            } else {
+                n
+            }
+        } else if let Some(id) = id_name {
+            match id.to_lowercase().as_str() {
+                "ubuntu" => "Ubuntu Linux".to_string(),
+                "debian" => "Debian GNU/Linux".to_string(),
+                "arch" => "Arch Linux".to_string(),
+                "fedora" => "Fedora Linux".to_string(),
+                "centos" | "rhel" | "rocky" | "almalinux" => format!("Enterprise Linux ({})", id),
+                "alpine" => "Alpine Linux".to_string(),
+                _ => format!("Linux ({})", id),
+            }
+        } else {
+            "Linux (Unknown)".to_string()
+        };
 
         // Process remaining lines for kernel, whoami, hostname, binaries
         for line in non_os_release_lines {
@@ -203,6 +371,23 @@ impl HostsStore {
             last_seen: Utc::now().to_rfc3339(),
         })
     }
+}
+
+fn strip_ansi_codes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_escape = false;
+    for c in input.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -253,5 +438,33 @@ SPIRITTY_PROBE_END
         assert_eq!(profile.distro, "Alpine Linux v3.19");
         assert_eq!(profile.package_managers, vec!["apk"]);
         assert_eq!(profile.init_system, "OpenRC");
+    }
+
+    #[test]
+    fn test_parse_probe_output_ubuntu_numbered_and_ansi() {
+        let sample = r#"
+SPIRITTY_PROBE_START
+1  PRETTY_NAME="Ubuntu 24.04.4 LTS"
+2  NAME="Ubuntu"
+3  VERSION_ID="24.04"
+4  VERSION="24.04.4 LTS (Noble Numbat)"
+5  VERSION_CODENAME=noble
+6  ID=ubuntu
+7  ID_LIKE=debian
+6.8.0-137-generic
+xorne
+gg
+/usr/bin/apt
+/usr/bin/systemctl
+SPIRITTY_PROBE_END
+"#;
+
+        let profile = HostsStore::parse_probe_output("gg.xorne.net", sample).expect("Parsed profile");
+        assert_eq!(profile.target, "gg.xorne.net");
+        assert_eq!(profile.distro, "Ubuntu 24.04.4 LTS");
+        assert_eq!(profile.kernel, "6.8.0-137-generic");
+        assert_eq!(profile.user, "xorne");
+        assert_eq!(profile.package_managers, vec!["apt"]);
+        assert_eq!(profile.init_system, "systemd");
     }
 }

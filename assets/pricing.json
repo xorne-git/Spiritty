@@ -1,0 +1,86 @@
+{
+  "deepseek-chat": {
+    "prompt": 0.14,
+    "completion": 0.28
+  },
+  "deepseek-v3": {
+    "prompt": 0.14,
+    "completion": 0.28
+  },
+  "deepseek-reasoner": {
+    "prompt": 0.55,
+    "completion": 2.19
+  },
+  "deepseek-r1": {
+    "prompt": 0.55,
+    "completion": 2.19
+  },
+  "gpt-4o": {
+    "prompt": 2.50,
+    "completion": 10.00
+  },
+  "gpt-4o-mini": {
+    "prompt": 0.15,
+    "completion": 0.60
+  },
+  "o1": {
+    "prompt": 15.00,
+    "completion": 60.00
+  },
+  "o1-mini": {
+    "prompt": 3.00,
+    "completion": 12.00
+  },
+  "o3-mini": {
+    "prompt": 1.10,
+    "completion": 4.40
+  },
+  "claude-3-5-sonnet": {
+    "prompt": 3.00,
+    "completion": 15.00
+  },
+  "claude-3-7-sonnet": {
+    "prompt": 3.00,
+    "completion": 15.00
+  },
+  "claude-3-5-haiku": {
+    "prompt": 0.80,
+    "completion": 4.00
+  },
+  "claude-3-opus": {
+    "prompt": 15.00,
+    "completion": 75.00
+  },
+  "gemini-2.0-flash": {
+    "prompt": 0.10,
+    "completion": 0.40
+  },
+  "gemini-1.5-flash": {
+    "prompt": 0.075,
+    "completion": 0.30
+  },
+  "gemini-1.5-pro": {
+    "prompt": 1.25,
+    "completion": 5.00
+  },
+  "grok-2": {
+    "prompt": 2.00,
+    "completion": 10.00
+  },
+  "grok-beta": {
+    "prompt": 5.00,
+    "completion": 15.00
+  },
+  "mistral-large": {
+    "prompt": 2.00,
+    "completion": 6.00
+  },
+  "mistral-small": {
+    "prompt": 0.20,
+    "completion": 0.60
+  },
+  "codestral": {
+    "prompt": 0.30,
+    "completion": 0.90
+  }
+}

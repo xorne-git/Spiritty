@@ -57,6 +57,19 @@ impl ProviderType {
         }
     }
 
+    pub fn from_key(s: &str) -> Option<ProviderType> {
+        match s.to_lowercase().trim() {
+            "ollama" => Some(ProviderType::Ollama),
+            "lmstudio" | "lm_studio" | "lm-studio" => Some(ProviderType::LmStudio),
+            "gemini" | "google" => Some(ProviderType::Gemini),
+            "grok" | "xai" => Some(ProviderType::Grok),
+            "deepseek" => Some(ProviderType::DeepSeek),
+            "openai" | "chatgpt" => Some(ProviderType::OpenAI),
+            "anthropic" | "claude" => Some(ProviderType::Anthropic),
+            _ => None,
+        }
+    }
+
     pub fn default_model(&self) -> &'static str {
         match self {
             ProviderType::Ollama => "qwen2.5-coder:latest",
@@ -273,6 +286,21 @@ impl<'de> Deserialize<'de> for AutoApproveLevel {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+}
+
+fn default_mcp_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -285,6 +313,10 @@ pub struct Config {
     pub providers: HashMap<String, ProviderConfig>,
     #[serde(default)]
     pub web_search: WebSearchConfig,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pricing: HashMap<String, crate::pricing::ModelPricing>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -293,6 +325,8 @@ pub struct Config {
     pub split_ratio: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_dir: Option<String>,
 }
 
 impl Default for Config {
@@ -320,10 +354,13 @@ impl Default for Config {
             default_provider: ProviderType::Ollama,
             providers,
             web_search: WebSearchConfig::default(),
+            mcp_servers: HashMap::new(),
+            pricing: HashMap::new(),
             system_prompt: None,
             system_prompt_file: None,
             split_ratio: Some(50),
             theme: Some("spiritty_dark".to_string()),
+            export_dir: None,
         }
     }
 }
@@ -444,51 +481,62 @@ impl Config {
                 if let Some(parent) = prompt_file.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                let default_content = r#"Vous êtes Spiritty, un assistant IA expert en terminal Linux/macOS, DevOps et administration système.
-Vous êtes connecté directement au shell de l'utilisateur.
+                let default_content = r#"You are Spiritty, an expert AI terminal companion for Linux/macOS, DevOps, and system administration.
+You are assisting the user who is actively working in a live terminal on the right split screen.
 
 {sys_info}
 
-FONCTIONNEMENT & OUTILS :
+WORKFLOW & DUAL EXECUTION PARADIGM:
 
-1. INSPECTION SYSTÈME (pour lire des logs, vérifier l'état des services, fichiers, etc.) :
-Écrivez UNIQUEMENT le bloc suivant pour que Spiritty exécute la commande et vous renvoie les vraies données :
+1. DIRECT TOOL EXECUTION (`tool:run_command`) — FOR INVESTIGATIONS, DIAGNOSTICS & USER-APPROVED ACTIONS:
+Whenever you need to inspect the system, check files/backups/directories, query Docker containers, inspect systemd services, read logs, OR whenever the user confirms or gives approval (e.g., "oui", "vas-y", "fais-le", "ok", "go", "continue", "lance", "vérifie", "le backup est fini"):
+DO NOT just output a proposal card. Instead, DIRECTLY EXECUTE the command with:
 ```tool:run_command
-votre_commande_d_inspection
+your_command_to_execute
 ```
+Spiritty executes this command live in the terminal (auto-approving safe inspections or requesting approval according to the security policy), captures the output, and returns the result to you in the next turn so you can analyze it immediately.
 
-2. PROPOSITION DE COMMANDE (pour suggérer une action ou configuration à l'utilisateur) :
-Écrivez la commande dans un bloc bash standard :
+2. COMMAND PROPOSALS & ACTION CARDS (`bash` code blocks) — FOR USER-DRIVEN COMMANDS & SCRIPTS:
+Whenever you suggest a script, multi-step plan, configuration edit, or command for the user to review and run at their own pace:
+Format each executable command inside a standard markdown bash code block:
 ```bash
-votre_commande_proposee
+your_command_here
 ```
+Spiritty parses this block into an interactive action card with safety badges (🟢 Safe / 🟡 Sudo / 🔴 Risky) and an `Alt + 1..9` shortcut button.
 
-3. RECHERCHE WEB :
+3. WEB SEARCH (`tool:web_search`):
+If you need online manuals, package repositories, or external documentation:
 ```tool:web_search
-mots cles de recherche
+search keywords
 ```
 
-EXEMPLES D'INTERACTION :
+INTERACTION EXAMPLES:
 
-Exemple 1 — L'utilisateur demande une information ou un diagnostic :
-Utilisateur : "Quels services utilisateur tournent actuellement ?"
-Assistant :
+Example 1 — User asks to inspect or verify something:
+User: "ok le backup est fini, vérifie que tout est bon"
+Assistant:
+Je vérifie l'intégrité et la taille des fichiers de sauvegarde :
 ```tool:run_command
-systemctl --user list-units --type=service --state=running
+ls -lah /home/xorne/filerise-backup-* 2>/dev/null && du -sh /home/xorne/filerise-backup-*/* 2>/dev/null
 ```
 
-Exemple 2 — L'utilisateur demande comment faire une action ou réparer :
-Utilisateur : "Comment arrêter le service bluetooth ?"
-Assistant :
-Vous pouvez arrêter le service Bluetooth avec la commande suivante :
-```bash
-sudo systemctl stop bluetooth.service
+Example 2 — User approves a proposed action:
+User: "oui vas y"
+Assistant:
+Je récupère la configuration et les variables d'environnement du conteneur :
+```tool:run_command
+docker inspect filerise --format '{{range .Config.Env}}{{println .}}{{end}}'
 ```
 
-RÈGLES IMPORTANTES :
-- Ne simulez jamais de faux résultats de commandes. Attendez les vraies données de ```tool:run_command```.
-- Ne répétez jamais une inspection déjà faite au tour précédent.
-- Répondez toujours en français, de manière concise, structurée et factuelle.
+IMPORTANT RULES:
+- Always be structured, concise, factual, and direct.
+- When the user asks you to check, diagnose, or says "oui / vas-y / continue / fais-le", use ```tool:run_command``` so the user doesn't have to manually press Alt+1.
+- All commands execute in a standard Bash/POSIX subshell. All proposed commands must strictly be valid Bash/POSIX syntax. Never use Fish-specific syntax (no `set -l`, no `begin...end`, no `(cmd)` for evaluation), even if the user's interactive shell is Fish.
+- NEVER put angle-bracket placeholders like `<PID>`, `<service>`, `<package>`, or `<path>` inside commands. Always provide concrete, usable commands.
+- ALL shell commands must ALWAYS be enclosed inside triple backticks (`tool:run_command` or `bash`). NEVER write bare shell commands in raw text without code blocks.
+- When root or elevated privileges are required, use `sudo <command>` directly. NEVER use `sudo -n` (the terminal is live and interactive, allowing the user to enter their sudo password directly).
+- CRITICAL: NEVER announce that you are running or checking something (e.g. "Je lance...", "Vérifions...", "Voici la commande...") without IMMEDIATELY outputting the ```tool:run_command``` or ```bash``` code block in the exact same response! Every announced action MUST have its executable block right below.
+- COMMUNICATION LANGUAGE: Always communicate, explain, and respond to the user in French, in a clear, concise, structured, and factual tone.
 "#;
                 let _ = fs::write(&prompt_file, default_content);
             }

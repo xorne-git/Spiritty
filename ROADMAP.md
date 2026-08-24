@@ -96,20 +96,43 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
   - Détection automatique de la distribution Linux (Arch, CachyOS, Ubuntu, Debian, Fedora, Alpine) ou macOS.
   - Détection des gestionnaires de paquets installés (`apt`, `pacman`, `dnf`, `brew`, `nix`, `cargo`, `yay`, `paru`, `flatpak`, `snap`).
   - Capture du shell actif, de l'émulateur de terminal hôte et de l'environnement graphique (`Wayland`/`X11`/`niri`/`hyprland`).
-- [ ] **Capture & Diagnostic d'Erreur :**
-  - Détection des codes de retour non nuls (`$? != 0`) et des messages d'erreur stderr dans le terminal droit.
-  - Proposition proactive de l'agent : *"La commande a échoué avec l'erreur X. Souhaitez-vous que je tente de résoudre le problème ?"*.
+- [x] **Capture & Diagnostic d'Erreur Proactif (`Alt + D`) :**
+  - Détection automatique des commandes échouées et erreurs d'exécution dans le PTY.
+  - Carte d'alerte et remédiation automatique en un raccourci (`Alt + D`).
+- [x] **Indicateur de Répertoire Courant (PWD) & Branche Git :**
+  - Affichage instantané du dossier actif et de la branche Git dans l'en-tête du terminal.
+  - Injection dynamique du PWD et de la branche Git dans le contexte système de l'agent.
+- [x] **Export de Session en Rapport Markdown (`Ctrl + E`) :**
+  - Génération en 1 touche d'un rapport structuré avec horodatage, métadonnées machine, historique des prompts et commandes dans `~/.config/spiritty/exports/`.
+- [x] **Gestionnaire de Serveurs SSH Favoris (`Ctrl + B`) :**
+  - Modale interactive de favoris SSH avec ajout rapide, recherche, étoiles de favoris et connexion en 1 touche.
+- [x] **Recherche en Temps Réel dans l'Historique de Chat (`Ctrl + F`) :**
+  - Barre de recherche avec surbrillance dynamique et navigation rapide entre occurrences (`Enter` / `Shift + Enter`).
 
 ---
 
-## 📌 Phase 5 : Finitions, Performances & Distribution v1.0.0 (v1.0.0)
-*Objectif : Produire un binaire ultra-rapide, stable et prêt pour une adoption large.*
+## 📌 Phase 5 : Protocoles Avancés, Métriques Précises & Distribution v1.0.0 (v1.0.0) [EN COURS 🚀]
+*Objectif : Intégrer l'écosystème MCP, garantir une précision métrique absolue des tokens et du débit, et produire un binaire ultra-rapide et stable.*
 
+- [x] **Support du Protocole MCP (Model Context Protocol) & Modale TUI Dédiée (`Ctrl + M`) :**
+  - Moteur client MCP stdio asynchrone (JSON-RPC 2.0) avec initialisation, négociation de capacités et découverte dynamique des outils (`tools/list`).
+  - Découverte et exposition dynamique des outils MCP dans le prompt système de l'agent (`mcp:<server>:<tool>`).
+  - Interception et exécution asynchrone des appels d'outils MCP par l'agent (`ToolInvocation::McpCall`).
+  - Modale TUI interactive (`Ctrl + M`) : liste des serveurs, inspecteur d'outils, activation/désactivation en 1 touche (`Espace`), rechargement (`R`), ajout (`A`) et suppression (`D`).
+- [x] **Calcul Précis des Tokens, du Débit (tokens/s) & Registre Dynamique des Coûts :**
+  - Exploitation des métriques natives renvoyées par les APIs LLM (`eval_count`/`eval_duration` dans Ollama, `stream_options.include_usage` dans OpenAI/DeepSeek/Grok, `message_delta.usage` dans Anthropic, `usageMetadata` dans Gemini).
+  - Élimination des artefacts de calcul du débit : chronomètre de streaming démarré dès le 1er chunk utile, déduction des latences réseau et pauses d'exécution d'outils.
+  - Estimation et affichage en temps réel du coût de session en dollars (`💵 $0.0042`) dans le footer et les modales de session pour les modèles cloud.
+  - **Registre dynamique des tarifs LLM (`src/pricing/`) :** support des surcharges personnalisées dans `~/.config/spiritty/config.toml` (`[pricing."nom_modele"]`), persistance du cache local dans `~/.config/spiritty/pricing.json`, et mise à jour/synchronisation en 1 touche depuis Internet (`Ctrl + P` puis `[U]`).
+- [x] **Modal Toast Non-Intrusif & Diagnostic Proactif Ciblé (`Alt + D`) :**
+  - Notification d'erreur shell sous forme de toast flottant élégant en bas à droite du panneau terminal avec bordure arrondie (`Alt + D` Diagnostiquer / `Alt + X` Fermer).
+  - Restriction stricte du diagnostic proactif aux seules commandes tapées manuellement par l'utilisateur dans le shell interactif.
+  - Respect absolu de la propreté du panneau de chat : 0 pollution lors des erreurs de commandes manuelles.
 - [x] **Ergonomie & Thèmes :**
   - 7 thèmes prédéfinis avec dégradés verticaux et palettes coordonnées : *Spiritty Dark*, *Catppuccin Mocha*, *Tokyo Night*, *Nord Arctic*, *Gruvbox Dark*, *Dracula*, *Monokai Pro*.
   - Sélecteur interactif de thème dans la modale `Ctrl + P` avec prévisualisation dynamique instantanée.
   - Redimensionnement fluide de la séparation gauche/droite à la souris (glisser-déposer) ou au clavier (`Alt + ←` / `Alt + →`).
-  - Persistance automatique de la taille des panneaux (`split_ratio`) et du thème actif dans `~/.config/spiritty/config.toml`.
+  - Persistance automatique de la taille des panneaux (`split_ratio`), de la configuration MCP et du thème actif dans `~/.config/spiritty/config.toml`.
   - Diagnostics d'erreur explicites lors de pannes de connexion LLM (serveurs locaux éteints, timeout, erreurs réseau).
 - [ ] **Tests de Robustesse :**
   - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).

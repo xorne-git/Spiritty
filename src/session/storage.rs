@@ -15,6 +15,10 @@ pub struct SessionHeader {
     pub model: String,
     pub message_count: usize,
     pub total_tokens: usize,
+    #[serde(default)]
+    pub prompt_tokens: usize,
+    #[serde(default)]
+    pub completion_tokens: usize,
 }
 
 pub struct SessionStorage;
@@ -56,6 +60,8 @@ impl SessionStorage {
                                 model: session.model,
                                 message_count: session.messages.len(),
                                 total_tokens: session.total_tokens,
+                                prompt_tokens: session.prompt_tokens,
+                                completion_tokens: session.completion_tokens,
                             });
                         }
                     }

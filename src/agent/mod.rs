@@ -1,3 +1,4 @@
+pub mod mcp;
 pub mod prompt;
 pub mod providers;
 pub mod safety;
@@ -13,6 +14,7 @@ use crate::{
     config::Config,
     event::AppEvent,
 };
+use mcp::McpManager;
 use prompt::build_system_prompt;
 use providers::{create_provider, LlmProvider};
 use safety::should_auto_approve_command;
@@ -22,16 +24,23 @@ use tools::{execute_web_search, parse_tool_call, ToolInvocation};
 pub struct AgentEngine {
     config: Config,
     provider: Arc<Box<dyn LlmProvider>>,
+    pub mcp_manager: Arc<McpManager>,
     pub is_generating: bool,
     cancel_token: Option<CancellationToken>,
 }
 
 impl AgentEngine {
     pub fn new(config: Config) -> Self {
+        Self::new_with_event_tx(config, None)
+    }
+
+    pub fn new_with_event_tx(config: Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>) -> Self {
         let provider = Arc::new(create_provider(&config));
+        let mcp_manager = Arc::new(McpManager::load_from_config(&config, event_tx));
         Self {
             config,
             provider,
+            mcp_manager,
             is_generating: false,
             cancel_token: None,
         }
@@ -41,8 +50,13 @@ impl AgentEngine {
         &self.config
     }
 
-    pub fn reload_config(&mut self, config: Config) {
+    pub fn reload_config(&mut self, config: Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>) {
         self.provider = Arc::new(create_provider(&config));
+        let mcp_clone = self.mcp_manager.clone();
+        let cfg_clone = config.clone();
+        tokio::spawn(async move {
+            mcp_clone.reload(&cfg_clone, event_tx).await;
+        });
         self.config = config;
     }
 
@@ -66,12 +80,18 @@ impl AgentEngine {
         self.is_generating = true;
 
         let provider = Arc::clone(&self.provider);
+        let mcp_manager = Arc::clone(&self.mcp_manager);
         let config = self.config.clone();
         let lang = config.get_language();
         let auto_approve = config.auto_approve;
-        let system_prompt = build_system_prompt(lang, sys_ctx, &config);
+        let mut system_prompt = build_system_prompt(lang, sys_ctx, &config);
 
         tokio::spawn(async move {
+            let mcp_prompt_summary = mcp_manager.get_tools_summary_for_prompt().await;
+            if !mcp_prompt_summary.is_empty() {
+                system_prompt.push_str(&mcp_prompt_summary);
+            }
+
             tokio::select! {
                 _ = cancel_token.cancelled() => {
                     let _ = event_tx.send(AppEvent::AgentDone);
@@ -132,6 +152,9 @@ impl AgentEngine {
                             current_turn_text.push_str(&chunk);
                             let _ = forward_event_tx.send(AppEvent::AgentChunk(chunk));
                         }
+                        AppEvent::AgentUsage { prompt_tokens, completion_tokens, exact_speed } => {
+                            let _ = forward_event_tx.send(AppEvent::AgentUsage { prompt_tokens, completion_tokens, exact_speed });
+                        }
                         AppEvent::AgentError(err) => {
                             let _ = forward_event_tx.send(AppEvent::AgentError(err));
                             return;
@@ -157,6 +180,40 @@ impl AgentEngine {
                         tool_steps += 1;
 
                         match tool_call {
+                            ToolInvocation::McpCall { server, tool, arguments } => {
+                                let label = format!("🔌 MCP {}:{}", server, tool);
+                                let _ = forward_event_tx.send(AppEvent::AgentToolStart(label.clone()));
+
+                                let mcp_result = mcp_manager
+                                    .execute_mcp_tool(&server, &tool, arguments)
+                                    .await
+                                    .unwrap_or_else(|err| format!("Erreur MCP : {}", err));
+
+                                let _ = forward_event_tx.send(AppEvent::AgentToolDone {
+                                    command: label,
+                                    output: mcp_result.clone(),
+                                });
+
+                                conversation.push(ChatMessage {
+                                    role: MessageRole::Assistant,
+                                    content: current_turn_text,
+                                    command_proposal: None,
+                                });
+
+                                let tool_msg = format!(
+                                    "[RÉSULTAT DE L'OUTIL MCP '{}:{}']:\n{}\n[FIN DU RÉSULTAT MCP - Formulez maintenant votre diagnostic ou poursuivez votre analyse]",
+                                    server, tool, mcp_result
+                                );
+
+                                conversation.push(ChatMessage {
+                                    role: MessageRole::User,
+                                    content: tool_msg,
+                                    command_proposal: None,
+                                });
+
+                                let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                continue;
+                            }
                             ToolInvocation::WebSearch(query) => {
                                 let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("🌐 Recherche web : {}", query)));
 

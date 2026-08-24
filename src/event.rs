@@ -15,6 +15,11 @@ pub enum AppEvent {
     Tick,
     AgentChunk(String),
     AgentDone,
+    AgentUsage {
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        exact_speed: Option<f64>,
+    },
     AgentError(String),
     AgentToolRequest {
         command: String,
@@ -31,6 +36,13 @@ pub enum AppEvent {
         provider_key: String,
         models: Vec<String>,
     },
+    RemoteHostProbed {
+        target: String,
+        output: String,
+    },
+    McpServersUpdated,
+    UpdatePricing,
+    PricingUpdated(Result<usize, String>),
 }
 
 pub struct EventHandler {

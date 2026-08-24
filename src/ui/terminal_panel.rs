@@ -2,9 +2,14 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
 };
 
-use crate::app::{App, Focus};
+use crate::{
+    app::{App, Focus},
+    i18n::Language,
+};
 
 pub struct TerminalPanel<'a> {
     app: &'a mut App,
@@ -41,7 +46,7 @@ impl<'a> TerminalPanel<'a> {
                 )
             }
             crate::system::ActiveSession::Local { ref foreground_process } => {
-                let text = if let Some(proc) = foreground_process {
+                let base = if let Some(proc) = foreground_process {
                     if proc != "fish" && proc != "bash" && proc != "zsh" && proc != "sh" {
                         format!("💻 {} ({})", self.app.system_context.terminal_emulator, proc)
                     } else {
@@ -50,6 +55,30 @@ impl<'a> TerminalPanel<'a> {
                 } else {
                     format!("💻 {}", self.app.system_context.terminal_emulator)
                 };
+
+                let cwd_info = match (&self.app.system_context.current_dir, &self.app.system_context.git_branch) {
+                    (Some(cwd), Some(branch)) => format!(" [ {} ] ( {})", cwd, branch),
+                    (Some(cwd), None) => format!(" [ {} ]", cwd),
+                    _ => String::new(),
+                };
+
+                let max_available = (area.width.saturating_sub(25)) as usize;
+                let full = format!("{}{}", base, cwd_info);
+                let text = if full.len() > max_available && !cwd_info.is_empty() {
+                    if let Some(ref cwd) = self.app.system_context.current_dir {
+                        let short_cwd = cwd.split('/').next_back().unwrap_or(cwd);
+                        if let Some(ref branch) = self.app.system_context.git_branch {
+                            format!("{} [{}] ( {})", base, short_cwd, branch)
+                        } else {
+                            format!("{} [{}]", base, short_cwd)
+                        }
+                    } else {
+                        base
+                    }
+                } else {
+                    full
+                };
+
                 let style = Style::default()
                     .fg(if is_focused { palette.accent_primary } else { palette.border_unfocused })
                     .add_modifier(Modifier::BOLD);
@@ -104,6 +133,77 @@ impl<'a> TerminalPanel<'a> {
         // Render VT100 screen buffer
         self.app.pty.screen().render_to_buffer(inner_area, buf);
 
+        // 3. Proactive Error Diagnosis floating modal in the terminal panel
+        if let Some(ref diag) = self.app.proactive_error_diagnosis {
+            let lang = self.app.config.get_language();
+            let toast_width = (inner_area.width.saturating_sub(4)).clamp(36, 56);
+            let toast_height = 5u16;
+
+            if inner_area.width >= toast_width && inner_area.height >= toast_height + 2 {
+                let toast_x = inner_area.right().saturating_sub(toast_width + 1);
+                let toast_y = inner_area.bottom().saturating_sub(toast_height + 1);
+                let toast_area = Rect::new(toast_x, toast_y, toast_width, toast_height);
+
+                Clear.render(toast_area, buf);
+
+                let title = if lang == Language::Fr {
+                    " ⚡ Erreur détectée "
+                } else {
+                    " ⚡ Error Detected "
+                };
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(ratatui::symbols::border::ROUNDED)
+                    .border_style(Style::default().fg(palette.warning))
+                    .padding(Padding::horizontal(1))
+                    .title(Span::styled(
+                        title,
+                        Style::default().fg(palette.warning).add_modifier(Modifier::BOLD),
+                    ));
+
+                let inner_toast = block.inner(toast_area);
+                block.render(toast_area, buf);
+
+                let max_text_len = (inner_toast.width.saturating_sub(6)) as usize;
+                let cmd_short = if diag.command.len() > max_text_len {
+                    format!("{}…", &diag.command[..max_text_len.saturating_sub(1)])
+                } else {
+                    diag.command.clone()
+                };
+
+                let line1 = Line::from(vec![
+                    Span::styled(
+                        "Cmd: ",
+                        Style::default().fg(palette.text_secondary),
+                    ),
+                    Span::styled(cmd_short, Style::default().fg(palette.text_primary).add_modifier(Modifier::BOLD)),
+                ]);
+
+                let line2 = Line::from(vec![
+                    Span::styled(
+                        if lang == Language::Fr { "Diagnostiquer avec l'agent IA ?" } else { "Diagnose with AI agent?" },
+                        Style::default().fg(palette.text_secondary),
+                    ),
+                ]);
+
+                let mut btn_spans = Vec::new();
+                btn_spans.extend(key_pill("Alt + D", palette.success));
+                btn_spans.push(Span::styled(
+                    " OK  ",
+                    Style::default().fg(palette.text_primary).add_modifier(Modifier::BOLD),
+                ));
+                btn_spans.extend(key_pill("Alt + X", palette.text_secondary));
+                btn_spans.push(Span::styled(
+                    " Cancel",
+                    Style::default().fg(palette.text_secondary),
+                ));
+
+                let p = Paragraph::new(vec![line1, line2, Line::from(btn_spans)]);
+                p.render(inner_toast, buf);
+            }
+        }
+
         // Cursor calculation: only show live hardware cursor when on live screen
         if is_focused && scroll_offset == 0 {
             let (cursor_col, cursor_row, visible) = self.app.pty.screen().cursor_position();
@@ -118,4 +218,15 @@ impl<'a> TerminalPanel<'a> {
 
         None
     }
+}
+
+fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
+    vec![
+        Span::styled("", Style::default().fg(color)),
+        Span::styled(
+            key.to_string(),
+            Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("", Style::default().fg(color)),
+    ]
 }

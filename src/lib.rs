@@ -1,9 +1,11 @@
 pub mod agent;
 pub mod app;
+pub mod cli;
 pub mod config;
 pub mod event;
 pub mod i18n;
 pub mod pty;
+pub mod pricing;
 pub mod session;
 pub mod system;
 pub mod ui;

@@ -2,8 +2,11 @@ pub mod clipboard;
 pub mod hosts;
 pub mod process_watcher;
 
-pub use hosts::{HostProfile, HostsStore};
-pub use process_watcher::{detect_active_session, ActiveSession};
+pub use hosts::{HostBookmark, HostEntry, HostProfile, HostsStore};
+pub use process_watcher::{
+    detect_active_session, detect_current_working_dir, detect_git_branch, format_compact_path,
+    ActiveSession,
+};
 
 use std::env;
 use std::fs;
@@ -20,6 +23,8 @@ pub struct SystemContext {
     pub desktop_env: Option<String>,
     pub active_session: ActiveSession,
     pub active_remote_profile: Option<HostProfile>,
+    pub current_dir: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 impl SystemContext {
@@ -65,6 +70,11 @@ impl SystemContext {
             .or_else(|_| env::var("WAYLAND_DISPLAY").map(|_| "Wayland".to_string()))
             .ok();
 
+        let initial_dir = env::current_dir()
+            .ok()
+            .map(|p| format_compact_path(&p.to_string_lossy()));
+        let initial_branch = initial_dir.as_deref().and_then(detect_git_branch);
+
         Self {
             os_name,
             distro,
@@ -75,6 +85,8 @@ impl SystemContext {
             desktop_env,
             active_session: ActiveSession::Local { foreground_process: None },
             active_remote_profile: None,
+            current_dir: initial_dir,
+            git_branch: initial_branch,
         }
     }
 
@@ -98,10 +110,17 @@ impl SystemContext {
 
         let wm = self.desktop_env.as_deref().unwrap_or("Terminal/Console");
 
-        format!(
+        let mut context = format!(
             "User's Detected System Environment (Local Machine):\n- OS / Distribution: {}\n- Kernel: {}\n- Interactive Terminal Shell: {} (IMPORTANT: the command execution subshell is standard Bash/POSIX. All proposed commands and inspections must be strictly valid Bash syntax, never Fish syntax).\n- Available Package Managers: {} (NEVER use unlisted package managers like dpkg/rpm/apt if not present!)\n- Desktop Environment / Window Manager: {}\n- Init & Services: systemd (always check both 'systemctl' and 'systemctl --user' for user-level services like dms, pipewire, etc.)",
             self.distro, self.kernel, self.shell, pms, wm
-        )
+        );
+        if let Some(ref cwd) = self.current_dir {
+            context.push_str(&format!("\n- Current Working Directory (PWD): {}", cwd));
+        }
+        if let Some(ref branch) = self.git_branch {
+            context.push_str(&format!("\n- Git Branch: {}", branch));
+        }
+        context
     }
 }
 

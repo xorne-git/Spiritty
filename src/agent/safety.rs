@@ -75,7 +75,28 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         }
     }
 
-    // 2. Check for Safe Read-Only commands
+    // Check chained safe commands (e.g. cmd1 && cmd2 || cmd3)
+    if lower.contains("&&") || lower.contains(';') {
+        let parts: Vec<&str> = if lower.contains("&&") {
+            lower.split("&&").collect()
+        } else {
+            lower.split(';').collect()
+        };
+        let all_safe = parts.iter().all(|part| is_single_command_safe(part.trim()));
+        if all_safe && !parts.is_empty() {
+            return CommandRisk::Safe;
+        }
+    }
+
+    if is_single_command_safe(&lower) {
+        return CommandRisk::Safe;
+    }
+
+    // Default to Standard risk for regular user commands
+    CommandRisk::Standard
+}
+
+fn is_single_command_safe(lower: &str) -> bool {
     let safe_prefixes = [
         // Systemd read-only
         "systemctl status", "systemctl --user status",
@@ -88,6 +109,11 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         "systemctl list-timers", "systemctl --user list-timers",
         "systemctl cat", "systemctl --user cat",
         "systemctl show", "systemctl --user show",
+        // Containers (Docker / Podman) read-only
+        "docker ps", "docker inspect", "docker logs", "docker stats", "docker port", "docker top", "docker version", "docker info", "docker images",
+        "podman ps", "podman inspect", "podman logs", "podman stats", "podman port", "podman top", "podman version", "podman info", "podman images",
+        "docker compose ps", "docker compose logs", "docker compose config", "docker compose top",
+        "docker-compose ps", "docker-compose logs", "docker-compose config", "docker-compose top",
         // Logs & journal
         "journalctl",
         // Processes
@@ -97,7 +123,7 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         "ls ", "ls -", "ls", "dir ", "vdir ", "tree ", "find ", "fd ", "locate ", "which ", "whereis ", "type ",
         "file ", "stat ",
         // Text processing
-        "grep ", "grep -", "egrep ", "fgrep ", "rg ", "ag ", "awk ", "cut ", "sort ", "uniq ", "wc ", "wc -", "diff ", "cmp ", "column ",
+        "grep ", "grep -", "egrep ", "fgrep ", "rg ", "ag ", "awk ", "cut ", "sort ", "uniq ", "wc ", "wc -", "diff ", "cmp ", "column ", "jq", "jq ",
         // Package queries
         "pacman -q", "pacman -qs", "pacman -qi", "pacman -ql", "pacman -qo",
         "paru -q", "yay -q",
@@ -113,10 +139,10 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         // Git queries
         "git status", "git log", "git diff", "git branch", "git show", "git remote",
         // Safe echo / printf without redirects
-        "echo ", "printf ",
+        "echo ", "printf ", "echo", "printf",
     ];
 
-    // Ignore harmless /dev/null and fd redirects (2>/dev/null, >/dev/null, &>/dev/null, 2>&1, 1>&2) when checking for file write redirects
+    // Ignore harmless /dev/null and fd redirects when checking for file write redirects
     let stripped_redirects = lower
         .replace("2>/dev/null", "")
         .replace(">/dev/null", "")
@@ -130,13 +156,11 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
     if !has_file_write_redirect {
         for prefix in &safe_prefixes {
             if lower.starts_with(prefix) || lower == *prefix {
-                return CommandRisk::Safe;
+                return true;
             }
         }
     }
-
-    // Default to Standard risk for regular user commands
-    CommandRisk::Standard
+    false
 }
 
 /// Determines whether a command should be auto-approved based on current AutoApproveLevel and command risk.

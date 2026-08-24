@@ -108,6 +108,36 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 
 ---
 
+## 🚀 Options de Lancement en Ligne de Commande (CLI)
+
+Spiritty propose des arguments en ligne de commande pour s'intégrer directement dans vos flux de travail :
+
+```bash
+# Reprendre la dernière session active
+spiritty -c
+
+# Reprendre une session spécifique par son ID ou préfixe de titre
+spiritty -s sess_20260824_0001
+spiritty -s nginx
+
+# Poser une question directement au lancement
+spiritty "Vérifie l'utilisation de la mémoire et les logs d'erreur"
+
+# Se connecter directement à un serveur SSH
+spiritty --ssh root@vps-web.prod:22
+
+# Remplacer temporairement le modèle ou fournisseur d'IA
+spiritty --model qwen2.5-coder:7b --yolo
+
+# Lister toutes les sessions enregistrées
+spiritty --list-sessions
+
+# Afficher l'aide complète des commandes CLI
+spiritty --help
+```
+
+---
+
 ## ⌨️ Raccourcis Clavier Principaux
 
 | Raccourci | Action |
@@ -117,6 +147,10 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 | `Ctrl + Espace` ou `Shift + Tab` | Basculer le focus (Chat ↔ Terminal) |
 | `Alt + 1` .. `Alt + 9` | Exécuter directement la proposition de commande N |
 | `F3` | Changer le mode d'approbation automatique (Safe / Sudo / YOLO / Off) |
+| `Ctrl + B` | Gestionnaire de serveurs SSH & favoris (Quick-Connect) |
+| `Ctrl + E` | Exporter la session active en rapport Markdown |
+| `Ctrl + F` | Rechercher dans l'historique du chat en temps réel |
+| `Alt + D` | Diagnostic et remédiation proactive d'une erreur |
 | `Ctrl + H` | Ouvrir le gestionnaire de sessions |
 | `Ctrl + N` | Créer une nouvelle session vierge |
 | `Ctrl + P` | Ouvrir la configuration des modèles / API keys |

@@ -8,6 +8,11 @@ use crate::config::WebSearchConfig;
 pub enum ToolInvocation {
     RunCommand(String),
     WebSearch(String),
+    McpCall {
+        server: String,
+        tool: String,
+        arguments: serde_json::Value,
+    },
 }
 
 /// Executes a shell command asynchronously and captures its combined stdout and stderr.
@@ -57,9 +62,29 @@ pub async fn execute_shell_command(cmd: &str) -> String {
     }
 }
 
-/// Checks if text contains a tool execution block ```tool:...``` or loose tool:run_command
+/// Checks if text contains an explicit tool execution block ```tool:...``` or explicit XML/JSON function tags
 pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
-    // 1. Check for Web Search with ```
+    // 1. Check for MCP tool call: ```tool:mcp:<server>:<tool_name>\n{...}\n```
+    if let Some(start) = text.find("```tool:mcp:") {
+        let after = &text[start + "```tool:mcp:".len()..];
+        let first_line_end = after.find('\n').unwrap_or(after.len());
+        let header = after[..first_line_end].trim();
+        let parts: Vec<&str> = header.split(':').collect();
+        if parts.len() >= 2 {
+            let server = parts[0].to_string();
+            let tool = parts[1].to_string();
+            let body_start = if first_line_end < after.len() { &after[first_line_end..] } else { "" };
+            let json_str = if let Some(end) = body_start.find("```") {
+                &body_start[..end]
+            } else {
+                body_start
+            }.trim();
+            let arguments = serde_json::from_str::<serde_json::Value>(json_str).unwrap_or_else(|_| serde_json::json!({}));
+            return Some(ToolInvocation::McpCall { server, tool, arguments });
+        }
+    }
+
+    // 2. Check for Web Search with ```
     for prefix in &["```tool:web_search", "```tool:search", "```tool:web", "```tool:google"] {
         if let Some(start) = text.find(prefix) {
             let after = &text[start + prefix.len()..];
@@ -76,20 +101,8 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         }
     }
 
-    // 2. Check for Web Search without ``` (e.g. "tool:web_search arch linux")
-    for prefix in &["tool:web_search", "tool:search", "tool:web"] {
-        if let Some(start) = text.find(prefix) {
-            let after = &text[start + prefix.len()..];
-            let clean = after.trim_start_matches([':', ' ', '\n']);
-            let query = clean.lines().next().unwrap_or(clean).trim().to_string();
-            if !query.is_empty() {
-                return Some(ToolInvocation::WebSearch(query));
-            }
-        }
-    }
-
     // 3. Command execution with ```
-    for prefix in &["```tool:run_command", "```tool:execute_command", "```tool:bash", "```tool:sh"] {
+    for prefix in &["```tool:run_command", "```tool:execute_command"] {
         if let Some(start) = text.find(prefix) {
             let after = &text[start + prefix.len()..];
             let code_start = after.strip_prefix('\n').unwrap_or(after);
@@ -105,24 +118,7 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         }
     }
 
-    // 4. Command execution without ``` (e.g. "tool:run_command\nsystemctl ...")
-    for prefix in &["tool:run_command", "tool:execute_command"] {
-        if let Some(start) = text.find(prefix) {
-            let after = &text[start + prefix.len()..];
-            let clean = after.trim_start_matches([':', ' ', '\n']);
-            let valid_lines: Vec<&str> = clean
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| is_executable_shell_line(l))
-                .collect();
-
-            if !valid_lines.is_empty() {
-                return Some(ToolInvocation::RunCommand(valid_lines.join("\n")));
-            }
-        }
-    }
-
-    // 5. XML / Function tags and direct JSON (e.g. DeepSeek/Qwen <tool_call> or <|tool_calls|>)
+    // 4. XML / Function tags and direct JSON (e.g. DeepSeek/Qwen <tool_call> or <|tool_calls|>)
     if let Some(tool) = parse_json_or_xml_tool_call(text) {
         return Some(tool);
     }
@@ -220,49 +216,7 @@ fn parse_json_tool_value(val: &serde_json::Value) -> Option<ToolInvocation> {
     None
 }
 
-fn is_executable_shell_line(line: &str) -> bool {
-    let l = line.trim();
-    if l.is_empty()
-        || l.starts_with('#')
-        || l.starts_with("//")
-        || l.starts_with('(')
-        || l.starts_with('>')
-        || l.starts_with('|')
-        || l.starts_with("</")
-        || l.starts_with('<')
-        || l.starts_with("```")
-        || l.starts_with("---")
-        || l.starts_with("===")
-        || l.starts_with("• ")
-        || l.starts_with("? ")
-        || l.starts_with("! ")
-        || l.starts_with("📌")
-        || l.starts_with("Cas ")
-        || l.starts_with("Type de ")
-        || l.eq_ignore_ascii_case("bash")
-        || l.eq_ignore_ascii_case("sh")
-        || l.eq_ignore_ascii_case("zsh")
-        || l.eq_ignore_ascii_case("fish")
-    {
-        return false;
-    }
 
-    let lower = l.to_lowercase();
-    if lower.starts_with("pour ")
-        || lower.starts_with("si ")
-        || lower.starts_with("voici ")
-        || lower.starts_with("l'utilisateur ")
-        || lower.starts_with("vous pouvez ")
-        || lower.starts_with("cette commande ")
-        || lower.starts_with("in order to ")
-        || lower.starts_with("if you ")
-        || lower.starts_with("here is ")
-    {
-        return false;
-    }
-
-    true
-}
 
 /// Executes an internet web search asynchronously across multiple sources
 pub async fn execute_web_search(query: &str, config: &WebSearchConfig) -> String {

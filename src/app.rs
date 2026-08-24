@@ -15,7 +15,10 @@ use crate::{
     session::{Session, SessionStorage},
     system::{ActiveSession, HostsStore, SystemContext},
     ui::{
-        components::{ConfigModalState, SessionModalAction, SessionModalState},
+        components::{
+            BookmarksModalAction, BookmarksModalState, ConfigModalState, ExportModalAction,
+            ExportModalState, SessionModalAction, SessionModalState,
+        },
         theme::ThemeId,
     },
 };
@@ -41,11 +44,20 @@ pub struct ChatMessage {
     pub command_proposal: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProactiveDiagnosis {
+    pub command: String,
+    pub error_message: String,
+}
+
 pub enum ModalState {
     None,
     Help,
     Config(ConfigModalState),
     Sessions(SessionModalState),
+    Bookmarks(BookmarksModalState),
+    Export(ExportModalState),
+    Mcp(crate::ui::components::McpModalState),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +115,9 @@ pub struct App {
     pub input_draft: String,
     pub system_context: SystemContext,
     pub generation_start_time: Option<std::time::Instant>,
+    pub first_chunk_time: Option<std::time::Instant>,
     pub last_chunk_time: Option<std::time::Instant>,
+    pub current_turn_chars: usize,
     pub current_turn_tokens: usize,
     pub last_tokens_per_sec: Option<f64>,
     pub mouse_selection: Option<MouseSelection>,
@@ -112,9 +126,15 @@ pub struct App {
     pub current_session: Session,
     pub hosts_store: HostsStore,
     pub toast_message: Option<(std::time::Instant, String)>,
-    pub is_probing_host: bool,
-    pub probe_buffer: String,
     pub theme: ThemeId,
+    pub proactive_error_diagnosis: Option<ProactiveDiagnosis>,
+    pub terminal_input_buffer: String,
+    pub last_user_terminal_command: Option<String>,
+    pub chat_search_active: bool,
+    pub chat_search_query: String,
+    pub chat_search_cursor: usize,
+    pub chat_search_match_idx: usize,
+    pub pricing_registry: Arc<tokio::sync::RwLock<crate::pricing::PricingRegistry>>,
 }
 
 impl App {
@@ -137,7 +157,7 @@ impl App {
         });
 
         let config = Config::load();
-        let agent = AgentEngine::new(config.clone());
+        let agent = AgentEngine::new_with_event_tx(config.clone(), Some(event_tx.clone()));
         let detected_context_window = Arc::new(AtomicUsize::new(0));
         probe_model_context(&config, detected_context_window.clone());
         let system_context = SystemContext::detect();
@@ -161,7 +181,7 @@ impl App {
             chat_area: Rect::default(),
             terminal_area: Rect::default(),
             is_dragging_split: false,
-            config,
+            config: config.clone(),
             agent,
             modal: ModalState::None,
             event_tx,
@@ -177,7 +197,9 @@ impl App {
             input_draft: String::new(),
             system_context,
             generation_start_time: None,
+            first_chunk_time: None,
             last_chunk_time: None,
+            current_turn_chars: 0,
             current_turn_tokens: 0,
             last_tokens_per_sec: None,
             mouse_selection: None,
@@ -186,9 +208,17 @@ impl App {
             current_session,
             hosts_store: HostsStore::load(),
             toast_message: None,
-            is_probing_host: false,
-            probe_buffer: String::new(),
             theme,
+            proactive_error_diagnosis: None,
+            terminal_input_buffer: String::new(),
+            last_user_terminal_command: None,
+            chat_search_active: false,
+            chat_search_query: String::new(),
+            chat_search_cursor: 0,
+            chat_search_match_idx: 0,
+            pricing_registry: Arc::new(tokio::sync::RwLock::new(
+                crate::pricing::PricingRegistry::load_with_overrides(config.pricing),
+            )),
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -198,6 +228,36 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    pub fn trigger_pricing_update(&self) {
+        let registry_arc = self.pricing_registry.clone();
+        let event_tx = self.event_tx.clone();
+        let client = reqwest::Client::new();
+
+        tokio::spawn(async move {
+            let mut reg = registry_arc.write().await;
+            let result = reg.fetch_online_and_update(&client).await;
+            let event_payload = match result {
+                Ok(count) => Ok(count),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = event_tx.send(AppEvent::PricingUpdated(event_payload));
+        });
+    }
+
+    pub fn on_pricing_updated(&mut self, res: Result<usize, String>) {
+        let lang = self.config.get_language();
+        match res {
+            Ok(count) => {
+                let msg = format!("{} ({} modèles)", lang.t(crate::i18n::I18nKey::PricingUpdateSuccess), count);
+                self.set_toast(msg);
+            }
+            Err(err) => {
+                let msg = format!("{}: {}", lang.t(crate::i18n::I18nKey::PricingUpdateFailed), err);
+                self.set_toast(msg);
+            }
+        }
     }
 
     pub fn probe_provider_models(&self, provider: ProviderType) {
@@ -300,7 +360,24 @@ impl App {
 
     pub fn load_session(&mut self, session_id: &str) {
         self.save_current_session();
-        match SessionStorage::load(session_id) {
+        let loaded_res = if let Ok(exact) = SessionStorage::load(session_id) {
+            Ok(exact)
+        } else if let Ok(sessions) = SessionStorage::list_sessions() {
+            let lower_id = session_id.to_lowercase();
+            if let Some(matching) = sessions.iter().find(|s| {
+                s.id == session_id
+                    || s.id.to_lowercase().contains(&lower_id)
+                    || s.title.to_lowercase().contains(&lower_id)
+            }) {
+                SessionStorage::load(&matching.id)
+            } else {
+                Err(anyhow::anyhow!("Session '{}' introuvable", session_id))
+            }
+        } else {
+            SessionStorage::load(session_id)
+        };
+
+        match loaded_res {
             Ok(loaded) => {
                 let title = loaded.title.clone();
                 let count = loaded.messages.len();
@@ -328,6 +405,55 @@ impl App {
             Err(e) => {
                 self.set_toast(format!("⚠️ Erreur chargement session : {}", e));
             }
+        }
+    }
+
+    pub fn submit_initial_prompt(&mut self, prompt: &str) {
+        let trimmed = prompt.trim().to_string();
+        if !trimmed.is_empty() {
+            self.chat_input = trimmed;
+            self.cursor_pos = self.chat_input.len();
+            let enter = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            );
+            self.handle_key(enter);
+        }
+    }
+
+    pub fn apply_cli_overrides(
+        &mut self,
+        provider: Option<String>,
+        model: Option<String>,
+        auto_approve: Option<String>,
+        ssh_target: Option<String>,
+    ) {
+        if let Some(prov_str) = provider {
+            if let Some(p_type) = crate::config::ProviderType::from_key(&prov_str) {
+                self.config.default_provider = p_type;
+                self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+            }
+        }
+        if let Some(model_str) = model {
+            let p_key = self.config.default_provider.key_str().to_string();
+            if let Some(p_conf) = self.config.providers.get_mut(&p_key) {
+                p_conf.model = model_str;
+                self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+            }
+        }
+        if let Some(lvl_str) = auto_approve {
+            match lvl_str.to_lowercase().as_str() {
+                "off" | "none" => self.config.auto_approve = crate::config::AutoApproveLevel::Off,
+                "safe" | "read_only" | "readonly" => self.config.auto_approve = crate::config::AutoApproveLevel::Safe,
+                "sudo" | "standard" => self.config.auto_approve = crate::config::AutoApproveLevel::Sudo,
+                "yolo" | "all" | "auto" => self.config.auto_approve = crate::config::AutoApproveLevel::Yolo,
+                _ => {}
+            }
+        }
+        if let Some(ssh) = ssh_target {
+            let cmd = format!("ssh {}\n", ssh);
+            let _ = self.pty.write_all(cmd.as_bytes());
+            self.focus = Focus::Terminal;
         }
     }
 
@@ -378,6 +504,116 @@ impl App {
         self.config.theme = Some(theme_id.key_str().to_string());
         let _ = self.config.save();
         self.set_toast(format!("Thème : {}", theme_id.display_name()));
+    }
+
+    pub fn default_export_path(&self) -> String {
+        let now = chrono::Local::now();
+        let date_str = now.format("%Y-%m-%d").to_string();
+        let title_slug = self.current_session.title
+            .to_lowercase()
+            .replace(|c: char| !c.is_alphanumeric() && c != '-', "_")
+            .trim_matches('_')
+            .to_string();
+
+        let file_name = if title_slug.is_empty() {
+            format!("spiritty_rapport_{}.md", date_str)
+        } else {
+            let max_len = title_slug.len().min(35);
+            format!("spiritty_rapport_{}_{}.md", date_str, &title_slug[..max_len])
+        };
+
+        if let Some(ref dir) = self.config.export_dir {
+            let clean_dir = dir.trim_end_matches('/');
+            format!("{}/{}", clean_dir, file_name)
+        } else {
+            format!("~/{}", file_name)
+        }
+    }
+
+    pub fn export_current_session_markdown_to(&mut self, target_path: &str) -> Result<String, std::io::Error> {
+        let resolved_path = expand_tilde(target_path);
+        if let Some(parent) = resolved_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        let now = chrono::Local::now();
+        let mut content = String::new();
+        content.push_str(&format!("# 👻 Rapport d'Intervention Spiritty — {}\n\n", self.current_session.title));
+        content.push_str(&format!("- **Date & Heure :** {}\n", now.format("%Y-%m-%d %H:%M:%S")));
+        content.push_str(&format!("- **Session ID :** `{}`\n", self.current_session.id));
+        content.push_str(&format!("- **Fournisseur & Modèle :** {} (`{}`)\n", self.current_session.provider, self.current_session.model));
+        content.push_str(&format!("- **Environnement Cible :** {}\n", self.system_context.active_session.display_label()));
+        if let Some(ref profile) = self.system_context.active_remote_profile {
+            content.push_str(&format!("- **Profil Serveur Distant :** {} (Kernel: {}, Init: {})\n", profile.distro, profile.kernel, profile.init_system));
+        } else {
+            content.push_str(&format!("- **Distribution Locale :** {} (Kernel: {})\n", self.system_context.distro, self.system_context.kernel));
+        }
+        if let Some(ref cwd) = self.system_context.current_dir {
+            content.push_str(&format!("- **Répertoire de travail (PWD) :** `{}`\n", cwd));
+        }
+        if let Some(ref branch) = self.system_context.git_branch {
+            content.push_str(&format!("- **Branche Git :** `{}`\n", branch));
+        }
+        content.push_str("\n---\n\n## 📜 Historique des Échanges & Commandes\n\n");
+
+        for msg in &self.messages {
+            match msg.role {
+                MessageRole::User => {
+                    if msg.content.starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '") {
+                        content.push_str(&format!("> 💻 **Résultat d'exécution :**\n```\n{}\n```\n\n", msg.content));
+                    } else if msg.content.starts_with("💻 ") {
+                        content.push_str(&format!("> 💻 **Commande exécutée :** `{}`\n\n", msg.content.trim_start_matches("💻 ")));
+                    } else {
+                        content.push_str(&format!("### 👤 Utilisateur\n\n{}\n\n", msg.content));
+                    }
+                }
+                MessageRole::Assistant => {
+                    content.push_str(&format!("### 👻 Spiritty (Assistant IA)\n\n{}\n\n", msg.content));
+                }
+                MessageRole::System => {}
+            }
+        }
+
+        content.push_str("---\n*Rapport généré automatiquement par [Spiritty](https://github.com/xorne-git/Spiritty) — AI Companion for Sysadmins & DevOps.*\n");
+
+        std::fs::write(&resolved_path, content)?;
+        let path_str = resolved_path.to_string_lossy().to_string();
+        Ok(path_str)
+    }
+
+    pub fn export_current_session_markdown(&mut self) -> Result<String, std::io::Error> {
+        let default_path = self.default_export_path();
+        self.export_current_session_markdown_to(&default_path)
+    }
+
+    pub fn trigger_proactive_diagnosis(&mut self) {
+        if let Some(diag) = self.proactive_error_diagnosis.take() {
+            let prompt_text = format!(
+                "La commande suivante a échoué :\n```bash\n{}\n```\nVoici le message / code d'erreur obtenu :\n```\n{}\n```\nPeux-tu analyser précisément la cause de cet échec et me donner la solution / commande corrective ?",
+                diag.command, diag.error_message
+            );
+
+            self.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: prompt_text,
+                command_proposal: None,
+            });
+
+            self.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                command_proposal: None,
+            });
+
+            self.reset_chat_scroll();
+            self.generation_start_time = Some(std::time::Instant::now());
+            self.current_turn_tokens = 0;
+            self.focus = Focus::Chat;
+
+            let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
+        }
     }
 
     pub fn get_active_model_name(&self) -> String {
@@ -460,11 +696,11 @@ impl App {
 
     pub fn get_tokens_per_sec(&self) -> Option<f64> {
         if self.agent.is_generating && self.pending_tool_approval.is_none() && self.active_pty_tool.is_none() {
-            if let (Some(start), Some(last_chunk)) = (self.generation_start_time, self.last_chunk_time) {
-                // If model is actively emitting chunks (< 600ms), compute live speed
-                if last_chunk.elapsed().as_millis() < 600 {
-                    let secs = start.elapsed().as_secs_f64();
-                    if secs > 0.1 && self.current_turn_tokens > 0 {
+            if let (Some(first), Some(last_chunk)) = (self.first_chunk_time, self.last_chunk_time) {
+                // If model is actively emitting chunks (< 800ms), compute live streaming speed
+                if last_chunk.elapsed().as_millis() < 800 {
+                    let secs = first.elapsed().as_secs_f64();
+                    if secs > 0.2 && self.current_turn_tokens > 0 {
                         return Some(self.current_turn_tokens as f64 / secs);
                     }
                 }
@@ -560,6 +796,18 @@ impl App {
                 config_state.handle_paste(text);
                 return;
             }
+            ModalState::Export(export_state) => {
+                export_state.handle_paste(text);
+                return;
+            }
+            ModalState::Mcp(mcp_state) => {
+                mcp_state.handle_paste(text);
+                return;
+            }
+            ModalState::Bookmarks(bm_state) => {
+                bm_state.handle_paste(text);
+                return;
+            }
             ModalState::Help | ModalState::Sessions(_) => return,
             ModalState::None => {}
         }
@@ -583,7 +831,7 @@ impl App {
     pub fn cycle_auto_approve(&mut self) -> crate::config::AutoApproveLevel {
         let next_level = self.config.auto_approve.next();
         self.config.auto_approve = next_level;
-        self.agent.reload_config(self.config.clone());
+        self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
         let _ = self.config.save();
         next_level
     }
@@ -630,6 +878,69 @@ impl App {
             return;
         }
 
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B')) {
+            self.modal = match self.modal {
+                ModalState::Bookmarks(_) => ModalState::None,
+                _ => {
+                    let active_ssh = self.system_context.active_session.ssh_target().map(|s| s.to_string());
+                    ModalState::Bookmarks(BookmarksModalState::new(&self.hosts_store, active_ssh))
+                }
+            };
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {
+            self.modal = match self.modal {
+                ModalState::Export(_) => ModalState::None,
+                _ => {
+                    let default_path = self.default_export_path();
+                    ModalState::Export(ExportModalState::new(default_path))
+                }
+            };
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')) {
+            self.modal = match self.modal {
+                ModalState::Mcp(_) => ModalState::None,
+                _ => {
+                    let cached = self.agent.mcp_manager.get_server_statuses_cached();
+                    let mut server_statuses = Vec::new();
+                    for (name, s_cfg) in &self.config.mcp_servers {
+                        if let Some(existing) = cached.iter().find(|s| s.name == *name) {
+                            server_statuses.push(existing.clone());
+                        } else {
+                            server_statuses.push(crate::agent::mcp::manager::McpServerStatus {
+                                name: name.clone(),
+                                command: s_cfg.command.clone(),
+                                args: s_cfg.args.clone(),
+                                enabled: s_cfg.enabled,
+                                status: if s_cfg.enabled {
+                                    crate::agent::mcp::manager::McpStatus::Connected(0)
+                                } else {
+                                    crate::agent::mcp::manager::McpStatus::Disabled
+                                },
+                                tools: Vec::new(),
+                            });
+                        }
+                    }
+                    ModalState::Mcp(crate::ui::components::McpModalState::new(server_statuses))
+                }
+            };
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+            self.chat_search_active = !self.chat_search_active;
+            if self.chat_search_active {
+                self.chat_search_query.clear();
+                self.chat_search_cursor = 0;
+                self.chat_search_match_idx = 0;
+                self.focus = Focus::Chat;
+            }
+            return;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
             self.new_session();
             return;
@@ -659,6 +970,78 @@ impl App {
             return;
         }
 
+        let bookmark_action = if let ModalState::Bookmarks(ref mut bm_state) = self.modal {
+            bm_state.handle_key(key, &mut self.hosts_store)
+        } else {
+            None
+        };
+
+        if let Some(action) = bookmark_action {
+            match action {
+                BookmarksModalAction::Connect(target) => {
+                    self.modal = ModalState::None;
+                    let cmd = format!("ssh {}\n", target);
+                    let _ = self.pty.write_all(cmd.as_bytes());
+                    self.focus = Focus::Terminal;
+                }
+                BookmarksModalAction::TriggerScan => {
+                    self.trigger_host_scan();
+                }
+                BookmarksModalAction::Close => {
+                    self.modal = ModalState::None;
+                }
+            }
+            return;
+        }
+
+        let export_action = if let ModalState::Export(ref mut exp_state) = self.modal {
+            exp_state.handle_key(key)
+        } else {
+            None
+        };
+
+        if let Some(action) = export_action {
+            match action {
+                ExportModalAction::Export(target_path) => {
+                    self.modal = ModalState::None;
+                    match self.export_current_session_markdown_to(&target_path) {
+                        Ok(resolved_path) => {
+                            let compact = crate::system::format_compact_path(&resolved_path);
+                            self.set_toast(format!("📝 Rapport exporté : {}", compact));
+                        }
+                        Err(e) => {
+                            self.set_toast(format!("❌ Erreur export : {}", e));
+                        }
+                    }
+                }
+                ExportModalAction::Close => {
+                    self.modal = ModalState::None;
+                }
+            }
+            return;
+        }
+
+        let mcp_action = if let ModalState::Mcp(ref mut mcp_state) = self.modal {
+            mcp_state.handle_key(key, &mut self.config)
+        } else {
+            None
+        };
+
+        if let Some(action) = mcp_action {
+            match action {
+                crate::ui::components::McpModalAction::ServersChanged => {
+                    self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                    if let ModalState::Mcp(ref mut mcp_state) = self.modal {
+                        mcp_state.sync_with_config(&self.config);
+                    }
+                }
+                crate::ui::components::McpModalAction::Close => {
+                    self.modal = ModalState::None;
+                }
+            }
+            return;
+        }
+
         match &mut self.modal {
             ModalState::Help => {
                 if key.code == KeyCode::Esc || key.code == KeyCode::Enter {
@@ -667,21 +1050,40 @@ impl App {
                 return;
             }
             ModalState::Config(config_state) => {
-                let should_close = config_state.handle_key(key, &mut self.config);
+                let action = config_state.handle_key(key, &mut self.config);
                 self.theme = config_state.theme;
-                if should_close {
-                    self.agent.reload_config(self.config.clone());
-                    self.trigger_context_probe();
-                    self.modal = ModalState::None;
+                match action {
+                    crate::ui::components::ConfigModalAction::SaveAndClose => {
+                        self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                        self.trigger_context_probe();
+                        self.modal = ModalState::None;
+                    }
+                    crate::ui::components::ConfigModalAction::Close => {
+                        self.modal = ModalState::None;
+                    }
+                    crate::ui::components::ConfigModalAction::UpdatePricing => {
+                        self.trigger_pricing_update();
+                    }
+                    crate::ui::components::ConfigModalAction::None => {}
                 }
                 return;
             }
-            ModalState::Sessions(_) => return,
+            ModalState::Sessions(_) | ModalState::Bookmarks(_) | ModalState::Export(_) | ModalState::Mcp(_) => return,
             ModalState::None => {}
         }
 
-        // 3. Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
+        // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss, Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
         if key.modifiers.contains(KeyModifiers::ALT) {
+            if matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) && self.proactive_error_diagnosis.is_some() {
+                self.trigger_proactive_diagnosis();
+                return;
+            }
+
+            if matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('c') | KeyCode::Char('C')) && self.proactive_error_diagnosis.is_some() {
+                self.proactive_error_diagnosis = None;
+                return;
+            }
+
             if let Some(idx) = key_to_card_index(key.code) {
                 if self.execute_command_by_index(idx, true) {
                     return;
@@ -738,6 +1140,31 @@ impl App {
             self.pty.reset_scroll();
         }
 
+        // If user is typing normal commands, dismiss any lingering error toast
+        if self.proactive_error_diagnosis.is_some()
+            && (!key.modifiers.contains(KeyModifiers::ALT)
+                || !matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('c') | KeyCode::Char('C')))
+        {
+            self.proactive_error_diagnosis = None;
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                let cmd = self.terminal_input_buffer.trim().to_string();
+                if !cmd.is_empty() {
+                    self.last_user_terminal_command = Some(cmd);
+                }
+                self.terminal_input_buffer.clear();
+            }
+            KeyCode::Backspace => {
+                self.terminal_input_buffer.pop();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                self.terminal_input_buffer.push(c);
+            }
+            _ => {}
+        }
+
         let bytes = key_event_to_pty_bytes(key);
         if !bytes.is_empty() {
             let _ = self.pty.write_all(&bytes);
@@ -756,15 +1183,20 @@ impl App {
             let elapsed_since_start = capture.start_time.elapsed();
             let elapsed_since_last_output = capture.last_output_time.elapsed();
 
+            let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
+            let is_waiting_password = is_waiting_for_password(&raw_text);
+
             // Settle completion heuristic:
             // When output has been received, and no new output has arrived for >= 350ms (idle after output/prompt),
-            // and at least 300ms has elapsed since command invocation, complete the capture seamlessly!
+            // and at least 300ms has elapsed since command invocation, AND WE ARE NOT WAITING FOR A SUDO PASSWORD,
+            // complete the capture seamlessly!
             if !capture.output_bytes.is_empty()
+                && !is_waiting_password
                 && elapsed_since_start >= std::time::Duration::from_millis(300)
                 && elapsed_since_last_output >= std::time::Duration::from_millis(350)
             {
-                let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
                 let clean_output = clean_pty_output(&raw_text, &capture.command);
+
                 let final_summary = if clean_output.is_empty() {
                     "(Commande exécutée avec succès dans le terminal)".to_string()
                 } else {
@@ -775,9 +1207,9 @@ impl App {
                     let _ = tx.send(final_summary);
                 }
                 self.active_pty_tool = None;
-            } else if elapsed_since_start > std::time::Duration::from_secs(45) {
+            } else if elapsed_since_start > std::time::Duration::from_secs(if is_waiting_password { 120 } else { 45 }) {
                 if let Some(tx) = capture.result_tx.take() {
-                    let _ = tx.send("(Délai d'attente de 45s dépassé pour la commande)".to_string());
+                    let _ = tx.send("(Délai d'attente dépassé pour la commande)".to_string());
                 }
                 self.active_pty_tool = None;
             }
@@ -790,18 +1222,31 @@ impl App {
             if new_session != self.system_context.active_session {
                 self.on_active_session_changed(new_session);
             }
+
+            // Also refresh PWD and Git branch on local sessions
+            if !self.system_context.active_session.is_ssh() {
+                if let Some(cwd) = crate::system::detect_current_working_dir(child_pid) {
+                    let branch = crate::system::detect_git_branch(&cwd);
+                    self.system_context.current_dir = Some(cwd);
+                    self.system_context.git_branch = branch;
+                }
+            }
         }
     }
 
     pub fn on_active_session_changed(&mut self, new_session: ActiveSession) {
-        match &new_session {
+        let was_ssh = self.system_context.active_session.is_ssh();
+        self.system_context.active_session = new_session.clone();
+
+        match new_session {
             ActiveSession::Ssh { target, .. } => {
-                if let Some(profile) = self.hosts_store.get(target) {
+                if let Some(profile) = self.hosts_store.get(&target) {
                     self.system_context.active_remote_profile = Some(profile.clone());
                     self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
                 } else {
                     self.system_context.active_remote_profile = None;
                     self.set_toast(format!("🌐 SSH: {}", target));
+                    self.trigger_background_host_probe(target);
                 }
             }
             ActiveSession::Container { runtime, container_id } => {
@@ -809,30 +1254,76 @@ impl App {
                 self.set_toast(format!("📦 {}: {}", runtime, container_id));
             }
             ActiveSession::Local { .. } => {
-                let was_ssh = self.system_context.active_session.is_ssh();
                 self.system_context.active_remote_profile = None;
                 if was_ssh {
                     self.set_toast("🖥️ Retour à l'environnement local".to_string());
                 }
             }
         }
-        self.system_context.active_session = new_session;
+    }
+
+    pub fn trigger_background_host_probe(&mut self, target: String) {
+        let event_tx = self.event_tx.clone();
+        tokio::spawn(async move {
+            let probe_cmd = HostsStore::generate_probe_command();
+            let res = tokio::process::Command::new("ssh")
+                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=accept-new", &target, probe_cmd])
+                .output()
+                .await;
+            if let Ok(out) = res {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout).to_string();
+                    let _ = event_tx.send(AppEvent::RemoteHostProbed { target, output: text });
+                }
+            }
+        });
+    }
+
+    pub fn on_remote_host_probed(&mut self, target: String, output: String) {
+        if let Some(profile) = HostsStore::parse_probe_output(&target, &output) {
+            let distro_name = profile.distro.clone();
+            let _ = self.hosts_store.upsert(profile.clone());
+            if let Some(active_target) = self.system_context.active_session.ssh_target() {
+                if self.hosts_store.get(active_target).map(|p| p.target.as_str()) == Some(&profile.target)
+                    || active_target == target
+                    || target.contains(active_target)
+                    || active_target.contains(&target)
+                {
+                    self.system_context.active_remote_profile = Some(profile);
+                    self.set_toast(format!("🌐 {} — Profil {} enregistré", active_target, distro_name));
+                }
+            }
+            if let ModalState::Bookmarks(ref mut bm_state) = self.modal {
+                bm_state.refresh(&self.hosts_store);
+            }
+        }
     }
 
     pub fn trigger_host_scan(&mut self) {
-        if !self.system_context.active_session.is_ssh() {
+        if let Some(target) = self.system_context.active_session.ssh_target().map(|s| s.to_string()) {
+            self.set_toast("🌐 Scan de l'environnement distant en arrière-plan...".to_string());
+            self.trigger_background_host_probe(target);
+        } else {
             self.set_toast("ℹ️ Le scan est réservé aux sessions SSH distantes".to_string());
-            return;
         }
-        self.is_probing_host = true;
-        self.probe_buffer.clear();
-        let probe_cmd = HostsStore::generate_probe_command();
-        let _ = self.pty.write_all(format!("{}\n", probe_cmd).as_bytes());
-        self.set_toast("🌐 Scan de l'environnement distant en cours...".to_string());
     }
 
     pub fn set_toast(&mut self, msg: String) {
         self.toast_message = Some((std::time::Instant::now(), msg));
+    }
+
+    pub fn find_search_matches(&self) -> Vec<usize> {
+        if self.chat_search_query.trim().is_empty() {
+            return Vec::new();
+        }
+        let q = self.chat_search_query.to_lowercase();
+        let mut matches = Vec::new();
+        for (idx, msg) in self.messages.iter().enumerate() {
+            if msg.content.to_lowercase().contains(&q) {
+                matches.push(idx);
+            }
+        }
+        matches
     }
 
     pub fn all_command_proposals(&self) -> Vec<String> {
@@ -867,6 +1358,7 @@ impl App {
     }
 
     pub fn execute_command_by_index(&mut self, index: usize, auto_run: bool) -> bool {
+        self.proactive_error_diagnosis = None;
         let proposals = self.all_command_proposals();
         if let Some(cmd) = proposals.get(index).cloned() {
             let clean_cmd = clean_multiline_command(&cmd);
@@ -874,6 +1366,11 @@ impl App {
             if auto_run {
                 self.last_injected_cmd = None;
                 self.agent.is_generating = true;
+
+                let is_sudo = clean_cmd.trim().starts_with("sudo") || clean_cmd.contains(" sudo ");
+                if is_sudo {
+                    self.focus = Focus::Terminal;
+                }
 
                 // 1. Add User action and Assistant placeholder in Chat history
                 self.messages.push(ChatMessage {
@@ -929,7 +1426,6 @@ impl App {
                 let pty_cmd = format_command_for_pty_with_session(&cmd, shell, is_remote, false);
                 let _ = self.pty.write_all(pty_cmd.as_bytes());
                 self.last_injected_cmd = Some(cmd.clone());
-                self.focus = Focus::Terminal;
                 return true;
             }
         }
@@ -976,7 +1472,62 @@ impl App {
             }
         }
 
-        // 2. Esc or Ctrl+C / Ctrl+S cancels active generation or active PTY tool
+        // 2. Chat Search input interceptor (Ctrl+F active)
+        if self.chat_search_active {
+            match key.code {
+                KeyCode::Esc => {
+                    self.chat_search_active = false;
+                    self.chat_search_query.clear();
+                    return;
+                }
+                KeyCode::Enter => {
+                    let matches = self.find_search_matches();
+                    if !matches.is_empty() {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            if self.chat_search_match_idx == 0 {
+                                self.chat_search_match_idx = matches.len() - 1;
+                            } else {
+                                self.chat_search_match_idx -= 1;
+                            }
+                        } else {
+                            self.chat_search_match_idx = (self.chat_search_match_idx + 1) % matches.len();
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Backspace => {
+                    if self.chat_search_cursor > 0 {
+                        let mut chars: Vec<char> = self.chat_search_query.chars().collect();
+                        chars.remove(self.chat_search_cursor - 1);
+                        self.chat_search_query = chars.into_iter().collect();
+                        self.chat_search_cursor -= 1;
+                        self.chat_search_match_idx = 0;
+                    }
+                    return;
+                }
+                KeyCode::Left => {
+                    self.chat_search_cursor = self.chat_search_cursor.saturating_sub(1);
+                    return;
+                }
+                KeyCode::Right => {
+                    if self.chat_search_cursor < self.chat_search_query.chars().count() {
+                        self.chat_search_cursor += 1;
+                    }
+                    return;
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                    let mut chars: Vec<char> = self.chat_search_query.chars().collect();
+                    chars.insert(self.chat_search_cursor, c);
+                    self.chat_search_query = chars.into_iter().collect();
+                    self.chat_search_cursor += 1;
+                    self.chat_search_match_idx = 0;
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // 3. Esc or Ctrl+C / Ctrl+S cancels active generation or active PTY tool
         let is_stop_key = key.code == KeyCode::Esc
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('s')));
@@ -1028,6 +1579,9 @@ impl App {
                     self.history_index = None;
                     self.input_draft.clear();
 
+                    // Clear any lingering error diagnosis upon new message
+                    self.proactive_error_diagnosis = None;
+
                     // Push User message
                     self.messages.push(ChatMessage {
                         role: MessageRole::User,
@@ -1047,9 +1601,6 @@ impl App {
                     self.reset_chat_scroll();
                     self.generation_start_time = Some(std::time::Instant::now());
                     self.current_turn_tokens = 0;
-
-                    // Switch focus to Terminal so user can immediately type shell commands while AI responds
-                    self.focus = Focus::Terminal;
 
                     // Trigger LLM streaming with live system context
                     let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
@@ -1082,6 +1633,11 @@ impl App {
                 // Ctrl+J is ASCII linefeed (universal multiline newline shortcut)
                 self.chat_input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(text) = crate::system::clipboard::get_clipboard_text() {
+                    self.handle_paste(text);
+                }
             }
             KeyCode::Char('\n') | KeyCode::Char('\r') => {
                 self.chat_input.insert(self.cursor_pos, '\n');
@@ -1183,27 +1739,35 @@ impl App {
                     }
                 }
             }
-            KeyCode::Esc if !self.chat_input.is_empty() => {
-                self.chat_input.clear();
-                self.cursor_pos = 0;
-                self.history_index = None;
-                self.input_draft.clear();
+            KeyCode::Esc => {
+                if self.proactive_error_diagnosis.is_some() {
+                    self.proactive_error_diagnosis = None;
+                    return;
+                }
+                if !self.chat_input.is_empty() {
+                    self.chat_input.clear();
+                    self.cursor_pos = 0;
+                    self.history_index = None;
+                    self.input_draft.clear();
+                }
             }
             _ => {}
         }
     }
 
     pub fn on_agent_chunk(&mut self, chunk: String) {
-        let tok_estimate = ((chunk.len() as f64) / 3.8).max(1.0) as usize;
-        self.current_turn_tokens += tok_estimate;
         let now = std::time::Instant::now();
-        if let Some(start) = self.generation_start_time {
-            let secs = start.elapsed().as_secs_f64();
-            if secs > 0.1 && self.current_turn_tokens > 0 {
+        if self.first_chunk_time.is_none() {
+            self.first_chunk_time = Some(now);
+        }
+        self.current_turn_chars += chunk.len();
+        self.current_turn_tokens = ((self.current_turn_chars as f64) / 3.8).ceil() as usize;
+
+        if let Some(first) = self.first_chunk_time {
+            let secs = first.elapsed().as_secs_f64();
+            if secs > 0.2 && self.current_turn_tokens > 0 {
                 self.last_tokens_per_sec = Some(self.current_turn_tokens as f64 / secs);
             }
-        } else {
-            self.generation_start_time = Some(now);
         }
         self.last_chunk_time = Some(now);
 
@@ -1251,12 +1815,11 @@ impl App {
         self.pending_tool_approval = None;
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
-                let trimmed = last_msg.content.trim();
-                let clean_base = if let Some(idx) = trimmed.find("```tool:") {
-                    trimmed[..idx].trim()
-                } else {
-                    trimmed
-                };
+                // Strip the trailing ```tool:... code block if present
+                if let Some(idx) = last_msg.content.find("```tool:") {
+                    last_msg.content.truncate(idx);
+                }
+                let clean_base = last_msg.content.trim_end().to_string();
                 if command.starts_with("🌐") {
                     if clean_base.is_empty() {
                         last_msg.content = format!("{}...", command);
@@ -1277,26 +1840,15 @@ impl App {
         self.pending_tool_approval = None;
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
-                let trimmed = last_msg.content.trim();
-                let clean_base = if let Some(idx) = trimmed.find("💻 ") {
-                    trimmed[..idx].trim()
-                } else if let Some(idx) = trimmed.find("🌐 ") {
-                    trimmed[..idx].trim()
-                } else if let Some(idx) = trimmed.find("```tool:") {
-                    trimmed[..idx].trim()
-                } else {
-                    trimmed
-                };
-                if command.starts_with("🌐") {
-                    if clean_base.is_empty() {
-                        last_msg.content = command;
-                    } else {
-                        last_msg.content = format!("{}\n\n{}", clean_base, command);
-                    }
-                } else if clean_base.is_empty() {
-                    last_msg.content = format!("💻 `{}`", command);
-                } else {
-                    last_msg.content = format!("{}\n\n💻 `{}`", clean_base, command);
+                let mut content = last_msg.content.clone();
+                let tool_indicator_start = format!("💻 `{}`...", command);
+                let web_indicator_start = format!("{}...", command);
+                if let Some(pos) = content.rfind(&tool_indicator_start) {
+                    content.replace_range(pos..pos + tool_indicator_start.len(), &format!("💻 `{}`", command));
+                    last_msg.content = content;
+                } else if let Some(pos) = content.rfind(&web_indicator_start) {
+                    content.replace_range(pos..pos + web_indicator_start.len(), &command);
+                    last_msg.content = content;
                 }
             }
         }
@@ -1314,8 +1866,10 @@ impl App {
 
         let _ = self.pty.write_all(formatted_cmd.as_bytes());
 
-        // Switch focus to Terminal so user can interact if prompt/pager opens
-        self.focus = Focus::Terminal;
+        let is_sudo = command.trim().starts_with("sudo") || command.contains(" sudo ");
+        if is_sudo {
+            self.focus = Focus::Terminal;
+        }
 
         let now = std::time::Instant::now();
         self.active_pty_tool = Some(PtyToolCapture {
@@ -1328,33 +1882,15 @@ impl App {
     }
 
     pub fn on_pty_output(&mut self, bytes: &[u8]) {
-        // 1. Capture remote host probe output if active
-        if self.is_probing_host {
-            self.probe_buffer.push_str(&String::from_utf8_lossy(bytes));
-            if self.probe_buffer.contains("SPIRITTY_PROBE_END") {
-                self.is_probing_host = false;
-                let target = self
-                    .system_context
-                    .active_session
-                    .ssh_target()
-                    .unwrap_or("remote-host")
-                    .to_string();
-
-                if let Some(profile) = HostsStore::parse_probe_output(&target, &self.probe_buffer) {
-                    let distro_name = profile.distro.clone();
-                    let _ = self.hosts_store.upsert(profile.clone());
-                    self.system_context.active_remote_profile = Some(profile);
-                    self.set_toast(format!("🌐 {} — Profil {} enregistré", target, distro_name));
-                } else {
-                    self.set_toast("⚠️ Échec de l'analyse du serveur distant".to_string());
-                }
-                self.probe_buffer.clear();
-            }
-        }
-
+        let mut password_prompt_detected = false;
         if let Some(ref mut capture) = self.active_pty_tool {
             capture.output_bytes.extend_from_slice(bytes);
             capture.last_output_time = std::time::Instant::now();
+
+            let raw_text = String::from_utf8_lossy(&capture.output_bytes);
+            if is_waiting_for_password(&raw_text) {
+                password_prompt_detected = true;
+            }
 
             if let Ok(text) = std::str::from_utf8(&capture.output_bytes) {
                 // Check for OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07 or fallback __SPIRITTY_DONE__:<status>
@@ -1394,9 +1930,50 @@ impl App {
                 }
             }
         }
+
+        if password_prompt_detected && self.focus != Focus::Terminal {
+            self.focus = Focus::Terminal;
+            let toast_msg = if self.config.get_language() == crate::i18n::Language::Fr {
+                "🔒 Saisie du mot de passe sudo requise dans le terminal".to_string()
+            } else {
+                "🔒 Sudo password required in terminal".to_string()
+            };
+            self.set_toast(toast_msg);
+        }
+
+        // Detect shell errors ONLY for manual user commands in the live terminal
+        if self.active_pty_tool.is_none() && !self.agent.is_generating {
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                let lower = text.to_lowercase();
+                if (lower.contains("command not found")
+                    || lower.contains("permission denied")
+                    || lower.contains("syntax error near")
+                    || lower.contains("syntax error:")
+                    || lower.contains("no such file or directory")
+                    || lower.contains("fatal:")
+                    || lower.contains("failed to ")
+                    || lower.contains("cannot create directory"))
+                    && !lower.contains("debug")
+                    && !lower.contains("spiritty")
+                    && !lower.contains("spiritty_probe")
+                {
+                    let cmd = self
+                        .last_user_terminal_command
+                        .clone()
+                        .unwrap_or_else(|| "(Dernière commande shell)".to_string());
+                    self.proactive_error_diagnosis = Some(ProactiveDiagnosis {
+                        command: cmd,
+                        error_message: text.trim().to_string(),
+                    });
+                }
+            }
+        }
     }
 
     pub fn on_agent_new_turn(&mut self) {
+        self.first_chunk_time = None;
+        self.current_turn_chars = 0;
+        self.current_turn_tokens = 0;
         if let Some(last) = self.messages.last() {
             if last.role == MessageRole::Assistant && last.content.trim().is_empty() {
                 return;
@@ -1410,14 +1987,44 @@ impl App {
         self.chat_scroll_from_bottom = 0;
     }
 
+    pub fn on_agent_usage(&mut self, prompt_tokens: usize, completion_tokens: usize, exact_speed: Option<f64>) {
+        if prompt_tokens > 0 {
+            self.current_session.prompt_tokens += prompt_tokens;
+        }
+        if completion_tokens > 0 {
+            self.current_session.completion_tokens += completion_tokens;
+            self.current_turn_tokens = completion_tokens;
+        }
+        self.current_session.total_tokens = self.current_session.prompt_tokens + self.current_session.completion_tokens;
+        if let Some(speed) = exact_speed {
+            self.last_tokens_per_sec = Some(speed);
+        }
+    }
+
+    pub fn on_mcp_servers_updated(&mut self) {
+        if let ModalState::Mcp(ref mut mcp_state) = self.modal {
+            let cached = self.agent.mcp_manager.get_server_statuses_cached();
+            mcp_state.update_statuses(cached);
+        }
+    }
+
     pub fn on_agent_done(&mut self) {
-        if let Some(start) = self.generation_start_time.take() {
-            let secs = start.elapsed().as_secs_f64();
-            if secs > 0.1 && self.current_turn_tokens > 0 {
+        if let Some(first) = self.first_chunk_time.take() {
+            let secs = first.elapsed().as_secs_f64();
+            if secs > 0.1 && self.current_turn_tokens > 0 && self.last_tokens_per_sec.is_none() {
                 self.last_tokens_per_sec = Some(self.current_turn_tokens as f64 / secs);
             }
         }
         self.last_chunk_time = None;
+        self.first_chunk_time = None;
+        self.current_turn_chars = 0;
+
+        // If provider did not send native AgentUsage event, aggregate estimated tokens
+        if self.current_session.total_tokens == 0 && self.current_turn_tokens > 0 {
+            self.current_session.completion_tokens += self.current_turn_tokens;
+            self.current_session.total_tokens = self.get_total_tokens_used();
+            self.current_session.prompt_tokens = self.current_session.total_tokens.saturating_sub(self.current_session.completion_tokens);
+        }
 
         self.agent.is_generating = false;
         self.pending_tool_approval = None;
@@ -1571,18 +2178,26 @@ pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
         "```\n\n```\n",
     ];
 
+    let mut working = text.to_string();
+
     for fence in empty_fences {
-        if let Some(pos) = text.find(fence) {
-            let before = &text[..pos];
-            let after = &text[pos + fence.len()..];
+        if let Some(pos) = working.find(fence) {
+            let before = &working[..pos];
+            let after = &working[pos + fence.len()..];
             let trimmed_after = after.trim_end_matches('`').trim();
             if !trimmed_after.is_empty() {
-                return format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
+                working = format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
+                break;
             }
         }
     }
 
-    text.to_string()
+    // Auto-close any unclosed code block (odd number of ```)
+    if !working.matches("```").count().is_multiple_of(2) {
+        working.push_str("\n```\n");
+    }
+
+    working
 }
 
 /// Extracts all proposed shell commands from markdown code blocks (excluding output/tools/trees)
@@ -1839,6 +2454,30 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
     });
 }
 
+/// Checks if the raw terminal output indicates that sudo/doas/su is waiting for password entry.
+pub fn is_waiting_for_password(raw_text: &str) -> bool {
+    let clean = strip_ansi_sequences(raw_text);
+    let trimmed = clean.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    let last_line = lower.lines().next_back().unwrap_or(&lower).trim();
+
+    last_line.contains("password for")
+        || last_line.contains("mot de passe de")
+        || last_line.contains("mot de passe pour")
+        || last_line.contains("mot de passe :")
+        || last_line.contains("mot de passe:")
+        || last_line.contains("password:")
+        || last_line.contains("password :")
+        || last_line.contains("passphrase")
+        || last_line.contains("authentication required")
+        || last_line.contains("authenticating")
+        || last_line.contains("doas password")
+        || last_line.starts_with("[sudo]")
+}
+
 /// Cleans captured PTY output by stripping ANSI colors, CRs, and prompt echoes.
 fn clean_pty_output(raw: &str, command: &str) -> String {
     let no_ansi = strip_ansi_sequences(raw);
@@ -1846,14 +2485,19 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
 
     let mut lines: Vec<&str> = no_cr.lines().collect();
 
-    // Filter out internal sentinel or command echo remnants
+    // Filter out internal sentinel, command echo remnants, or sudo password prompts
     lines.retain(|l| {
         let t = l.trim();
+        let lower = t.to_lowercase();
         !t.is_empty()
             && !t.contains("spiritty_done")
             && !t.contains("__spiritty")
             && !t.contains("__SPIRITTY")
             && !t.contains("printf '\\e]777")
+            && !lower.contains("password for")
+            && !lower.contains("mot de passe de")
+            && !lower.contains("mot de passe pour")
+            && !(lower.starts_with("[sudo]") && lower.contains("password"))
     });
 
     if let Some(first) = lines.first() {
@@ -2231,13 +2875,11 @@ pub fn repair_missing_heredoc_terminator(script: &str) -> String {
 }
 
 /// Formats a command for reliable execution in the PTY.
-/// - If the command is a single-line command (no unescaped newlines):
+/// - If running over remote SSH: sends the clean command directly (human-readable, no Base64 noise)
+/// - If running locally:
 ///   - If `cd ...`: executed directly
-///   - If running in non-bash shell (Fish, Nu, etc.) and not already `bash -c`: wraps in `bash -c '...'`
-/// - If the command is a multiline script / heredoc (contains `\n` or `<<`):
-///   - If running locally: writes the script to `/tmp/spiritty_exec.sh` and runs `bash -v /tmp/spiritty_exec.sh`,
-///     displaying commands cleanly in verbose human-readable format without Base64 clutter.
-///   - If running over remote SSH: Base64 encodes the script body and pipes to `base64 -d | bash -v` on a SINGLE terminal line.
+///   - If multiline script / heredoc: writes to temporary script and executes via `bash /tmp/spiritty_exec.sh`
+///   - If non-bash shell (Fish, Nu, etc.): wraps in `bash -c '...'`
 pub fn format_command_for_pty_with_session(
     command: &str,
     user_shell: &str,
@@ -2249,6 +2891,12 @@ pub fn format_command_for_pty_with_session(
         return String::new();
     }
 
+    if is_remote {
+        // Over SSH, the remote shell is standard POSIX/Bash.
+        // Send pure human-readable command directly with leading space to avoid shell history pollution.
+        return format!(" {}\n", clean);
+    }
+
     let is_cd = clean.starts_with("cd ") || clean == "cd";
     if is_cd {
         return format!(" {}\n", clean);
@@ -2256,29 +2904,17 @@ pub fn format_command_for_pty_with_session(
 
     // Check if the command contains newlines or is a heredoc / multiline script
     if clean.contains('\n') || clean.contains("<<") {
-        // Strip any outer wrapping `bash -c '...'` to get the raw script if it was wrapped
         let raw_script = if clean.starts_with("bash -c '") && clean.ends_with('\'') {
             &clean["bash -c '".len()..clean.len() - 1]
         } else {
             &clean
         };
 
-        if !is_remote {
-            let temp_script_path = std::env::temp_dir().join("spiritty_exec.sh");
-            if std::fs::write(&temp_script_path, raw_script).is_ok() {
-                // Leading space prevents Fish, Bash, and Zsh from saving this command in shell history
-                return format!(" bash -v {}\n", temp_script_path.display());
-            }
+        let temp_script_path = std::env::temp_dir().join("spiritty_exec.sh");
+        if std::fs::write(&temp_script_path, raw_script).is_ok() {
+            // Leading space prevents Fish, Bash, and Zsh from saving this command in shell history
+            return format!(" bash {}\n", temp_script_path.display());
         }
-
-        let b64 = crate::system::clipboard::base64_encode(raw_script.as_bytes());
-        return format!(" echo '{}' | base64 -d | bash -v\n", b64);
-    }
-
-    if is_remote {
-        // Over SSH, the remote shell is standard POSIX/Bash.
-        // Send pure clean command with leading space (prevents shell history pollution) without any sentinel noise!
-        return format!(" {}\n", clean);
     }
 
     let is_non_bash = user_shell.contains("fish")
@@ -2297,6 +2933,19 @@ pub fn format_command_for_pty_with_session(
 
 pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
     format_command_for_pty_with_session(command, user_shell, false, false)
+}
+
+/// Expands `~` or `~/...` to the user's home directory.
+pub fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if path == "~" {
+        return dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    }
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    std::path::PathBuf::from(path)
 }
 
 /// Strips all ANSI escape sequences, CSI controls, and OSC strings from raw PTY text.

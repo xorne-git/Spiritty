@@ -54,12 +54,31 @@ struct AnthropicRequest<'a> {
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 enum AnthropicEvent {
+    #[serde(rename = "message_start")]
+    MessageStart { message: AnthropicMessageStart },
     #[serde(rename = "content_block_delta")]
     ContentBlockDelta { delta: ContentDelta },
+    #[serde(rename = "message_delta")]
+    MessageDelta { usage: Option<AnthropicDeltaUsage> },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(other)]
     Other,
+}
+
+#[derive(Deserialize)]
+struct AnthropicMessageStart {
+    usage: Option<AnthropicStartUsage>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicStartUsage {
+    input_tokens: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicDeltaUsage {
+    output_tokens: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +164,7 @@ impl LlmProvider for AnthropicProvider {
         }
 
         let mut event_stream = response.bytes_stream().eventsource();
+        let mut prompt_toks = 0usize;
 
         while let Some(event_res) = event_stream.next().await {
             match event_res {
@@ -152,11 +172,26 @@ impl LlmProvider for AnthropicProvider {
                     let data = event.data.trim();
                     if let Ok(parsed) = serde_json::from_str::<AnthropicEvent>(data) {
                         match parsed {
+                            AnthropicEvent::MessageStart { message } => {
+                                if let Some(u) = message.usage {
+                                    prompt_toks = u.input_tokens.unwrap_or(0);
+                                }
+                            }
                             AnthropicEvent::ContentBlockDelta { delta } => {
                                 if let ContentDelta::TextDelta { text } = delta {
                                     if !text.is_empty() {
                                         let _ = event_tx.send(AppEvent::AgentChunk(text));
                                     }
+                                }
+                            }
+                            AnthropicEvent::MessageDelta { usage } => {
+                                if let Some(u) = usage {
+                                    let completion_toks = u.output_tokens.unwrap_or(0);
+                                    let _ = event_tx.send(AppEvent::AgentUsage {
+                                        prompt_tokens: prompt_toks,
+                                        completion_tokens: completion_toks,
+                                        exact_speed: None,
+                                    });
                                 }
                             }
                             AnthropicEvent::MessageStop => {

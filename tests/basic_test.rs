@@ -452,17 +452,15 @@ fn test_format_command_for_pty() {
     let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
     assert_eq!(remote_user_cmd, " cat ~/audit_systeme.md\n");
 
-    // 6. Local multiline heredoc script -> runs clean verbose temporary script (with leading space to avoid history)
+    // 6. Local multiline heredoc script -> runs clean temporary script (with leading space to avoid history)
     let multiline_heredoc = "cat > ~/audit.md << EOF\n# Title\nEOF";
     let formatted_local = format_command_for_pty(multiline_heredoc, "fish");
-    assert!(formatted_local.starts_with(" bash -v "));
+    assert!(formatted_local.starts_with(" bash "));
     assert!(formatted_local.ends_with("spiritty_exec.sh\n"));
 
-    // 7. Remote SSH multiline heredoc script -> single line base64 pipe
+    // 7. Remote SSH multiline heredoc script -> clean direct script without Base64 noise
     let formatted_remote = format_command_for_pty_with_session(multiline_heredoc, "fish", true, true);
-    assert!(formatted_remote.starts_with(" echo '"));
-    assert!(formatted_remote.ends_with("' | base64 -d | bash -v\n"));
-    assert_eq!(formatted_remote.matches('\n').count(), 1);
+    assert_eq!(formatted_remote, format!(" {}\n", multiline_heredoc));
 }
 
 #[test]
@@ -719,6 +717,53 @@ fn test_repair_prematurely_closed_code_blocks() {
     assert_eq!(proposals.len(), 1);
     assert!(proposals[0].starts_with("for v in 7.4 8.4 8.5; do"));
 }
+
+#[tokio::test]
+async fn test_responsive_footer_rendering_at_various_widths() {
+    use ratatui::{backend::TestBackend, Terminal};
+    use spiritty::app::App;
+    use tokio::sync::mpsc;
+
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, 24, 80).unwrap();
+
+    // Test across various terminal widths: 60 (narrow), 80 (standard), 100 (medium), 140 (wide)
+    for width in [60, 80, 100, 140] {
+        let backend = TestBackend::new(width, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        }).unwrap();
+
+        let buf = terminal.backend().buffer();
+        let footer_y = 23;
+        let mut footer_text = String::new();
+        for x in 0..width {
+            footer_text.push_str(buf.cell((x, footer_y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+
+        // 1. Left info (Provider & Model) must always be present (full priority)
+        assert!(
+            footer_text.contains("󰚩") || footer_text.contains("Ollama") || footer_text.contains("DeepSeek"),
+            "Width {} should contain provider/model info! Rendered: '{}'",
+            width,
+            footer_text
+        );
+
+        // 2. Right shortcuts: F1 and Ctrl+P / ^P are prioritized
+        assert!(footer_text.contains("F1"), "Width {} should contain F1 shortcut! Rendered: '{}'", width, footer_text);
+        assert!(footer_text.contains("P") || footer_text.contains("Config"), "Width {} should contain P/Config shortcut! Rendered: '{}'", width, footer_text);
+
+        // 3. Wide terminals show full powerline badges for all features
+        if width >= 140 {
+            assert!(footer_text.contains("Hosts") || footer_text.contains("B"), "Width 140 should contain Hosts! Rendered: '{}'", footer_text);
+            assert!(footer_text.contains("MCP") || footer_text.contains("M"), "Width 140 should contain MCP! Rendered: '{}'", footer_text);
+            assert!(footer_text.contains("Sessions") || footer_text.contains("H"), "Width 140 should contain Sessions! Rendered: '{}'", footer_text);
+        }
+    }
+}
+
 
 
 

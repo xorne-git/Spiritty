@@ -255,6 +255,8 @@ impl<'a> ChatPanel<'a> {
             push_blank_line(&mut lines);
         }
 
+
+
         let content_visual_lines = compute_wrapped_lines_count(&lines, messages_area.width);
 
         // Add 4 trailing blank lines at the bottom for breathing room only when there are messages
@@ -311,6 +313,30 @@ impl<'a> ChatPanel<'a> {
         let prompt_div_style = Style::default().fg(Color::Rgb(40, 55, 75));
         for x in area.left()..area.right().saturating_sub(1) {
             buf.set_string(x, prompt_sep_y, "─", prompt_div_style);
+        }
+
+        // Render Search Bar Overlay if Ctrl+F is active
+        if self.app.chat_search_active {
+            let matches = self.app.find_search_matches();
+            let match_text = if matches.is_empty() {
+                if self.app.chat_search_query.is_empty() {
+                    " (0) ".to_string()
+                } else {
+                    " (0 résultat) ".to_string()
+                }
+            } else {
+                format!(" ({}/{}) ", self.app.chat_search_match_idx + 1, matches.len())
+            };
+
+            let search_line = Line::from(vec![
+                Span::styled(" 🔍 ", Style::default().fg(Color::Yellow)),
+                Span::styled(&self.app.chat_search_query, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled("▌", Style::default().fg(Color::Yellow)),
+                Span::styled(match_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(" [Enter: Suiv | Shift+Enter: Préc | Esc: Fermer] ", Style::default().fg(Color::DarkGray)),
+            ]);
+
+            buf.set_line(area.left() + 1, prompt_sep_y, &search_line, area.width.saturating_sub(2));
         }
 
         // 6. Render Vertical Accent Bar (using left half block ▌)
@@ -595,10 +621,11 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
         return;
     }
 
+    let max_col_w = 30usize;
     let mut col_widths = vec![0usize; num_cols];
     for row in &rows {
         for (col_idx, cell) in row.iter().enumerate() {
-            let w = visual_cell_width(cell);
+            let w = visual_cell_width(cell).min(max_col_w);
             col_widths[col_idx] = col_widths[col_idx].max(w);
         }
     }
@@ -614,7 +641,7 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
 
         for (col_idx, &w) in col_widths.iter().enumerate() {
             let cell = row.get(col_idx).map(|s| s.as_str()).unwrap_or("");
-            let cell_w = visual_cell_width(cell);
+            let (truncated_cell, cell_w) = truncate_table_cell(cell, w);
             let pad_right = w.saturating_sub(cell_w);
 
             let cell_style = if is_header {
@@ -623,7 +650,7 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
                 Style::default().fg(Color::White)
             };
 
-            spans.extend(parse_inline_spans(cell, cell_style));
+            spans.extend(parse_inline_spans(&truncated_cell, cell_style));
             if pad_right > 0 {
                 spans.push(Span::raw(" ".repeat(pad_right)));
             }
@@ -653,6 +680,25 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
     }
 
     push_blank_line(lines);
+}
+
+fn truncate_table_cell(text: &str, max_w: usize) -> (String, usize) {
+    let w = visual_cell_width(text);
+    if w <= max_w {
+        return (text.to_string(), w);
+    }
+    let mut out = String::new();
+    let mut cur_w = 0;
+    for c in text.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+        if cur_w + cw + 1 > max_w {
+            break;
+        }
+        out.push(c);
+        cur_w += cw;
+    }
+    out.push('…');
+    (out, cur_w + 1)
 }
 
 fn visual_cell_width(cell: &str) -> usize {

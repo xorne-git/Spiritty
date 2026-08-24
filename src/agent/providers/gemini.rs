@@ -61,6 +61,16 @@ struct GeminiRequest<'a> {
 #[derive(Deserialize)]
 struct GeminiResponse {
     candidates: Option<Vec<GeminiCandidate>>,
+    #[serde(rename = "usageMetadata")]
+    usage_metadata: Option<GeminiUsageMetadata>,
+}
+
+#[derive(Deserialize)]
+struct GeminiUsageMetadata {
+    #[serde(rename = "promptTokenCount")]
+    prompt_token_count: Option<usize>,
+    #[serde(rename = "candidatesTokenCount")]
+    candidates_token_count: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -161,6 +171,16 @@ impl LlmProvider for GeminiProvider {
                 Ok(event) => {
                     let data = event.data.trim();
                     if let Ok(parsed) = serde_json::from_str::<GeminiResponse>(data) {
+                        if let Some(usage) = parsed.usage_metadata {
+                            let prompt_toks = usage.prompt_token_count.unwrap_or(0);
+                            let comp_toks = usage.candidates_token_count.unwrap_or(0);
+                            let _ = event_tx.send(AppEvent::AgentUsage {
+                                prompt_tokens: prompt_toks,
+                                completion_tokens: comp_toks,
+                                exact_speed: None,
+                            });
+                        }
+
                         if let Some(candidates) = parsed.candidates {
                             for cand in candidates {
                                 if let Some(content) = cand.content {

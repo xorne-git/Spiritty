@@ -45,6 +45,9 @@ struct OllamaRequest<'a> {
 struct OllamaChunk {
     message: Option<OllamaChunkMessage>,
     done: Option<bool>,
+    prompt_eval_count: Option<usize>,
+    eval_count: Option<usize>,
+    eval_duration: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +146,21 @@ impl LlmProvider for OllamaProvider {
                                     }
                                 }
                                 if chunk.done.unwrap_or(false) {
+                                    if let Some(eval_cnt) = chunk.eval_count {
+                                        let prompt_cnt = chunk.prompt_eval_count.unwrap_or(0);
+                                        let speed = chunk.eval_duration.and_then(|dur_ns| {
+                                            if dur_ns > 0 {
+                                                Some(eval_cnt as f64 / (dur_ns as f64 / 1_000_000_000.0))
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                        let _ = event_tx.send(AppEvent::AgentUsage {
+                                            prompt_tokens: prompt_cnt,
+                                            completion_tokens: eval_cnt,
+                                            exact_speed: speed,
+                                        });
+                                    }
                                     let _ = event_tx.send(AppEvent::AgentDone);
                                     return Ok(());
                                 }

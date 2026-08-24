@@ -127,6 +127,92 @@ fn find_foreground_leaf_pid(root_pid: u32) -> Option<u32> {
     Some(root_pid)
 }
 
+/// Detects current working directory of the process
+pub fn detect_current_working_dir(pty_child_pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let target_pid = find_foreground_leaf_pid(pty_child_pid).unwrap_or(pty_child_pid);
+        if let Ok(link) = fs::read_link(format!("/proc/{}/cwd", target_pid)) {
+            let path_str = link.to_string_lossy().to_string();
+            return Some(format_compact_path(&path_str));
+        }
+    }
+    let _ = pty_child_pid;
+    None
+}
+
+/// Formats a path by replacing $HOME with ~
+pub fn format_compact_path(raw_path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        if raw_path == home {
+            return "~".to_string();
+        } else if let Some(rest) = raw_path.strip_prefix(&home) {
+            if rest.starts_with('/') {
+                return format!("~{}", rest);
+            }
+        }
+    }
+    raw_path.to_string()
+}
+
+/// Detects the active Git branch if the directory is inside a Git repository
+pub fn detect_git_branch(dir: &str) -> Option<String> {
+    let current_path = if dir.starts_with('~') {
+        if let Ok(home) = std::env::var("HOME") {
+            std::path::PathBuf::from(dir.replacen('~', &home, 1))
+        } else {
+            std::path::PathBuf::from(dir)
+        }
+    } else {
+        std::path::PathBuf::from(dir)
+    };
+
+    let mut path = current_path;
+    // Traverse upwards up to 5 levels to find .git directory
+    for _ in 0..5 {
+        let git_dir = path.join(".git");
+        if git_dir.is_dir() {
+            let head_file = git_dir.join("HEAD");
+            if let Ok(content) = fs::read_to_string(head_file) {
+                let trimmed = content.trim();
+                if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
+                    return Some(branch.to_string());
+                } else if trimmed.len() >= 7 {
+                    return Some(trimmed[..7].to_string());
+                }
+            }
+            break;
+        } else if git_dir.is_file() {
+            // Worktree or submodule: "gitdir: <path>"
+            if let Ok(content) = fs::read_to_string(&git_dir) {
+                if let Some(git_ref_path) = content.trim().strip_prefix("gitdir:") {
+                    let ref_str = git_ref_path.trim();
+                    let full_git_ref = if std::path::Path::new(ref_str).is_absolute() {
+                        std::path::PathBuf::from(ref_str)
+                    } else {
+                        path.join(ref_str)
+                    };
+                    if let Ok(head_content) = fs::read_to_string(full_git_ref.join("HEAD")) {
+                        let trimmed = head_content.trim();
+                        if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
+                            return Some(branch.to_string());
+                        } else if trimmed.len() >= 7 {
+                            return Some(trimmed[..7].to_string());
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        if !path.pop() {
+            break;
+        }
+    }
+
+    None
+}
+
 /// Parses commandline arguments of a process to detect SSH or Container sessions
 pub fn parse_session_from_cmdline(args: &[String]) -> Option<ActiveSession> {
     if args.is_empty() {
