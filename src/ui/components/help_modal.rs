@@ -43,8 +43,9 @@ fn make_section_header<'a>(title: &'a str, color: Color, col_width: usize) -> Li
 
 impl HelpModal {
     pub fn render_modal(area: Rect, buf: &mut Buffer, lang: Language) {
-        let modal_width = 104.min(area.width.saturating_sub(4)).max(50);
-        let modal_height = 24.min(area.height.saturating_sub(2)).max(16);
+        // Use 85% of screen width (min 72, max 145) and 82% of screen height
+        let modal_width = ((area.width as u32 * 85) / 100).clamp(72, 145) as u16;
+        let modal_height = ((area.height as u32 * 82) / 100).clamp(24, 38) as u16;
 
         let x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
         let y = area.top() + (area.height.saturating_sub(modal_height)) / 2;
@@ -57,7 +58,7 @@ impl HelpModal {
             .border_set(symbols::border::ROUNDED)
             .border_style(Style::default().fg(Color::Cyan))
             .title(Span::styled(
-                lang.t(I18nKey::HelpModalTitle),
+                format!(" ⌨  {} ", lang.t(I18nKey::HelpModalTitle)),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ));
 
@@ -98,14 +99,19 @@ impl HelpModal {
             // === 2-COLUMN SPACIOUS CATEGORIZED LAYOUT ===
             let left_col_width = (center_x.saturating_sub(modal_area.left() + 3)) as usize;
             let right_col_width = (modal_area.right().saturating_sub(center_x + 3)) as usize;
-            let key_col_w_left = 22.min(left_col_width.saturating_sub(16));
-            let key_col_w_right = 16.min(right_col_width.saturating_sub(16));
+            let key_col_w_left = 32.min(left_col_width.saturating_sub(22));
+            let key_col_w_right = 16.min(right_col_width.saturating_sub(22));
+
+            let extra_spacing = inner_height >= 22;
 
             // --- LEFT COLUMN ---
             let mut left_lines = Vec::new();
 
             // 1. Navigation & Interface
             left_lines.push(make_section_header(lang.t(I18nKey::HelpSectionNavigation), Color::Cyan, left_col_width));
+            if extra_spacing {
+                left_lines.push(Line::from(""));
+            }
 
             // Shift Tab ou Ctrl Espace
             let mut l_focus = key_pill(lang.t(I18nKey::HelpKeyShift), Color::Cyan);
@@ -136,10 +142,16 @@ impl HelpModal {
             l_resize.extend(key_pill(lang.t(I18nKey::HelpKeyDrag), Color::Cyan));
             left_lines.push(make_help_row(l_resize, lang.t(I18nKey::HelpDescResizePanels), key_col_w_left));
 
-            left_lines.push(Line::from("")); // Breathing room
+            left_lines.push(Line::from("")); // Section separator
+            if extra_spacing {
+                left_lines.push(Line::from(""));
+            }
 
             // 2. Agent IA & Diagnostic
             left_lines.push(make_section_header(lang.t(I18nKey::HelpSectionAgent), Color::Green, left_col_width));
+            if extra_spacing {
+                left_lines.push(Line::from(""));
+            }
 
             // F3 / Ctrl Y
             let mut l_f3 = key_pill("F3", Color::Green);
@@ -184,6 +196,9 @@ impl HelpModal {
 
             // 3. Sessions & Hôtes
             right_lines.push(make_section_header(lang.t(I18nKey::HelpSectionSessions), Color::Yellow, right_col_width));
+            if extra_spacing {
+                right_lines.push(Line::from(""));
+            }
 
             // Ctrl P (Config)
             let mut l_cfg = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Magenta);
@@ -215,10 +230,16 @@ impl HelpModal {
             l_new.extend(key_pill("N", Color::Cyan));
             right_lines.push(make_help_row(l_new, lang.t(I18nKey::HelpDescNewSession), key_col_w_right));
 
-            right_lines.push(Line::from("")); // Breathing room
+            right_lines.push(Line::from("")); // Section separator
+            if extra_spacing {
+                right_lines.push(Line::from(""));
+            }
 
             // 4. Général & Contrôle
             right_lines.push(make_section_header(lang.t(I18nKey::HelpSectionGeneral), Color::LightCyan, right_col_width));
+            if extra_spacing {
+                right_lines.push(Line::from(""));
+            }
 
             // F1
             right_lines.push(make_help_row(key_pill("F1", Color::Cyan), lang.t(I18nKey::HelpDescToggleHelp), key_col_w_right));
