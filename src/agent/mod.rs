@@ -140,8 +140,9 @@ impl AgentEngine {
                 let sys_clone = system_prompt.clone();
 
                 // Run LLM stream for current turn
+                let cancel = cancel_token.clone();
                 let stream_handle = tokio::spawn(async move {
-                    provider_clone.stream_chat(&conv_clone, &sys_clone, turn_tx).await
+                    provider_clone.stream_chat(&conv_clone, &sys_clone, turn_tx, cancel).await
                 });
 
                 let mut current_turn_text = String::new();
@@ -167,11 +168,22 @@ impl AgentEngine {
                 }
 
                 let stream_res = stream_handle.await;
-                if current_turn_text.is_empty() {
-                    if let Ok(Err(err)) = stream_res {
-                        let _ = forward_event_tx.send(AppEvent::AgentError(err.to_string()));
+                match stream_res {
+                    Err(join_err) => {
+                        // Provider task panicked or was aborted — surface it.
+                        let _ = forward_event_tx.send(AppEvent::AgentError(format!(
+                            "Erreur interne du fournisseur: {}",
+                            join_err
+                        )));
                         return;
                     }
+                    Ok(Err(err)) => {
+                        if current_turn_text.is_empty() {
+                            let _ = forward_event_tx.send(AppEvent::AgentError(err.to_string()));
+                            return;
+                        }
+                    }
+                    Ok(Ok(())) => {}
                 }
 
                 // Check if the assistant requested a tool execution AND tool limit has not been exceeded

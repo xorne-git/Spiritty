@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -103,6 +104,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
         messages: &[ChatMessage],
         system_prompt: &str,
         event_tx: UnboundedSender<AppEvent>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         // Validate API Key for cloud providers
         if self.name != "LM Studio" {
@@ -143,7 +145,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             messages: api_messages,
             stream: true,
             stream_options: Some(StreamOptions { include_usage: true }),
-            max_tokens: Some(8192),
+            max_tokens: None,
             temperature: Some(0.2),
         };
 
@@ -197,7 +199,12 @@ impl LlmProvider for OpenAiCompatibleProvider {
         let mut event_stream = response.bytes_stream().eventsource();
 
         loop {
-            match timeout(Duration::from_secs(25), event_stream.next()).await {
+            let next_res = tokio::select! {
+                _ = cancel.cancelled() => break,
+                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+            };
+
+            match next_res {
                 Ok(Some(event_res)) => match event_res {
                     Ok(event) => {
                         let data = event.data.trim();
@@ -229,8 +236,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                             "\n\n[⚠️ Réponse interrompue : limite de tokens atteinte. Tapez 'continue' pour la suite.]".to_string(),
                                         ));
                                     }
-                                    let _ = event_tx.send(AppEvent::AgentDone);
-                                    return Ok(());
+                                    // NOTE: do NOT return here — the final usage chunk
+                                    // (`stream_options.include_usage`) may still be emitted after
+                                    // `finish_reason` and must be captured before `[DONE]`.
                                 }
                             }
                         }

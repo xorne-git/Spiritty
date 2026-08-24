@@ -5,6 +5,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -95,6 +96,7 @@ impl LlmProvider for GeminiProvider {
         messages: &[ChatMessage],
         system_prompt: &str,
         event_tx: UnboundedSender<AppEvent>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         if self.api_key.trim().is_empty() {
             let err = "Clé d'API Gemini manquante. Configurez-la avec Ctrl+P ou exportez GEMINI_API_KEY.".to_string();
@@ -129,13 +131,17 @@ impl LlmProvider for GeminiProvider {
         };
 
         let url = format!(
-            "{}/v1beta/models/{}:streamGenerateContent?key={}&alt=sse",
-            self.base_url, self.model, self.api_key
+            "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
+            self.base_url, self.model
         );
 
         let send_res = timeout(
             Duration::from_secs(12),
-            self.client.post(&url).json(&request_body).send(),
+            self.client
+                .post(&url)
+                .header("x-goog-api-key", &self.api_key)
+                .json(&request_body)
+                .send(),
         )
         .await;
 
@@ -165,30 +171,35 @@ impl LlmProvider for GeminiProvider {
         }
 
         let mut event_stream = response.bytes_stream().eventsource();
+        let mut prompt_toks = 0usize;
+        let mut comp_toks = 0usize;
 
-        while let Some(event_res) = event_stream.next().await {
-            match event_res {
-                Ok(event) => {
-                    let data = event.data.trim();
-                    if let Ok(parsed) = serde_json::from_str::<GeminiResponse>(data) {
-                        if let Some(usage) = parsed.usage_metadata {
-                            let prompt_toks = usage.prompt_token_count.unwrap_or(0);
-                            let comp_toks = usage.candidates_token_count.unwrap_or(0);
-                            let _ = event_tx.send(AppEvent::AgentUsage {
-                                prompt_tokens: prompt_toks,
-                                completion_tokens: comp_toks,
-                                exact_speed: None,
-                            });
-                        }
+        loop {
+            let next_res = tokio::select! {
+                _ = cancel.cancelled() => break,
+                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+            };
 
-                        if let Some(candidates) = parsed.candidates {
-                            for cand in candidates {
-                                if let Some(content) = cand.content {
-                                    if let Some(parts) = content.parts {
-                                        for part in parts {
-                                            if let Some(text) = part.text {
-                                                if !text.is_empty() {
-                                                    let _ = event_tx.send(AppEvent::AgentChunk(text));
+            match next_res {
+                Ok(Some(event_res)) => match event_res {
+                    Ok(event) => {
+                        let data = event.data.trim();
+                        if let Ok(parsed) = serde_json::from_str::<GeminiResponse>(data) {
+                            // `usageMetadata` is cumulative per stream — keep the latest, emit once at the end.
+                            if let Some(usage) = parsed.usage_metadata {
+                                prompt_toks = usage.prompt_token_count.unwrap_or(prompt_toks);
+                                comp_toks = usage.candidates_token_count.unwrap_or(comp_toks);
+                            }
+
+                            if let Some(candidates) = parsed.candidates {
+                                for cand in candidates {
+                                    if let Some(content) = cand.content {
+                                        if let Some(parts) = content.parts {
+                                            for part in parts {
+                                                if let Some(text) = part.text {
+                                                    if !text.is_empty() {
+                                                        let _ = event_tx.send(AppEvent::AgentChunk(text));
+                                                    }
                                                 }
                                             }
                                         }
@@ -197,15 +208,28 @@ impl LlmProvider for GeminiProvider {
                             }
                         }
                     }
-                }
-                Err(err) => {
-                    let err_msg = format!("Gemini stream error: {}", err);
+                    Err(err) => {
+                        let err_msg = format!("Gemini stream error: {}", err);
+                        let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                        anyhow::bail!(err_msg);
+                    }
+                },
+                Ok(None) => break,
+                Err(_) => {
+                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Gemini (timeout SSE).".to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }
             }
         }
 
+        if prompt_toks > 0 || comp_toks > 0 {
+            let _ = event_tx.send(AppEvent::AgentUsage {
+                prompt_tokens: prompt_toks,
+                completion_tokens: comp_toks,
+                exact_speed: None,
+            });
+        }
         let _ = event_tx.send(AppEvent::AgentDone);
         Ok(())
     }

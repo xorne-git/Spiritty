@@ -159,7 +159,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             // If user just finished dragging (mouse was released), copy the text and clear selection!
             if !sel.is_selecting {
                 let full_text = extracted_lines.join("\n").trim().to_string();
-                if !full_text.is_empty() {
+                // Only copy to the clipboard when at least 3 characters were selected,
+                // so a stray 1-char click/drag doesn't pollute the clipboard.
+                if full_text.chars().count() >= 3 {
                     crate::system::clipboard::copy_to_clipboard(&full_text);
                     app.clipboard_toast = Some((std::time::Instant::now(), full_text.len()));
                 }
@@ -387,7 +389,11 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> Vec<Span<'
     };
     let ctx_used = app.get_context_used_tokens();
     let ctx_total = app.get_context_window_limit();
-    let ctx_pct = (ctx_used as f64 / ctx_total as f64 * 100.0).clamp(0.0, 100.0);
+    let ctx_pct = if ctx_total > 0 {
+        (ctx_used as f64 / ctx_total as f64 * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
     let is_generating = app.agent.is_generating;
     let is_active_generating = is_generating && app.pending_tool_approval.is_none();
     let spinner_char = get_spinner_char(app.spinner_frame);
@@ -424,7 +430,10 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> Vec<Span<'
         // Try truncated model name
         let available = max_width.saturating_sub(current_width);
         if available >= 5 {
-            let trunc = format!("{}…", &m_span.content[..available.saturating_sub(2).min(m_span.content.len())]);
+            // Split on a char boundary so a multi-byte model name can't panic.
+            let cap = available.saturating_sub(2).min(m_span.content.len());
+            let cut = m_span.content.floor_char_boundary(cap);
+            let trunc = format!("{}…", &m_span.content[..cut]);
             let s = Span::styled(trunc, m_span.style);
             current_width += s.width();
             spans.push(s);

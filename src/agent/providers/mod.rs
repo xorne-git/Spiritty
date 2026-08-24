@@ -6,6 +6,7 @@ pub mod openai;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::ChatMessage,
@@ -24,6 +25,7 @@ pub trait LlmProvider: Send + Sync {
         messages: &[ChatMessage],
         system_prompt: &str,
         event_tx: UnboundedSender<AppEvent>,
+        cancel: CancellationToken,
     ) -> Result<()>;
 }
 

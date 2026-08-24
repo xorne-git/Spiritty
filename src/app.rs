@@ -551,7 +551,9 @@ impl App {
             format!("spiritty_rapport_{}.md", date_str)
         } else {
             let max_len = title_slug.len().min(35);
-            format!("spiritty_rapport_{}_{}.md", date_str, &title_slug[..max_len])
+            // Safety: slice on a char boundary so a multi-byte (e.g. accented) title can't panic.
+            let cut = title_slug.floor_char_boundary(max_len);
+            format!("spiritty_rapport_{}_{}.md", date_str, &title_slug[..cut])
         };
 
         if let Some(ref dir) = self.config.export_dir {
@@ -2181,15 +2183,42 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         return true;
     }
 
-    // 5. Untagged blocks (""): only accept if simple command line
+    // 5. Untagged blocks (""): accept only if the content actually looks like a shell command.
     if tag.is_empty() {
-        let first_line = trimmed.lines().next().unwrap_or("").trim();
+        let lines: Vec<&str> = trimmed.lines().collect();
+        // 5.1 Every non-empty line must look like a raw command line, not prose/bullets/escapes.
+        if lines.iter().any(|l| !l.trim().is_empty() && !is_clean_command_line(l.trim())) {
+            return false;
+        }
+        let first_line = lines.first().copied().unwrap_or("").trim();
         if first_line.starts_with('{') || first_line.starts_with('[') || first_line.starts_with('<') || first_line.starts_with('#') {
             return false;
         }
         let colon_count = trimmed.matches(':').count();
-        let line_count = trimmed.lines().count();
+        let line_count = lines.iter().filter(|l| !l.trim().is_empty()).count();
         if line_count > 2 && colon_count >= line_count {
+            return false;
+        }
+        // 5.2 Reject prose-like blocks: natural-language sentences (period / comma / ! / ? followed by a
+        // space, or a block ending with sentence punctuation) are almost never valid commands.
+        let word_count = trimmed.split_whitespace().count();
+        if word_count >= 4
+            && (trimmed.contains(". ")
+                || trimmed.contains(", ")
+                || trimmed.contains("! ")
+                || trimmed.contains("? ")
+                || trimmed.contains("…"))
+        {
+            return false;
+        }
+        if (trimmed.ends_with('.') || trimmed.ends_with('!') || trimmed.ends_with('?') || trimmed.ends_with('…')) && word_count >= 2 {
+            return false;
+        }
+        // 5.3 A block with many words and no shell metacharacters is very likely prose, not a command.
+        let has_shell_meta = ["|", "&", ";", ">", "<", "$", "(", ")", "{", "}", "*", "~", "`", "&&", "="]
+            .iter()
+            .any(|m| trimmed.contains(m));
+        if word_count >= 7 && !has_shell_meta {
             return false;
         }
         return true;
@@ -2932,8 +2961,8 @@ pub fn is_bash_specific_syntax(cmd: &str) -> bool {
         || t.contains("if [[")
         || t.contains("; do")
         || t.contains("; then")
-        || t.contains("done")
-        || t.contains("fi")
+        || has_standalone_token(t, "done")
+        || has_standalone_token(t, "fi")
         || t.contains("&& (")
         || t.starts_with('(')
     {
@@ -2957,6 +2986,15 @@ pub fn is_bash_specific_syntax(cmd: &str) -> bool {
     }
 
     false
+}
+
+/// Returns `true` if `word` appears as a standalone shell token (surrounded by non-identifier
+/// characters), as opposed to being a substring of a larger word. This avoids false positives
+/// such as `file`/`find`/`config` being detected as the bash keyword `fi`, or `done` matching
+/// substrings like `done` in a filename.
+fn has_standalone_token(cmd: &str, word: &str) -> bool {
+    cmd.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+        .any(|tok| tok == word)
 }
 
 /// Formats a command for reliable execution in the PTY.

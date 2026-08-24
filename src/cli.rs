@@ -15,6 +15,17 @@ pub struct CliOptions {
 }
 
 impl CliOptions {
+    /// Returns the next token as a value only if it is not itself a flag
+    /// (prevents `spiritty -s -p foo` from consuming `-p` as the session id).
+    fn take_value(raw_args: &[String], i: &mut usize) -> Option<String> {
+        if *i + 1 < raw_args.len() && !raw_args[*i + 1].starts_with('-') {
+            *i += 1;
+            Some(raw_args[*i].clone())
+        } else {
+            None
+        }
+    }
+
     pub fn parse_from_args<I, T>(args: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -38,39 +49,33 @@ impl CliOptions {
                     opts.continue_last_session = true;
                 }
                 "-s" | "--session" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.session_id = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.session_id = Some(v);
                     }
                 }
                 "-p" | "--prompt" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.initial_prompt = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.initial_prompt = Some(v);
                     }
                 }
                 "-S" | "--ssh" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.ssh_target = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.ssh_target = Some(v);
                     }
                 }
                 "-m" | "--model" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.model = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.model = Some(v);
                     }
                 }
                 "--provider" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.provider = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.provider = Some(v);
                     }
                 }
                 "--auto-approve" => {
-                    if i + 1 < raw_args.len() {
-                        i += 1;
-                        opts.auto_approve = Some(raw_args[i].clone());
+                    if let Some(v) = Self::take_value(&raw_args, &mut i) {
+                        opts.auto_approve = Some(v);
                     }
                 }
                 "--safe" => {

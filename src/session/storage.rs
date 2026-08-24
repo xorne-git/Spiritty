@@ -23,6 +23,15 @@ pub struct SessionHeader {
 
 pub struct SessionStorage;
 
+/// Rejects session ids that could escape the sessions directory.
+fn sanitize_id(id: &str) -> Result<String> {
+    let id = id.trim();
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        anyhow::bail!("Invalid session id: {:?}", id);
+    }
+    Ok(id.to_string())
+}
+
 impl SessionStorage {
     pub fn sessions_dir() -> Result<PathBuf> {
         let dir = dirs::config_dir()
@@ -75,6 +84,7 @@ impl SessionStorage {
     }
 
     pub fn load(id: &str) -> Result<Session> {
+        let id = sanitize_id(id)?;
         let dir = Self::sessions_dir()?;
         let file_path = dir.join(format!("{}.json", id));
         let content = fs::read_to_string(&file_path)
@@ -88,8 +98,9 @@ impl SessionStorage {
         if session.messages.is_empty() {
             return Ok(());
         }
+        let id = sanitize_id(&session.id)?;
         let dir = Self::sessions_dir()?;
-        let file_path = dir.join(format!("{}.json", session.id));
+        let file_path = dir.join(format!("{}.json", id));
         let json = serde_json::to_string_pretty(session)
             .context("Failed to serialize session to JSON")?;
         fs::write(&file_path, json)
@@ -98,6 +109,7 @@ impl SessionStorage {
     }
 
     pub fn delete(id: &str) -> Result<()> {
+        let id = sanitize_id(id)?;
         let dir = Self::sessions_dir()?;
         let file_path = dir.join(format!("{}.json", id));
         if file_path.exists() {

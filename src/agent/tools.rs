@@ -48,7 +48,8 @@ pub async fn execute_shell_command(cmd: &str) -> String {
                     format!("(Commande terminée avec code d'erreur {:?})", output.status.code())
                 }
             } else if result.len() > 3000 {
-                format!("{}\n... [Sortie tronquée à 3000 caractères]", &result[..3000])
+                let cut = result.floor_char_boundary(3000);
+                format!("{}\n... [Sortie tronquée à 3000 caractères]", &result[..cut])
             } else {
                 result
             }

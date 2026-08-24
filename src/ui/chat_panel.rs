@@ -303,7 +303,7 @@ impl<'a> ChatPanel<'a> {
                 )
             };
 
-            let badge_len = badge_text.chars().count() as u16;
+            let badge_len = unicode_width::UnicodeWidthStr::width(badge_text.as_str()) as u16;
             let badge_x = area.right().saturating_sub(badge_len + 1);
             let badge_y = area.top();
             buf.set_string(badge_x, badge_y, &badge_text, badge_style);
@@ -509,6 +509,32 @@ fn render_user_message_block(content: &str, lines: &mut Vec<Line<'static>>, widt
         for word in raw_line.split_whitespace() {
             let word_w = word.chars().map(|c| c.width().unwrap_or(1)).sum::<usize>();
 
+            // Hard-wrap a single over-wide token (URL / hash) so it can't overflow the panel.
+            if word_w > max_text_width {
+                if current_width > 0 {
+                    let pad_len = target_width.saturating_sub(2 + current_width);
+                    let mut spans = vec![Span::styled("▌ ", bar_style)];
+                    spans.extend(parse_inline_spans(&current_line, text_style));
+                    if pad_len > 0 {
+                        spans.push(Span::styled(" ".repeat(pad_len), text_style));
+                    }
+                    lines.push(Line::from(spans));
+                    current_line.clear();
+                    current_width = 0;
+                }
+                for chunk in wrap_wide_word(word, max_text_width) {
+                    let chunk_w = chunk.chars().map(|c| c.width().unwrap_or(1)).sum::<usize>();
+                    let pad_len = target_width.saturating_sub(2 + chunk_w);
+                    let mut spans = vec![Span::styled("▌ ", bar_style)];
+                    spans.extend(parse_inline_spans(&chunk, text_style));
+                    if pad_len > 0 {
+                        spans.push(Span::styled(" ".repeat(pad_len), text_style));
+                    }
+                    lines.push(Line::from(spans));
+                }
+                continue;
+            }
+
             if current_width == 0 {
                 current_line.push_str(word);
                 current_width = word_w;
@@ -540,6 +566,29 @@ fn render_user_message_block(content: &str, lines: &mut Vec<Line<'static>>, widt
             lines.push(Line::from(spans));
         }
     }
+}
+
+/// Splits a single word into chunks no wider than `max_w` display columns.
+fn wrap_wide_word(word: &str, max_w: usize) -> Vec<String> {
+    if max_w == 0 {
+        return vec![word.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    for c in word.chars() {
+        let cw = c.width().unwrap_or(0).max(1);
+        if cur_w + cw > max_w && !cur.is_empty() {
+            chunks.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        }
+        cur.push(c);
+        cur_w += cw;
+    }
+    if !cur.is_empty() {
+        chunks.push(cur);
+    }
+    chunks
 }
 
 /// Renders a sequence of markdown lines with automatic grouping of markdown tables
@@ -1247,7 +1296,9 @@ fn compute_prompt_cursor_and_lines(
             let trailing_spaces = word.len() - word_trimmed.len();
 
             if !cursor_found && cursor_byte_pos >= byte_offset && cursor_byte_pos <= byte_offset + word_bytes {
-                let inside_offset = cursor_byte_pos - byte_offset;
+                let inside_offset = (cursor_byte_pos - byte_offset).min(word.len());
+                // Clamp to a char boundary so a mid-multibyte cursor can never panic.
+                let inside_offset = word.floor_char_boundary(inside_offset);
                 let inside_str = &word[..inside_offset];
                 let inside_w = str_visual_width(inside_str);
 

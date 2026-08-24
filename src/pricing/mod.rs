@@ -189,6 +189,12 @@ impl PricingRegistry {
         let prov_clean = provider.trim().to_lowercase();
         let model_clean = model.trim().to_lowercase();
 
+        // An empty model name must not fall through to the substring match below
+        // (which would return an arbitrary, non-deterministic entry).
+        if model_clean.is_empty() {
+            return ModelPricing::free();
+        }
+
         // 1. Check if local provider (always free)
         if prov_clean.contains("ollama") || prov_clean.contains("lmstudio") || prov_clean.contains("local") {
             return ModelPricing::free();

@@ -17,10 +17,9 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         return CommandRisk::Safe;
     }
 
-    // 1. Check for dangerous chaining or subshells containing risky elements
     let lower = clean.to_lowercase();
 
-    // Check for root / elevated execution
+    // 1. Root / elevated execution
     if lower.starts_with("sudo ")
         || lower.contains(" sudo ")
         || lower.starts_with("doas ")
@@ -31,7 +30,7 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         return CommandRisk::Risky;
     }
 
-    // Check for destructive or process-killing operations
+    // 2. Destructive or process-killing operations (direct invocation)
     let risky_binaries = [
         "rm ", "rmdir ", "unlink ", "shred ",
         "kill ", "killall ", "pkill ", "xkill ",
@@ -46,24 +45,31 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         }
     }
 
-    // Check systemd modifications
-    if lower.contains("systemctl") {
-        let risky_actions = [
-            "stop", "restart", "reload", "disable", "mask", "unmask",
-            "edit", "daemon-reload", "poweroff", "reboot", "halt",
-        ];
-        for action in &risky_actions {
-            if lower.contains(action) {
+    // 2b. Destructive commands hidden behind a shell wrapper, command substitution or quoting
+    //     (e.g. `bash -c 'rm -rf ~'`, `x=$(rm -rf /)`, `sh -c "rm ..."`, `` `rm -rf /` ``).
+    const WRAPPER_MARKERS: &[&str] = &[
+        "bash -c", "sh -c", "zsh -c", "dash -c", "ash -c", "ksh -c", "fish -c",
+        "eval ", "$(", "`",
+    ];
+    for marker in WRAPPER_MARKERS {
+        if let Some(pos) = lower.find(marker) {
+            let after = &lower[pos + marker.len()..];
+            if has_risky_token(after) {
                 return CommandRisk::Risky;
             }
         }
     }
 
-    // Check package manager install / remove / upgrade commands
+    // 3. systemd service modifications (only when the subcommand is the action, not a unit name)
+    if systemctl_action_is_risky(&lower) {
+        return CommandRisk::Risky;
+    }
+
+    // 4. Package manager install / remove / upgrade commands (but not read-only queries)
+    if pacman_has_risky_flag(clean) {
+        return CommandRisk::Risky;
+    }
     let pm_risky = [
-        "pacman -s", "pacman -r", "pacman -u", "pacman -syu", "pacman -syyu",
-        "paru -s", "paru -r", "paru -u", "paru -syu",
-        "yay -s", "yay -r", "yay -u", "yay -syu",
         "apt install", "apt remove", "apt purge", "apt upgrade", "apt-get",
         "dnf install", "dnf remove", "dnf upgrade",
         "zypper in", "zypper rm", "zypper dup",
@@ -75,7 +81,7 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         }
     }
 
-    // Check chained safe commands (e.g. cmd1 && cmd2 || cmd3)
+    // 5. Chained safe commands (e.g. cmd1 && cmd2 || cmd3)
     if lower.contains("&&") || lower.contains(';') {
         let parts: Vec<&str> = if lower.contains("&&") {
             lower.split("&&").collect()
@@ -96,7 +102,79 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
     CommandRisk::Standard
 }
 
+/// Returns true if `s` contains a destructive/process-killing binary as a standalone token.
+fn has_risky_token(s: &str) -> bool {
+    const RISKY: &[&str] = &[
+        "rm", "rmdir", "unlink", "shred", "kill", "killall", "pkill", "xkill",
+        "dd", "mkfs", "fdisk", "parted", "gparted", "chmod", "chown", "chgrp",
+        "iptables", "ufw", "firewalld", "reboot", "shutdown", "poweroff", "halt",
+    ];
+    s.split(|c: char| !c.is_alphanumeric()).any(|t| RISKY.contains(&t))
+}
+
+/// Detects whether a `systemctl …` command has a modifying action (stop/restart/…),
+/// matching the action *token* rather than any substring in a unit name.
+fn systemctl_action_is_risky(lower: &str) -> bool {
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    let mut saw_systemctl = false;
+    for tok in &tokens {
+        if *tok == "systemctl" {
+            saw_systemctl = true;
+            continue;
+        }
+        if saw_systemctl {
+            if *tok == "--user" || *tok == "--system" || tok.starts_with("--") {
+                continue;
+            }
+            let action = tok.trim_start_matches('-');
+            return matches!(
+                action,
+                "stop" | "restart" | "reload" | "disable" | "mask" | "unmask"
+                    | "edit" | "daemon-reload" | "poweroff" | "reboot" | "halt"
+            );
+        }
+    }
+    false
+}
+
+/// Detects risky pacman/yay/paru flags (`-S`/`-R`/`-U` and their compounds) while
+/// keeping read-only query/search flags (`-Ss`, `-Si`, `-Sl`, `-Sw`, `-Q*`) safe.
+fn pacman_has_risky_flag(cmd: &str) -> bool {
+    let is_pacman_family = cmd
+        .split_whitespace()
+        .next()
+        .map(|b| matches!(b, "pacman" | "yay" | "paru") || b.ends_with("/pacman") || b.ends_with("/yay") || b.ends_with("/paru"))
+        .unwrap_or(false);
+
+    if !is_pacman_family {
+        return false;
+    }
+
+    for tok in cmd.split_whitespace() {
+        if !tok.starts_with('-') {
+            continue;
+        }
+        let t = tok.trim_start_matches('-');
+        // Read-only flags
+        if t == "Ss" || t == "Si" || t == "Sl" || t == "Sw" || t == "Sg"
+            || t == "Qs" || t == "Qi" || t == "Ql" || t == "Qo" || t == "Qg"
+            || t.starts_with('Q')
+        {
+            continue;
+        }
+        if t.contains('S') || t.contains('R') || t.contains('U') {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_single_command_safe(lower: &str) -> bool {
+    // `psql` is a database client, not the `ps` process lister.
+    if lower.starts_with("psql") {
+        return false;
+    }
+
     let safe_prefixes = [
         // Systemd read-only
         "systemctl status", "systemctl --user status",
@@ -126,7 +204,9 @@ fn is_single_command_safe(lower: &str) -> bool {
         "grep ", "grep -", "egrep ", "fgrep ", "rg ", "ag ", "awk ", "cut ", "sort ", "uniq ", "wc ", "wc -", "diff ", "cmp ", "column ", "jq", "jq ",
         // Package queries
         "pacman -q", "pacman -qs", "pacman -qi", "pacman -ql", "pacman -qo",
-        "paru -q", "yay -q",
+        "pacman -ss", "pacman -si", "pacman -sl", "pacman -sw", "pacman -sg",
+        "paru -q", "paru -ss", "paru -si", "paru -sl",
+        "yay -q", "yay -ss", "yay -si", "yay -sl",
         "apt list", "dpkg -l", "dpkg -s", "rpm -qa", "dnf list", "zypper se",
         "brew list", "flatpak list", "flatpak info",
         // System & Hardware info
@@ -151,7 +231,14 @@ fn is_single_command_safe(lower: &str) -> bool {
         .replace("2>&1", "")
         .replace("1>&2", "");
 
-    let has_file_write_redirect = stripped_redirects.contains('>') || stripped_redirects.contains(">>") || lower.contains(" | tee ");
+    // curl/wget downloading to a file (`-o`/`--output`/`-O`) is a write operation.
+    let curl_wget_write = (lower.starts_with("curl ") || lower.starts_with("wget "))
+        && (lower.contains(" -o ") || lower.contains(" -o=") || lower.contains(" --output"));
+
+    let has_file_write_redirect = stripped_redirects.contains('>')
+        || stripped_redirects.contains(">>")
+        || lower.contains(" | tee ")
+        || curl_wget_write;
 
     if !has_file_write_redirect {
         for prefix in &safe_prefixes {
@@ -209,5 +296,34 @@ mod tests {
         assert!(should_auto_approve_command("sudo systemctl restart dms", AutoApproveLevel::Yolo));
 
         assert!(!should_auto_approve_command("systemctl status dms", AutoApproveLevel::Off));
+    }
+
+    #[test]
+    fn test_classify_wrapper_bypass() {
+        // Destructive commands hidden behind shell wrappers / substitution must be Risky.
+        assert_eq!(classify_command("bash -c 'rm -rf ~'"), CommandRisk::Risky);
+        assert_eq!(classify_command("sh -c \"rm -rf /\""), CommandRisk::Risky);
+        assert_eq!(classify_command("x=$(rm -rf /)"), CommandRisk::Risky);
+        assert_eq!(classify_command("eval 'kill -9 1'"), CommandRisk::Risky);
+        assert_eq!(classify_command("`rm -rf /tmp/x`"), CommandRisk::Risky);
+    }
+
+    #[test]
+    fn test_classify_write_detection() {
+        // curl/wget downloading to a file must not be auto-approved as Safe (they become Standard).
+        assert_eq!(classify_command("curl -s -o /etc/passwd http://x"), CommandRisk::Standard);
+        assert_eq!(classify_command("wget -O /etc/passwd http://x"), CommandRisk::Standard);
+        // But a read-only curl GET remains Safe.
+        assert_eq!(classify_command("curl -s https://example.com"), CommandRisk::Safe);
+    }
+
+    #[test]
+    fn test_classify_readonly_not_risky() {
+        // Read-only pacman search & systemctl status with "restart" in a unit name must stay Safe.
+        assert_eq!(classify_command("pacman -Ss linux"), CommandRisk::Safe);
+        assert_eq!(classify_command("pacman -Qs linux"), CommandRisk::Safe);
+        assert_eq!(classify_command("systemctl status my-restart-unit.service"), CommandRisk::Safe);
+        // psql must not be treated as the safe `ps` lister.
+        assert_ne!(classify_command("psql -c 'DROP TABLE users'"), CommandRisk::Safe);
     }
 }

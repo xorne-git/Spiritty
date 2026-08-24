@@ -110,7 +110,7 @@ impl<'a> TerminalPanel<'a> {
                 )
             };
 
-            let badge_len = badge_text.chars().count() as u16;
+            let badge_len = unicode_width::UnicodeWidthStr::width(badge_text.as_str()) as u16;
             let badge_x = area.right().saturating_sub(badge_len + 1);
             buf.set_string(badge_x, area.top(), &badge_text, badge_style);
         }
@@ -167,7 +167,8 @@ impl<'a> TerminalPanel<'a> {
 
                 let max_text_len = (inner_toast.width.saturating_sub(6)) as usize;
                 let cmd_short = if diag.command.len() > max_text_len {
-                    format!("{}…", &diag.command[..max_text_len.saturating_sub(1)])
+                    let cut = diag.command.floor_char_boundary(max_text_len.saturating_sub(1));
+                    format!("{}…", &diag.command[..cut])
                 } else {
                     diag.command.clone()
                 };

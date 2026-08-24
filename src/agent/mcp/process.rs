@@ -36,6 +36,8 @@ impl McpProcess {
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        // Kill the child process when the handle is dropped (no orphan/zombie leak on reload/shutdown).
+        cmd.kill_on_drop(true);
 
         let mut child = cmd
             .spawn()
@@ -69,6 +71,16 @@ impl McpProcess {
                         } else {
                             *guard = format!("{}\n{}", guard, trimmed);
                         }
+                        // Bound the buffer to the most recent bytes to avoid unbounded growth.
+                        const MAX_STDERR: usize = 4096;
+                        if guard.len() > MAX_STDERR {
+                            let cut_from = guard.len() - MAX_STDERR;
+                            if let Some(nl) = guard[..cut_from].rfind('\n') {
+                                guard.drain(..=nl);
+                            } else {
+                                guard.drain(..cut_from);
+                            }
+                        }
                     }
                 }
             });
@@ -82,6 +94,13 @@ impl McpProcess {
                 let line_trim = line.trim();
                 if line_trim.is_empty() {
                     continue;
+                }
+                // Distinguish responses (`result`/`error`) from server→client requests/notifications
+                // (which carry a `method` field) so we never correlate a request as a response.
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line_trim) {
+                    if val.get("method").is_some() {
+                        continue;
+                    }
                 }
                 if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(line_trim) {
                     if let Some(id) = resp.id {
@@ -155,8 +174,13 @@ impl McpProcess {
             sin.flush().await?;
         }
 
-        let resp = timeout(Duration::from_secs(20), rx)
-            .await
+        let resp = timeout(Duration::from_secs(20), rx).await;
+        if resp.is_err() {
+            // Timed out: drop the pending entry to avoid leaking the oneshot sender.
+            let mut map = self.pending.lock().await;
+            map.remove(&id);
+        }
+        let resp = resp
             .context("MCP request timed out")?
             .context("MCP response channel closed unexpectedly")?;
 

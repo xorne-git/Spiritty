@@ -35,7 +35,7 @@ fn test_paragraph_wrapping_line_count() {
     for y in 0..50 {
         let has_content = (0..width).any(|x| buf.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false));
         if has_content {
-            rendered_lines = (y + 1) as u16;
+            rendered_lines = y + 1;
         }
     }
 
@@ -145,7 +145,7 @@ fn test_paragraph_wrapping_line_count() {
     for y in 0..100 {
         let has_content = (0..width).any(|x| buf2.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false));
         if has_content {
-            rendered_lines2 = (y + 1) as u16;
+            rendered_lines2 = y + 1;
         }
     }
 
@@ -178,13 +178,13 @@ fn test_paragraph_wrapping_line_count() {
             .map(|x| buf3.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
             .collect();
         if !line_str.trim().is_empty() {
-            rendered_lines3 = (y + 1) as u16;
+            rendered_lines3 = y + 1;
             println!("Row {:02}: |{}|", y, line_str);
         }
     }
 
     for (idx, l) in table_lines.iter().enumerate() {
-        let c = count_lines(&[l.clone()], width);
+        let c = count_lines(std::slice::from_ref(l), width);
         println!("Line {:02} (count {}): {}", idx, c, l);
     }
 
@@ -209,7 +209,7 @@ fn test_paragraph_wrapping_line_count() {
             .map(|x| buf4.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
             .collect();
         if !line_str.trim().is_empty() {
-            rendered_lines4 = (y + 1) as u16;
+            rendered_lines4 = y + 1;
             println!("Callout row {:02}: |{}|", y, line_str);
         }
     }

@@ -438,6 +438,19 @@ pub struct McpModal<'a> {
     _language: Language,
 }
 
+/// Renders an editable input with the cursor block positioned at `cursor` (a char index).
+fn wizard_input_spans<'a>(input: &'a str, cursor: usize) -> Vec<Span<'a>> {
+    let chars: Vec<char> = input.chars().collect();
+    let cursor = cursor.min(chars.len());
+    let before: String = chars[..cursor].iter().collect();
+    let after: String = chars[cursor..].iter().collect();
+    vec![
+        Span::styled(before, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled("█", Style::default().fg(Color::Yellow)),
+        Span::styled(after, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+    ]
+}
+
 impl<'a> McpModal<'a> {
     pub fn new(state: &'a McpModalState, language: Language) -> Self {
         Self {
@@ -480,9 +493,20 @@ impl<'a> Widget for McpModal<'a> {
             ])
             .split(inner_area);
 
-        // 1. Table of Servers
+        // 1. Table of Servers (with scrolling so the selected row stays visible)
+        let total = self.state.servers.len();
+        let visible = (chunks[0].height.saturating_sub(1)).max(1) as usize;
+        let sel = self.state.selected_index.min(total.saturating_sub(1));
+        let mut offset = 0usize;
+        if total > visible {
+            if sel >= visible {
+                offset = sel - visible + 1;
+            }
+            offset = offset.min(total - visible);
+        }
+
         let mut rows = Vec::new();
-        for (i, s) in self.state.servers.iter().enumerate() {
+        for (i, s) in self.state.servers.iter().enumerate().skip(offset).take(visible) {
             let is_selected = i == self.state.selected_index;
             let check_icon = if s.enabled { " [x] " } else { " [ ] " };
             let (status_text, status_style) = match &s.status {
@@ -492,7 +516,12 @@ impl<'a> Widget for McpModal<'a> {
                 ),
                 McpStatus::Disabled => ("⚪ Désactivé".to_string(), Style::default().fg(Color::DarkGray)),
                 McpStatus::Error(e) => {
-                    let short_e = if e.len() > 25 { format!("{}…", &e[..25]) } else { e.clone() };
+                    let short_e = if e.len() > 25 {
+                        let cut = e.floor_char_boundary(25);
+                        format!("{}…", &e[..cut])
+                    } else {
+                        e.clone()
+                    };
                     (format!("🔴 Erreur : {}", short_e), Style::default().fg(Color::Red))
                 }
             };
@@ -509,7 +538,8 @@ impl<'a> Widget for McpModal<'a> {
 
             let cmd_str = format!("{} {}", s.command, s.args.join(" "));
             let cmd_display = if cmd_str.len() > 32 {
-                format!("{}…", &cmd_str[..32])
+                let cut = cmd_str.floor_char_boundary(32);
+                format!("{}…", &cmd_str[..cut])
             } else {
                 cmd_str
             };
@@ -606,35 +636,32 @@ impl<'a> Widget for McpModal<'a> {
             .render(chunks[2], buf);
         } else {
             match &self.state.add_state {
-                AddMcpState::EnteringName { input, .. } => {
-                    Paragraph::new(Line::from(vec![
+                AddMcpState::EnteringName { input, cursor } => {
+                    let mut spans = vec![
                         Span::styled(" [Ajout 1/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                         Span::raw("Nom du serveur : "),
-                        Span::styled(input, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                        Span::styled("█", Style::default().fg(Color::Yellow)),
-                        Span::styled(" (Entrée pour valider, Echap annuler)", Style::default().fg(Color::DarkGray)),
-                    ]))
-                    .render(chunks[2], buf);
+                    ];
+                    spans.extend(wizard_input_spans(input, *cursor));
+                    spans.push(Span::styled(" (Entrée pour valider, Echap annuler)", Style::default().fg(Color::DarkGray)));
+                    Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
-                AddMcpState::EnteringCommand { name, input, .. } => {
-                    Paragraph::new(Line::from(vec![
+                AddMcpState::EnteringCommand { name, input, cursor } => {
+                    let mut spans = vec![
                         Span::styled(" [Ajout 2/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                         Span::raw(format!("Commande pour '{}' : ", name)),
-                        Span::styled(input, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                        Span::styled("█", Style::default().fg(Color::Yellow)),
-                        Span::styled(" (ex: npx, uvx, docker...)", Style::default().fg(Color::DarkGray)),
-                    ]))
-                    .render(chunks[2], buf);
+                    ];
+                    spans.extend(wizard_input_spans(input, *cursor));
+                    spans.push(Span::styled(" (ex: npx, uvx, docker...)", Style::default().fg(Color::DarkGray)));
+                    Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
-                AddMcpState::EnteringArgs { command, input, .. } => {
-                    Paragraph::new(Line::from(vec![
+                AddMcpState::EnteringArgs { command, input, cursor, .. } => {
+                    let mut spans = vec![
                         Span::styled(" [Ajout 3/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                         Span::raw(format!("Arguments pour '{}' : ", command)),
-                        Span::styled(input, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                        Span::styled("█", Style::default().fg(Color::Yellow)),
-                        Span::styled(" (ex: -y @modelcontextprotocol/server-filesystem /tmp)", Style::default().fg(Color::DarkGray)),
-                    ]))
-                    .render(chunks[2], buf);
+                    ];
+                    spans.extend(wizard_input_spans(input, *cursor));
+                    spans.push(Span::styled(" (ex: -y @modelcontextprotocol/server-filesystem /tmp)", Style::default().fg(Color::DarkGray)));
+                    Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
                 AddMcpState::None => {
                     if let Some((_, ref msg)) = self.state.status_message {

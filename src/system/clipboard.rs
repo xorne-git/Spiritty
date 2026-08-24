@@ -73,8 +73,22 @@ pub fn copy_to_clipboard(text: &str) {
     let _ = io::stdout().flush();
 }
 
-/// Universal clipboard paste reader: uses arboard and falls back to system CLI (wl-paste / xclip / pbpaste)
+/// Universal clipboard paste reader: uses arboard and falls back to system CLI (wl-paste / xclip / pbpaste).
+/// Runs the (potentially blocking) read on a background thread with a bounded timeout so a hung
+/// clipboard manager cannot freeze the TUI indefinitely.
 pub fn get_clipboard_text() -> Option<String> {
+    let (tx, rx) = channel::<Option<String>>();
+    let _ = std::thread::Builder::new()
+        .name("spiritty-clipboard-read".to_string())
+        .spawn(move || {
+            let _ = tx.send(read_clipboard_text_blocking());
+        });
+    rx.recv_timeout(std::time::Duration::from_millis(1500))
+        .ok()
+        .flatten()
+}
+
+fn read_clipboard_text_blocking() -> Option<String> {
     if let Ok(mut cb) = arboard::Clipboard::new() {
         if let Ok(text) = cb.get_text() {
             if !text.is_empty() {

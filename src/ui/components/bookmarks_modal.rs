@@ -454,7 +454,19 @@ impl BookmarksModal {
                 Span::styled(if lang == Language::Fr { "Distribution / OS" } else { "Distro / OS" }, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             ]).bottom_margin(1);
 
-            let rows: Vec<Row> = state.entries.iter().enumerate().map(|(idx, entry)| {
+            // Scroll so the selected row stays visible when the list exceeds the table height.
+            let total = state.entries.len();
+            let visible_rows = (table_area.height.saturating_sub(2)).max(1) as usize;
+            let sel = state.selected_index.min(total.saturating_sub(1));
+            let mut offset = 0usize;
+            if total > visible_rows {
+                if sel >= visible_rows {
+                    offset = sel - visible_rows + 1;
+                }
+                offset = offset.min(total - visible_rows);
+            }
+
+            let rows: Vec<Row> = state.entries.iter().enumerate().skip(offset).take(visible_rows).map(|(idx, entry)| {
                 let is_sel = idx == state.selected_index;
                 let fav_icon = if entry.is_favorite { " ★ " } else { " ☆ " };
                 let fav_color = if entry.is_favorite { Color::Yellow } else { Color::DarkGray };

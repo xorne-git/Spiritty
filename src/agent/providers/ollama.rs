@@ -3,7 +3,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -62,6 +65,7 @@ impl LlmProvider for OllamaProvider {
         messages: &[ChatMessage],
         system_prompt: &str,
         event_tx: UnboundedSender<AppEvent>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         let mut api_messages = Vec::new();
 
@@ -93,20 +97,24 @@ impl LlmProvider for OllamaProvider {
         };
 
         let url = format!("{}/api/chat", self.base_url);
-        let send_res = self
-            .client
-            .post(&url)
-            .json(&request_body)
-            .send()
-            .await;
+        let send_res = timeout(
+            Duration::from_secs(12),
+            self.client.post(&url).json(&request_body).send(),
+        )
+        .await;
 
         let response = match send_res {
-            Ok(resp) => resp,
-            Err(err) => {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
                 let err_msg = format!(
                     "Impossible de joindre Ollama sur {} : {}. Vérifiez qu'Ollama est bien lancé ('ollama serve').",
                     url, err
                 );
+                let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                anyhow::bail!(err_msg);
+            }
+            Err(_) => {
+                let err_msg = format!("Délai d'attente dépassé (timeout 12s) pour joindre Ollama sur {}.", url);
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                 anyhow::bail!(err_msg);
             }
@@ -121,54 +129,72 @@ impl LlmProvider for OllamaProvider {
         }
 
         let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
+        // Accumulate raw bytes so a UTF-8 character split across TCP chunks is never dropped.
+        let mut buffer: Vec<u8> = Vec::new();
 
-        while let Some(chunk_res) = stream.next().await {
+        loop {
+            let next_res = tokio::select! {
+                _ = cancel.cancelled() => break,
+                r = timeout(Duration::from_secs(25), stream.next()) => r,
+            };
+
+            let chunk_res = match next_res {
+                Ok(Some(res)) => res,
+                Ok(None) => break,
+                Err(_) => {
+                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Ollama (timeout SSE).".to_string();
+                    let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                    anyhow::bail!(err_msg);
+                }
+            };
+
             match chunk_res {
                 Ok(bytes) => {
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        buffer.push_str(text);
+                    buffer.extend_from_slice(&bytes);
 
-                        while let Some(pos) = buffer.find('\n') {
-                            let line = buffer[..pos].trim().to_string();
-                            buffer.drain(..=pos);
+                    while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        let line = line.trim();
 
-                            if line.is_empty() {
-                                continue;
+                        if line.is_empty() {
+                            continue;
+                        }
+
+                        // Check for error frames first (Ollama reports errors with an "error" field).
+                        if let Ok(val) = serde_json::from_str::<Value>(line) {
+                            if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
+                                let _ = event_tx.send(AppEvent::AgentError(err.to_string()));
+                                anyhow::bail!("Ollama error: {}", err);
                             }
+                        }
 
-                            if let Ok(chunk) = serde_json::from_str::<OllamaChunk>(&line) {
-                                if let Some(msg) = chunk.message {
-                                    if let Some(content) = msg.content {
-                                        if !content.is_empty() {
-                                            let _ = event_tx.send(AppEvent::AgentChunk(content));
+                        if let Ok(chunk) = serde_json::from_str::<OllamaChunk>(line) {
+                            if let Some(msg) = chunk.message {
+                                if let Some(content) = msg.content {
+                                    if !content.is_empty() {
+                                        let _ = event_tx.send(AppEvent::AgentChunk(content));
+                                    }
+                                }
+                            }
+                            if chunk.done.unwrap_or(false) {
+                                if let Some(eval_cnt) = chunk.eval_count {
+                                    let prompt_cnt = chunk.prompt_eval_count.unwrap_or(0);
+                                    let speed = chunk.eval_duration.and_then(|dur_ns| {
+                                        if dur_ns > 0 {
+                                            Some(eval_cnt as f64 / (dur_ns as f64 / 1_000_000_000.0))
+                                        } else {
+                                            None
                                         }
-                                    }
+                                    });
+                                    let _ = event_tx.send(AppEvent::AgentUsage {
+                                        prompt_tokens: prompt_cnt,
+                                        completion_tokens: eval_cnt,
+                                        exact_speed: speed,
+                                    });
                                 }
-                                if chunk.done.unwrap_or(false) {
-                                    if let Some(eval_cnt) = chunk.eval_count {
-                                        let prompt_cnt = chunk.prompt_eval_count.unwrap_or(0);
-                                        let speed = chunk.eval_duration.and_then(|dur_ns| {
-                                            if dur_ns > 0 {
-                                                Some(eval_cnt as f64 / (dur_ns as f64 / 1_000_000_000.0))
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                        let _ = event_tx.send(AppEvent::AgentUsage {
-                                            prompt_tokens: prompt_cnt,
-                                            completion_tokens: eval_cnt,
-                                            exact_speed: speed,
-                                        });
-                                    }
-                                    let _ = event_tx.send(AppEvent::AgentDone);
-                                    return Ok(());
-                                }
-                            } else if let Ok(val) = serde_json::from_str::<Value>(&line) {
-                                if let Some(err) = val.get("error").and_then(|e| e.as_str()) {
-                                    let _ = event_tx.send(AppEvent::AgentError(err.to_string()));
-                                    anyhow::bail!("Ollama error: {}", err);
-                                }
+                                let _ = event_tx.send(AppEvent::AgentDone);
+                                return Ok(());
                             }
                         }
                     }

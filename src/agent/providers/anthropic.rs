@@ -5,6 +5,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{ChatMessage, MessageRole},
@@ -62,8 +63,17 @@ enum AnthropicEvent {
     MessageDelta { usage: Option<AnthropicDeltaUsage> },
     #[serde(rename = "message_stop")]
     MessageStop,
+    #[serde(rename = "error")]
+    Error { error: AnthropicApiError },
     #[serde(other)]
     Other,
+}
+
+#[derive(Deserialize)]
+struct AnthropicApiError {
+    #[serde(rename = "type")]
+    error_type: String,
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +107,7 @@ impl LlmProvider for AnthropicProvider {
         messages: &[ChatMessage],
         system_prompt: &str,
         event_tx: UnboundedSender<AppEvent>,
+        cancel: CancellationToken,
     ) -> Result<()> {
         if self.api_key.trim().is_empty() {
             let err = "Clé d'API Anthropic manquante. Configurez-la avec Ctrl+P ou exportez ANTHROPIC_API_KEY.".to_string();
@@ -119,7 +130,7 @@ impl LlmProvider for AnthropicProvider {
 
         let request_body = AnthropicRequest {
             model: &self.model,
-            max_tokens: 4096,
+            max_tokens: 8192,
             system: system_prompt,
             messages: api_messages,
             stream: true,
@@ -166,44 +177,62 @@ impl LlmProvider for AnthropicProvider {
         let mut event_stream = response.bytes_stream().eventsource();
         let mut prompt_toks = 0usize;
 
-        while let Some(event_res) = event_stream.next().await {
-            match event_res {
-                Ok(event) => {
-                    let data = event.data.trim();
-                    if let Ok(parsed) = serde_json::from_str::<AnthropicEvent>(data) {
-                        match parsed {
-                            AnthropicEvent::MessageStart { message } => {
-                                if let Some(u) = message.usage {
-                                    prompt_toks = u.input_tokens.unwrap_or(0);
-                                }
-                            }
-                            AnthropicEvent::ContentBlockDelta { delta } => {
-                                if let ContentDelta::TextDelta { text } = delta {
-                                    if !text.is_empty() {
-                                        let _ = event_tx.send(AppEvent::AgentChunk(text));
+        loop {
+            let next_res = tokio::select! {
+                _ = cancel.cancelled() => break,
+                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+            };
+
+            match next_res {
+                Ok(Some(event_res)) => match event_res {
+                    Ok(event) => {
+                        let data = event.data.trim();
+                        if let Ok(parsed) = serde_json::from_str::<AnthropicEvent>(data) {
+                            match parsed {
+                                AnthropicEvent::MessageStart { message } => {
+                                    if let Some(u) = message.usage {
+                                        prompt_toks = u.input_tokens.unwrap_or(0);
                                     }
                                 }
-                            }
-                            AnthropicEvent::MessageDelta { usage } => {
-                                if let Some(u) = usage {
-                                    let completion_toks = u.output_tokens.unwrap_or(0);
-                                    let _ = event_tx.send(AppEvent::AgentUsage {
-                                        prompt_tokens: prompt_toks,
-                                        completion_tokens: completion_toks,
-                                        exact_speed: None,
-                                    });
+                                AnthropicEvent::ContentBlockDelta { delta } => {
+                                    if let ContentDelta::TextDelta { text } = delta {
+                                        if !text.is_empty() {
+                                            let _ = event_tx.send(AppEvent::AgentChunk(text));
+                                        }
+                                    }
                                 }
+                                AnthropicEvent::MessageDelta { usage } => {
+                                    if let Some(u) = usage {
+                                        let completion_toks = u.output_tokens.unwrap_or(0);
+                                        let _ = event_tx.send(AppEvent::AgentUsage {
+                                            prompt_tokens: prompt_toks,
+                                            completion_tokens: completion_toks,
+                                            exact_speed: None,
+                                        });
+                                    }
+                                }
+                                AnthropicEvent::MessageStop => {
+                                    let _ = event_tx.send(AppEvent::AgentDone);
+                                    return Ok(());
+                                }
+                                AnthropicEvent::Error { error } => {
+                                    let err_msg = format!("Anthropic API error ({}): {}", error.error_type, error.message);
+                                    let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                                    anyhow::bail!(err_msg);
+                                }
+                                AnthropicEvent::Other => {}
                             }
-                            AnthropicEvent::MessageStop => {
-                                let _ = event_tx.send(AppEvent::AgentDone);
-                                return Ok(());
-                            }
-                            AnthropicEvent::Other => {}
                         }
                     }
-                }
-                Err(err) => {
-                    let err_msg = format!("Anthropic stream error: {}", err);
+                    Err(err) => {
+                        let err_msg = format!("Anthropic stream error: {}", err);
+                        let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
+                        anyhow::bail!(err_msg);
+                    }
+                },
+                Ok(None) => break,
+                Err(_) => {
+                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Anthropic (timeout SSE).".to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }

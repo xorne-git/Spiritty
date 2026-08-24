@@ -1,6 +1,6 @@
 [package]
 name = "spiritty"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["Spiritty Contributors"]
 description = "AI-powered split-screen terminal companion for sysadmins and power users"

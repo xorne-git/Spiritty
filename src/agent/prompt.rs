@@ -91,7 +91,7 @@ User: "oui vas y"
 Assistant:
 Je récupère la configuration et les variables d'environnement du conteneur :
 ```tool:run_command
-docker inspect filerise --format '{{range .Config.Env}}{{println .}}{{end}}'
+docker inspect filerise --format '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}'
 ```
 
 Example 3 — User asks for instructions or a script:

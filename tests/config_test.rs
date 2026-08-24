@@ -77,8 +77,10 @@ fn test_custom_system_prompt() {
         git_branch: Some("main".to_string()),
     };
 
-    let mut config = Config::default();
-    config.system_prompt = Some("Custom Spiritty Prompt with {sys_info}".to_string());
+    let config = Config {
+        system_prompt: Some("Custom Spiritty Prompt with {sys_info}".to_string()),
+        ..Config::default()
+    };
 
     let prompt = build_system_prompt(Language::Fr, &sys, &config);
     assert!(prompt.starts_with("Custom Spiritty Prompt with"));

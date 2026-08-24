@@ -135,7 +135,7 @@ fn test_mcp_modal_wizard_and_crud() {
     // 1. Space toggles enabled state
     let action = modal_state.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &mut config);
     assert_eq!(action, Some(McpModalAction::ServersChanged));
-    assert_eq!(config.mcp_servers.get("filesystem").unwrap().enabled, false);
+    assert!(!config.mcp_servers.get("filesystem").unwrap().enabled);
 
     // 2. Press 'a' starts add wizard
     let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut config);

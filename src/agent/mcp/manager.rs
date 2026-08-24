@@ -73,21 +73,33 @@ impl McpManager {
             }
 
             match McpProcess::spawn(name, &s_cfg.command, &s_cfg.args, &s_cfg.env).await {
-                Ok(proc) => {
-                    let tools = proc.list_tools().await.unwrap_or_default();
-                    let tools_count = tools.len();
-                    let arc_proc = Arc::new(proc);
-                    new_servers.insert(name.clone(), arc_proc);
+                Ok(proc) => match proc.list_tools().await {
+                    Ok(tools) => {
+                        let tools_count = tools.len();
+                        let arc_proc = Arc::new(proc);
+                        new_servers.insert(name.clone(), arc_proc);
 
-                    new_statuses.push(McpServerStatus {
-                        name: name.clone(),
-                        command: s_cfg.command.clone(),
-                        args: s_cfg.args.clone(),
-                        enabled: true,
-                        status: McpStatus::Connected(tools_count),
-                        tools,
-                    });
-                }
+                        new_statuses.push(McpServerStatus {
+                            name: name.clone(),
+                            command: s_cfg.command.clone(),
+                            args: s_cfg.args.clone(),
+                            enabled: true,
+                            status: McpStatus::Connected(tools_count),
+                            tools,
+                        });
+                    }
+                    Err(err) => {
+                        // `proc` is dropped here → child process killed (kill_on_drop).
+                        new_statuses.push(McpServerStatus {
+                            name: name.clone(),
+                            command: s_cfg.command.clone(),
+                            args: s_cfg.args.clone(),
+                            enabled: true,
+                            status: McpStatus::Error(format!("Échec de découverte des outils: {}", err)),
+                            tools: Vec::new(),
+                        });
+                    }
+                },
                 Err(err) => {
                     new_statuses.push(McpServerStatus {
                         name: name.clone(),
