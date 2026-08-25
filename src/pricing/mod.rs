@@ -184,8 +184,13 @@ impl PricingRegistry {
         Ok(count)
     }
 
-    /// Finds matching pricing for a given provider and model name
+    /// Finds matching pricing for a given provider and model name at the current time (accounting for dynamic off-peak discounts)
     pub fn get_pricing(&self, provider: &str, model: &str) -> ModelPricing {
+        self.get_pricing_at(provider, model, Some(chrono::Utc::now()))
+    }
+
+    /// Finds matching pricing with an explicit optional timestamp (for deterministic testing & historical calculation)
+    pub fn get_pricing_at(&self, provider: &str, model: &str, now: Option<chrono::DateTime<chrono::Utc>>) -> ModelPricing {
         let prov_clean = provider.trim().to_lowercase();
         let model_clean = model.trim().to_lowercase();
 
@@ -200,7 +205,7 @@ impl PricingRegistry {
             return ModelPricing::free();
         }
 
-        // 2. Check user explicit overrides first
+        // 2. Check user explicit overrides first (verbatim, no time adjustments)
         if let Some(price) = self.overrides.get(&model_clean) {
             return *price;
         }
@@ -211,54 +216,97 @@ impl PricingRegistry {
         }
 
         // 3. Exact match in models table
-        if let Some(price) = self.models.get(&model_clean) {
-            return *price;
+        let mut base_price = if let Some(price) = self.models.get(&model_clean) {
+            *price
+        } else {
+            // 4. Prefix / Substring match in models table
+            let mut found = None;
+            for (key, price) in &self.models {
+                if model_clean.contains(key) || key.contains(&model_clean) {
+                    found = Some(*price);
+                    break;
+                }
+            }
+
+            // 5. Fallback heuristics by provider family
+            found.unwrap_or_else(|| match prov_clean.as_str() {
+                p if p.contains("deepseek") => {
+                    if model_clean.contains("reasoner") || model_clean.contains("r1") {
+                        ModelPricing::new(0.55, 2.19)
+                    } else {
+                        ModelPricing::new(0.14, 0.28)
+                    }
+                }
+                p if p.contains("openai") || p.contains("chatgpt") => {
+                    if model_clean.contains("mini") {
+                        ModelPricing::new(0.15, 0.60)
+                    } else if model_clean.contains("o1") || model_clean.contains("o3") {
+                        ModelPricing::new(15.00, 60.00)
+                    } else {
+                        ModelPricing::new(2.50, 10.00)
+                    }
+                }
+                p if p.contains("anthropic") || p.contains("claude") => {
+                    if model_clean.contains("haiku") {
+                        ModelPricing::new(0.80, 4.00)
+                    } else if model_clean.contains("opus") {
+                        ModelPricing::new(15.00, 75.00)
+                    } else {
+                        ModelPricing::new(3.00, 15.00)
+                    }
+                }
+                p if p.contains("gemini") || p.contains("google") => {
+                    if model_clean.contains("pro") {
+                        ModelPricing::new(1.25, 5.00)
+                    } else {
+                        ModelPricing::new(0.075, 0.30)
+                    }
+                }
+                p if p.contains("grok") || p.contains("xai") => ModelPricing::new(2.00, 10.00),
+                p if p.contains("mistral") => ModelPricing::new(2.00, 6.00),
+                _ => ModelPricing::new(0.50, 1.50),
+            })
+        };
+
+        // 6. Dynamic DeepSeek Peak / Off-Peak adjustment (50% discount during off-peak and weekends)
+        let is_deepseek = prov_clean.contains("deepseek") || model_clean.contains("deepseek");
+        if is_deepseek {
+            if let Some(dt) = now {
+                if is_deepseek_offpeak(dt) {
+                    base_price = ModelPricing::new(base_price.prompt * 0.5, base_price.completion * 0.5);
+                }
+            }
         }
 
-        // 4. Prefix / Substring match in models table
-        for (key, price) in &self.models {
-            if model_clean.contains(key) || key.contains(&model_clean) {
-                return *price;
-            }
-        }
-
-        // 5. Fallback heuristics by provider family
-        match prov_clean.as_str() {
-            p if p.contains("deepseek") => {
-                if model_clean.contains("reasoner") || model_clean.contains("r1") {
-                    ModelPricing::new(0.55, 2.19)
-                } else {
-                    ModelPricing::new(0.14, 0.28)
-                }
-            }
-            p if p.contains("openai") || p.contains("chatgpt") => {
-                if model_clean.contains("mini") {
-                    ModelPricing::new(0.15, 0.60)
-                } else if model_clean.contains("o1") || model_clean.contains("o3") {
-                    ModelPricing::new(15.00, 60.00)
-                } else {
-                    ModelPricing::new(2.50, 10.00)
-                }
-            }
-            p if p.contains("anthropic") || p.contains("claude") => {
-                if model_clean.contains("haiku") {
-                    ModelPricing::new(0.80, 4.00)
-                } else if model_clean.contains("opus") {
-                    ModelPricing::new(15.00, 75.00)
-                } else {
-                    ModelPricing::new(3.00, 15.00)
-                }
-            }
-            p if p.contains("gemini") || p.contains("google") => {
-                if model_clean.contains("pro") {
-                    ModelPricing::new(1.25, 5.00)
-                } else {
-                    ModelPricing::new(0.075, 0.30)
-                }
-            }
-            p if p.contains("grok") || p.contains("xai") => ModelPricing::new(2.00, 10.00),
-            p if p.contains("mistral") => ModelPricing::new(2.00, 6.00),
-            _ => ModelPricing::new(0.50, 1.50),
-        }
+        base_price
     }
+}
+
+/// Returns true if the given UTC timestamp falls in DeepSeek's Off-Peak billing window.
+/// Official DeepSeek rules (api-docs.deepseek.com/quick_start/pricing):
+/// - Weekends: All day Saturday and Sunday are Off-Peak (-50%).
+/// - Weekdays (Monday to Friday):
+///     - Peak hours: 01:00 – 04:00 UTC (09:00–12:00 CST) and 06:00 – 10:00 UTC (14:00–18:00 CST).
+///     - Off-Peak hours: All other times (00:00–01:00 UTC, 04:00–06:00 UTC, 10:00–24:00 UTC).
+pub fn is_deepseek_offpeak(now_utc: chrono::DateTime<chrono::Utc>) -> bool {
+    use chrono::{Datelike, Timelike, Weekday};
+
+    let weekday = now_utc.weekday();
+
+    // All weekend (Saturday & Sunday full day) is Off-Peak
+    if weekday == Weekday::Sat || weekday == Weekday::Sun {
+        return true;
+    }
+
+    let hour = now_utc.hour();
+    let min = now_utc.minute();
+    let mins_utc = hour * 60 + min;
+
+    // Peak window 1: 01:00 – 04:00 UTC (60 to 240 mins)
+    let is_peak_morning = (60..240).contains(&mins_utc);
+    // Peak window 2: 06:00 – 10:00 UTC (360 to 600 mins)
+    let is_peak_afternoon = (360..600).contains(&mins_utc);
+
+    // Everything outside peak windows is Off-Peak
+    !(is_peak_morning || is_peak_afternoon)
 }

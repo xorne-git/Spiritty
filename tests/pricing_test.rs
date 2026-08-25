@@ -24,11 +24,11 @@ fn test_pricing_registry_builtin_lookups() {
     assert_eq!(registry.get_pricing("ollama", "qwen2.5-coder"), ModelPricing::free());
     assert_eq!(registry.get_pricing("lmstudio", "deepseek-r1"), ModelPricing::free());
 
-    // DeepSeek
-    let ds_chat = registry.get_pricing("deepseek", "deepseek-chat");
+    // DeepSeek (base peak rates)
+    let ds_chat = registry.get_pricing_at("deepseek", "deepseek-chat", None);
     assert_eq!(ds_chat, ModelPricing::new(0.14, 0.28));
 
-    let ds_r1 = registry.get_pricing("deepseek", "deepseek-reasoner");
+    let ds_r1 = registry.get_pricing_at("deepseek", "deepseek-reasoner", None);
     assert_eq!(ds_r1, ModelPricing::new(0.55, 2.19));
 
     // OpenAI
@@ -113,4 +113,36 @@ fn test_session_cost_with_dynamic_registry() {
     // 2M * 1.00 + 1M * 4.00 = $6.00
     let discounted_cost = session.estimated_cost_with_pricing(&custom_registry);
     assert!((discounted_cost - 6.00).abs() < 1e-6);
+}
+
+#[test]
+fn test_deepseek_offpeak_dynamic_pricing() {
+    use chrono::{TimeZone, Utc};
+    use spiritty::pricing::is_deepseek_offpeak;
+
+    let registry = PricingRegistry::default();
+
+    // 1. Weekday Peak: Tuesday at 02:30 UTC (10:30 CST / 04:30 France) -> standard peak prices
+    let tuesday_peak = Utc.with_ymd_and_hms(2026, 8, 25, 2, 30, 0).unwrap();
+    assert!(!is_deepseek_offpeak(tuesday_peak));
+    let price_peak = registry.get_pricing_at("deepseek", "deepseek-chat", Some(tuesday_peak));
+    assert_eq!(price_peak, ModelPricing::new(0.14, 0.28));
+
+    // 2. Weekday Afternoon Off-Peak: Tuesday at 12:30 UTC (20:30 CST / 14:30 France) -> 50% discount
+    let tuesday_afternoon = Utc.with_ymd_and_hms(2026, 8, 25, 12, 30, 0).unwrap();
+    assert!(is_deepseek_offpeak(tuesday_afternoon));
+    let price_afternoon = registry.get_pricing_at("deepseek", "deepseek-chat", Some(tuesday_afternoon));
+    assert_eq!(price_afternoon, ModelPricing::new(0.07, 0.14));
+
+    // 3. Weekend (All Day): Sunday at 06:00 UTC (14:00 CST) -> 50% discount
+    let sunday_offpeak = Utc.with_ymd_and_hms(2026, 8, 23, 6, 0, 0).unwrap();
+    assert!(is_deepseek_offpeak(sunday_offpeak));
+    let price_sunday = registry.get_pricing_at("deepseek", "deepseek-reasoner", Some(sunday_offpeak));
+    assert_eq!(price_sunday, ModelPricing::new(0.275, 1.095));
+
+    // 4. Saturday (All Day): Saturday at 12:00 UTC (20:00 CST) -> 50% discount
+    let saturday_offpeak = Utc.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap();
+    assert!(is_deepseek_offpeak(saturday_offpeak));
+    let price_saturday = registry.get_pricing_at("deepseek", "deepseek-chat", Some(saturday_offpeak));
+    assert_eq!(price_saturday, ModelPricing::new(0.07, 0.14));
 }

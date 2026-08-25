@@ -77,10 +77,7 @@ impl EventHandler {
                         }
                     }
                     Some(Ok(CrosstermEvent::Mouse(mouse))) => {
-                        // Ignore unclicked hover move events to eliminate event flooding and guarantee instant UI responsiveness
-                        if mouse.kind != crossterm::event::MouseEventKind::Moved
-                            && event_tx.send(AppEvent::Mouse(mouse)).is_err()
-                        {
+                        if event_tx.send(AppEvent::Mouse(mouse)).is_err() {
                             break;
                         }
                     }

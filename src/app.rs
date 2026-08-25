@@ -135,6 +135,7 @@ pub struct App {
     pub chat_search_cursor: usize,
     pub chat_search_match_idx: usize,
     pub pricing_registry: Arc<tokio::sync::RwLock<crate::pricing::PricingRegistry>>,
+    pub mouse_pos: Option<(u16, u16)>,
 }
 
 impl App {
@@ -235,6 +236,7 @@ impl App {
             pricing_registry: Arc::new(tokio::sync::RwLock::new(
                 crate::pricing::PricingRegistry::load_with_overrides(config.pricing),
             )),
+            mouse_pos: None,
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -741,13 +743,15 @@ impl App {
 
     pub fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent, total_width: u16) {
         use crossterm::event::{MouseButton, MouseEventKind};
+        let x = mouse.column;
+        let y = mouse.row;
+        self.mouse_pos = Some((x, y));
+
         // Do not handle split dragging if a modal is open
         if !matches!(self.modal, ModalState::None) {
             return;
         }
 
-        let x = mouse.column;
-        let y = mouse.row;
         let border_x = self.chat_area.right();
         
         match mouse.kind {

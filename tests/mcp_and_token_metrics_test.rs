@@ -80,9 +80,10 @@ fn test_session_cost_estimation_and_token_metrics() {
     session.completion_tokens = 2_000;
     session.total_tokens = 12_000;
 
-    // DeepSeek pricing: $0.14 / 1M prompt ($0.0014), $0.28 / 1M completion ($0.00056)
+    // DeepSeek pricing: $0.14 / 1M prompt ($0.0014), $0.28 / 1M completion ($0.00056) in peak ($0.00196),
+    // or 50% discount ($0.00098) in off-peak.
     let cost = session.estimated_cost_usd();
-    assert!(cost > 0.0019 && cost < 0.0020, "Cost was {}", cost);
+    assert!((cost - 0.00196).abs() < 1e-5 || (cost - 0.00098).abs() < 1e-5, "Cost was {}", cost);
 
     // Ollama / LM Studio (local) should cost $0.00
     let mut local_session = Session::new("Ollama", "qwen2.5:7b");
