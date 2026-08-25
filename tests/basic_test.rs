@@ -462,9 +462,10 @@ fn test_format_command_for_pty() {
         " node app.js & BGPID=$!\n"
     );
 
-    // 6. Simple single line on remote SSH (tool capture -> with sentinel)
+    // 6. Simple single line on remote SSH (tool capture -> clean command, no inline sentinel,
+    //    so the remote shell doesn't echo the sentinel into the terminal)
     let remote_tool_cmd = format_command_for_pty_with_session("free -h", "fish", true, true);
-    assert_eq!(remote_tool_cmd, " free -h; printf '\\033]777;spiritty_done;%s\\007' $?\n");
+    assert_eq!(remote_tool_cmd, " free -h\n");
 
     // 7. Simple single line on remote SSH (manual user Alt+1 -> pure clean command)
     let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);

@@ -12,6 +12,8 @@ pub struct CliOptions {
     pub list_sessions: bool,
     pub show_help: bool,
     pub show_version: bool,
+    /// Debug mode: show raw tool-result blocks (`[RÉSULTAT…]`) and extra diagnostics in the UI.
+    pub debug: bool,
 }
 
 impl CliOptions {
@@ -44,6 +46,9 @@ impl CliOptions {
                 }
                 "-v" | "-V" | "--version" => {
                     opts.show_version = true;
+                }
+                "-d" | "--debug" => {
+                    opts.debug = true;
                 }
                 "-c" | "--continue" => {
                     opts.continue_last_session = true;
@@ -146,6 +151,7 @@ OPTIONS:
         --yolo                Start in YOLO mode (auto-execute all suggested commands)
         --auto-approve <LVL>  Set auto-approve policy (off, safe, sudo, yolo)
     -l, --list-sessions       List all saved sessions and exit
+    -d, --debug               Debug mode (show raw tool-result [RÉSULTAT…] blocks in the chat)
     -v, --version             Display version information and exit
     -h, --help                Display this help message and exit
 

@@ -85,6 +85,10 @@ pub struct PtyToolCapture {
     pub output_bytes: Vec<u8>,
     pub start_time: std::time::Instant,
     pub last_output_time: std::time::Instant,
+    /// When `true`, the app records the `[RÉSULTAT...]` in the chat history and triggers the
+    /// next model turn itself (used for user-executed command cards). When `false`, the caller
+    /// (the agent engine) awaits `result_tx` and handles the result (agent-requested tools).
+    pub auto_prompt: bool,
 }
 
 pub struct App {
@@ -136,6 +140,8 @@ pub struct App {
     pub chat_search_match_idx: usize,
     pub pricing_registry: Arc<tokio::sync::RwLock<crate::pricing::PricingRegistry>>,
     pub mouse_pos: Option<(u16, u16)>,
+    /// Debug mode — when set, raw tool-result `[RÉSULTAT…]` blocks are shown in the chat.
+    pub debug: bool,
 }
 
 impl App {
@@ -237,6 +243,7 @@ impl App {
                 crate::pricing::PricingRegistry::load_with_overrides(config.pricing),
             )),
             mouse_pos: None,
+            debug: false,
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -1212,14 +1219,30 @@ impl App {
             let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
             let is_waiting_password = is_waiting_for_password(&raw_text);
 
-            let timeout_secs = if is_waiting_password { 120 } else { 45 };
+            let mut timeout_secs = 45u64;
+            if is_waiting_password {
+                // Do NOT impose any timeout while a sudo/doas password prompt is displayed:
+                // the user must type their password, so we only end the capture when the
+                // command actually completes (OSC sentinel) or, for non-hooked shells, once the
+                // settle-silence fallback kicks in after the prompt disappears.
+                timeout_secs = u64::MAX;
+            }
 
-            // Fallback settle when no OSC sentinel is received (e.g. non-hooked remote SSH):
-            // Only triggers when output was received and there has been at least 1500ms of absolute silence
-            let has_output_settled = !capture.output_bytes.is_empty()
+            // A hooked local shell (bash/zsh/fish) reliably emits the OSC 777 sentinel as soon
+            // as the command completes. For those shells we MUST wait for the sentinel — the
+            // silence-based settle below is only a fallback for shells that deliver no sentinel
+            // (remote SSH without our hooks, or sh/dash/ash), where it previously fired too early
+            // on a quiet stretch (network I/O, sudo password wait) and truncated the output.
+            let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+            let shell_name = self.pty.shell_name().to_lowercase();
+            let shell_has_hooks = !is_remote
+                && (shell_name.contains("bash") || shell_name.contains("zsh") || shell_name.contains("fish"));
+
+            let has_output_settled = !shell_has_hooks
                 && !is_waiting_password
+                && !capture.output_bytes.is_empty()
                 && elapsed_since_start >= std::time::Duration::from_millis(800)
-                && elapsed_since_last_output >= std::time::Duration::from_millis(1500);
+                && elapsed_since_last_output >= std::time::Duration::from_millis(3000);
 
             if has_output_settled || elapsed_since_start > std::time::Duration::from_secs(timeout_secs) {
                 let clean_output = clean_pty_output(&raw_text, &capture.command);
@@ -1228,10 +1251,17 @@ impl App {
                 } else {
                     format!("Sortie dans le terminal:\n{}", clean_output)
                 };
-                if let Some(tx) = capture.result_tx.take() {
+
+                let command = capture.command.clone();
+                let auto_prompt = capture.auto_prompt;
+                let result_tx = capture.result_tx.take();
+                self.active_pty_tool = None;
+
+                if auto_prompt {
+                    self.record_command_result(command, final_summary);
+                } else if let Some(tx) = result_tx {
                     let _ = tx.send(final_summary);
                 }
-                self.active_pty_tool = None;
             }
         }
     }
@@ -1404,40 +1434,12 @@ impl App {
                     command_proposal: None,
                 });
 
-                // 2. Launch execution in live PTY with output capture
-                let (result_tx, result_rx) = tokio::sync::oneshot::channel::<String>();
-                self.on_agent_pty_tool_execute(clean_cmd.clone(), result_tx);
-
-                // 3. When PTY execution completes, pass the real output to the AI agent for analysis!
-                let event_tx = self.event_tx.clone();
-                let mut agent = self.agent.clone();
-                let mut conversation = self.messages.clone();
-                let sys_ctx = self.system_context.clone();
-
-                tokio::spawn(async move {
-                    if let Ok(tool_output) = result_rx.await {
-                        // Pop empty placeholder and push structured tool result to conversation
-                        if let Some(last) = conversation.last() {
-                            if last.role == MessageRole::Assistant && last.content.is_empty() {
-                                conversation.pop();
-                            }
-                        }
-                        conversation.push(ChatMessage {
-                            role: MessageRole::User,
-                            content: format!(
-                                "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE '{}']:\n{}\n[Analysez ce résultat et expliquez la situation à l'utilisateur]",
-                                cmd, tool_output
-                            ),
-                            command_proposal: None,
-                        });
-                        conversation.push(ChatMessage {
-                            role: MessageRole::Assistant,
-                            content: String::new(),
-                            command_proposal: None,
-                        });
-                        let _ = agent.send_prompt(conversation, &sys_ctx, event_tx);
-                    }
-                });
+                // 2. Launch execution in live PTY with output capture.
+                //    `auto_prompt = true`: the app records the [RÉSULTAT...] in the chat history and
+                //    triggers the next model turn itself once the capture completes, so the command
+                //    output is persisted and visible (not only passed to the model ephemerally).
+                let (result_tx, _result_rx) = tokio::sync::oneshot::channel::<String>();
+                self.on_agent_pty_tool_execute(clean_cmd.clone(), result_tx, true);
 
                 return true;
             } else {
@@ -1809,6 +1811,11 @@ impl App {
         command: String,
         approval_tx: tokio::sync::oneshot::Sender<bool>,
     ) {
+        // While a tool awaits approval, the user must answer (oui / non) — put the focus on the
+        // chat input so they can type the approval without switching panels.
+        self.focus = Focus::Chat;
+        self.chat_scroll_from_bottom = 0;
+
         if let Some(start) = self.generation_start_time.take() {
             let secs = start.elapsed().as_secs_f64();
             if secs > 0.2 && self.current_turn_tokens > 0 {
@@ -1860,7 +1867,7 @@ impl App {
         self.chat_scroll_from_bottom = 0;
     }
 
-    pub fn on_agent_tool_done(&mut self, command: String, _output: String) {
+    pub fn on_agent_tool_done(&mut self, command: String, output: String) {
         self.pending_tool_approval = None;
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
@@ -1876,6 +1883,17 @@ impl App {
                 }
             }
         }
+
+        // Persist the tool result into the chat history so it survives across turns.
+        // (The agent engine also keeps it in its internal conversation for the current turn.)
+        // `🌐` = web search, `🔌` = MCP tool — those keep their own result format internally.
+        if !command.starts_with("🌐") && !command.starts_with("🔌") {
+            self.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: format!("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '{}']:\n{}", command, output),
+                command_proposal: None,
+            });
+        }
         self.chat_scroll_from_bottom = 0;
     }
 
@@ -1883,6 +1901,7 @@ impl App {
         &mut self,
         command: String,
         result_tx: tokio::sync::oneshot::Sender<String>,
+        auto_prompt: bool,
     ) {
         let shell = self.current_active_shell();
         let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
@@ -1904,7 +1923,35 @@ impl App {
             output_bytes: Vec::new(),
             start_time: now,
             last_output_time: now,
+            auto_prompt,
         });
+    }
+
+    /// Records a completed user-command execution into the chat history (as a `[RÉSULTAT...]`
+    /// user message) and triggers the next model turn so the output is persisted and visible.
+    fn record_command_result(&mut self, command: String, final_summary: String) {
+        // Drop the empty assistant placeholder that was inserted when the command was submitted.
+        if let Some(last) = self.messages.last() {
+            if last.role == MessageRole::Assistant && last.content.trim().is_empty() {
+                self.messages.pop();
+            }
+        }
+        self.messages.push(ChatMessage {
+            role: MessageRole::User,
+            content: format!(
+                "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE '{}']:\n{}\n[Analysez ce résultat et expliquez la situation à l'utilisateur]",
+                command, final_summary
+            ),
+            command_proposal: None,
+        });
+        self.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            command_proposal: None,
+        });
+        self.chat_scroll_from_bottom = 0;
+        self.focus = Focus::Chat;
+        let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
     }
 
     pub fn on_pty_output(&mut self, bytes: &[u8]) {
@@ -1919,11 +1966,13 @@ impl App {
             }
 
             let text = &raw_text;
-            // Check for OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07 or fallback __SPIRITTY_DONE__:<status>
+            // Check for the OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07.
+            // NOTE: we must NOT match the bare `777;spiritty_done;` substring — the command echo
+            // is literally `printf '\033]777;spiritty_done;%s\007' $?`, which contains that text
+            // (as literal `\033`, no real ESC byte). Matching it would end the capture the moment
+            // the command is echoed, mis-parse `\007` as a bogus exit code, and truncate the output.
             let sentinel_pattern = if let Some(pos) = text.rfind("\x1b]777;spiritty_done;") {
                 Some((pos, 20, true))
-            } else if let Some(pos) = text.rfind("777;spiritty_done;") {
-                Some((pos, 18, true))
             } else {
                 text.rfind("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
             };
@@ -1953,10 +2002,16 @@ impl App {
                         format!("Sortie dans le terminal (code {}):\n{}", exit_code, clean_output)
                     };
 
-                    if let Some(tx) = capture.result_tx.take() {
+                    let command = capture.command.clone();
+                    let auto_prompt = capture.auto_prompt;
+                    let result_tx = capture.result_tx.take();
+                    self.active_pty_tool = None;
+
+                    if auto_prompt {
+                        self.record_command_result(command, final_summary);
+                    } else if let Some(tx) = result_tx {
                         let _ = tx.send(final_summary);
                     }
-                    self.active_pty_tool = None;
                 }
             }
         }
@@ -2571,7 +2626,45 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
         }
     }
 
+    // Drop trailing shell-prompt remnants. For commands that produce no real output (e.g. an empty
+    // mail log), the settle fallback captures the prompt the shell re-displays afterwards — which can
+    // be a single decorative symbol like `∙` (U+2219). We strip those so the model sees a clean
+    // "no output" result instead of a spurious `∙`.
+    while let Some(last) = lines.last() {
+        if is_prompt_remnant(last) {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+
     lines.join("\n").trim().to_string()
+}
+
+/// True if a line is (trailing) shell-prompt noise that should not be reported as command output.
+/// Handles decorative one-symbol prompts (`∙`, `❯`, `➜`, `λ`, …) and standard `user@host:path$` /
+/// `host:~#` style prompts.
+fn is_prompt_remnant(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return true;
+    }
+    // Single decorative prompt symbol (e.g. `∙`, `❯`, `➜`, `λ`, `›`)
+    if t.chars().count() <= 2 && t.chars().all(|c| "∙•·❯➜λ›".contains(c)) {
+        return true;
+    }
+    // Standard shell prompt: user@host:path…$ / host:~# / host:/path>  (short, ends with a marker)
+    let ends_marker = t.ends_with('$')
+        || t.ends_with('#')
+        || t.ends_with('>')
+        || t.ends_with('%')
+        || t.ends_with('❯')
+        || t.ends_with('➜')
+        || t.ends_with('λ');
+    if ends_marker && t.len() <= 64 && (t.contains(':') || t.contains('~') || t.contains('@')) {
+        return true;
+    }
+    false
 }
 
 /// Cleans and formats a multiline command into a valid single-line command or bash script wrapper.
@@ -2993,14 +3086,18 @@ fn has_standalone_token(cmd: &str, word: &str) -> bool {
 }
 
 /// Formats a command for reliable execution in the PTY.
-/// - If `is_tool_capture == true`: appends silent OSC 777 completion sentinel (`printf '\033]777;spiritty_done;%d\007' $?`)
 /// - If the shell is Fish and the command contains Bash-specific syntax (e.g. BGPID=$!), wraps safely in `bash -c '...'`
-/// - Otherwise sends the clean direct command
+/// - Otherwise sends the clean direct command.
+///
+/// NOTE: we intentionally do NOT append an inline OSC sentinel for remote-SSH commands anymore —
+/// the remote shell would echo it (`; printf '\033]777;spiritty_done;%s\007' $?`), polluting the
+/// terminal display. Remote completion is instead detected by the silence settle fallback in `on_tick`
+/// (local hooked shells already emit the sentinel silently via PROMPT_COMMAND / precmd / fish_postexec).
 pub fn format_command_for_pty_with_session(
     command: &str,
     user_shell: &str,
     is_remote: bool,
-    is_tool_capture: bool,
+    _is_tool_capture: bool,
 ) -> String {
     let clean = clean_multiline_command(command);
     if clean.is_empty() {
@@ -3009,11 +3106,6 @@ pub fn format_command_for_pty_with_session(
 
     let is_fish = user_shell.contains("fish") && !is_remote;
     let needs_bash = is_fish && is_bash_specific_syntax(&clean);
-
-    // Over remote SSH without our shell hooks, append sentinel for tool capture
-    if is_remote && is_tool_capture {
-        return format!(" {}; printf '\\033]777;spiritty_done;%s\\007' $?\n", clean);
-    }
 
     if needs_bash {
         let escaped = clean.replace('\'', "'\\''");

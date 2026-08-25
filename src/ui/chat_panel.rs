@@ -102,6 +102,12 @@ impl<'a> ChatPanel<'a> {
         for (idx, msg) in self.app.messages.iter().enumerate() {
             let is_last = idx + 1 == total_messages;
 
+            // In normal mode the raw tool-result blocks `[RÉSULTAT…]` are hidden — they carry the
+            // full command output and are only useful when debugging (`spiritty -d` / `--debug`).
+            if !self.app.debug && msg.content.starts_with("[RÉSULTAT") {
+                continue;
+            }
+
             match msg.role {
                 MessageRole::System => {
                     for l in msg.content.lines() {
@@ -334,7 +340,27 @@ impl<'a> ChatPanel<'a> {
         let input_scroll = cursor_row.saturating_sub(needed_input_height.saturating_sub(1));
 
         if self.app.chat_input.is_empty() {
-            let (placeholder_line, alignment) = if self.app.agent.is_generating {
+            let (placeholder_line, alignment) = if self.app.pending_tool_approval.is_some() {
+                // A tool is awaiting approval — invite the user to answer (no "Esc / Stop" here,
+                // the input keeps focus so they can just type oui / non).
+                (
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", get_spinner_char(self.app.spinner_frame)),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            if lang == Language::Fr {
+                                "Demande d'autorisation — tapez oui / non puis [Enter]"
+                            } else {
+                                "Permission request — type yes / no then [Enter]"
+                            },
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ]),
+                    Alignment::Center,
+                )
+            } else if self.app.agent.is_generating {
                 (
                     Line::from(vec![
                         Span::styled(

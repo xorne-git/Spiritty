@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
     let tick_rate = Duration::from_millis(90); // ~11 FPS for smooth, balanced spinner cadence
     let mut event_handler = EventHandler::new(tick_rate);
     let mut app = App::new(event_handler.sender(), initial_rows, initial_cols)?;
+    app.debug = cli.debug;
 
     // Apply CLI session resumption or overrides
     if cli.continue_last_session {
@@ -175,7 +176,7 @@ async fn run_loop(
                     app.on_agent_tool_done(command, output);
                 }
                 AppEvent::AgentPtyToolExecute { command, result_tx } => {
-                    app.on_agent_pty_tool_execute(command, result_tx);
+                    app.on_agent_pty_tool_execute(command, result_tx, false);
                 }
                 AppEvent::AgentNewTurn => app.on_agent_new_turn(),
                 AppEvent::ModelsLoaded { provider_key, models } => {

@@ -175,7 +175,7 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
 
     // 1. When agent runs a tool and gets an error output, proactive error diagnosis is NOT triggered
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
-    app.on_agent_pty_tool_execute("ls /forbidden".to_string(), res_tx);
+    app.on_agent_pty_tool_execute("ls /forbidden".to_string(), res_tx, false);
     app.on_pty_output(b"ls: cannot open directory '/forbidden': Permission denied\n");
     assert!(app.proactive_error_diagnosis.is_none(), "Agent tools should NOT trigger proactive error toast");
 
@@ -210,7 +210,7 @@ async fn test_focus_preservation_on_chat_submit_and_execution() {
     // 2. When executing a normal non-sudo command, focus remains where user set it
     app.focus = Focus::Chat;
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
-    app.on_agent_pty_tool_execute("uptime".to_string(), res_tx);
+    app.on_agent_pty_tool_execute("uptime".to_string(), res_tx, false);
     assert_eq!(app.focus, Focus::Chat, "Focus should remain Chat during non-sudo PTY tool execution");
 }
 
@@ -231,7 +231,7 @@ async fn test_sudo_password_detection_and_focus_switch() {
 
     app.focus = Focus::Chat;
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
-    app.on_agent_pty_tool_execute("sudo systemctl restart nginx".to_string(), res_tx);
+    app.on_agent_pty_tool_execute("sudo systemctl restart nginx".to_string(), res_tx, false);
 
     assert_eq!(app.focus, Focus::Terminal, "Focus should switch to Terminal for sudo commands");
 }
