@@ -287,35 +287,34 @@ async fn test_chat_scrolling_repro() {
 }
 
 #[tokio::test]
-async fn test_chat_overscroll_down() {
+async fn test_chat_scroll_bounds() {
     use spiritty::app::App;
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut app = App::new(event_tx, 55, 100).expect("create app");
 
     assert_eq!(app.chat_scroll_from_bottom, 0);
-    assert_eq!(app.chat_scroll_extra_down, 0);
 
-    // Scrolling down while at the bottom initiates overscroll
+    // Scrolling down while at the bottom stays clamped at 0 (no overscroll into void)
     app.scroll_chat_down(3);
-    assert_eq!(app.chat_scroll_extra_down, 3);
     assert_eq!(app.chat_scroll_from_bottom, 0);
 
     app.scroll_chat_down(5);
-    assert_eq!(app.chat_scroll_extra_down, 8);
-
-    // Scrolling up consumes overscroll first before scrolling into history
-    app.scroll_chat_up(4);
-    assert_eq!(app.chat_scroll_extra_down, 4);
     assert_eq!(app.chat_scroll_from_bottom, 0);
+
+    // Scrolling up increases scroll_from_bottom
+    app.scroll_chat_up(4);
+    assert_eq!(app.chat_scroll_from_bottom, 4);
 
     app.scroll_chat_up(6);
-    assert_eq!(app.chat_scroll_extra_down, 0);
-    assert_eq!(app.chat_scroll_from_bottom, 2);
+    assert_eq!(app.chat_scroll_from_bottom, 10);
 
-    // Resetting clears both
+    // Scrolling down decreases smoothly down to 0
+    app.scroll_chat_down(3);
+    assert_eq!(app.chat_scroll_from_bottom, 7);
+
+    // Resetting clears scroll
     app.reset_chat_scroll();
     assert_eq!(app.chat_scroll_from_bottom, 0);
-    assert_eq!(app.chat_scroll_extra_down, 0);
 }
 
 #[tokio::test]

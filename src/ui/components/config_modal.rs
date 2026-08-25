@@ -81,6 +81,7 @@ pub struct ConfigModalState {
     pub url_cursor: usize,
     pub api_key_input: String,
     pub api_key_cursor: usize,
+    pub pricing_status: Option<(std::time::Instant, String, Color)>,
 }
 
 fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
@@ -208,6 +209,7 @@ impl ConfigModalState {
             dropdown_selected_idx,
             dropdown_action: DropdownAction::None,
             models_per_provider,
+            pricing_status: None,
         }
     }
 
@@ -325,6 +327,23 @@ impl ConfigModalState {
         }
 
         let prov_key = self.selected_provider.key_str().to_string();
+
+        let is_update_pricing = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')))
+            || key.code == KeyCode::F(5)
+            || (matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')) && self.active_field != ConfigField::BaseUrl && self.active_field != ConfigField::ApiKey);
+
+        if is_update_pricing && !self.is_dropdown_open && !matches!(self.dropdown_action, DropdownAction::Adding(..) | DropdownAction::Editing(..)) {
+            self.pricing_status = Some((
+                std::time::Instant::now(),
+                if config.get_language() == crate::i18n::Language::Fr {
+                    "⟳ Synchronisation des tarifs en ligne...".to_string()
+                } else {
+                    "⟳ Syncing online pricing...".to_string()
+                },
+                Color::Cyan,
+            ));
+            return ConfigModalAction::UpdatePricing;
+        }
 
         if is_save_shortcut && !matches!(self.dropdown_action, DropdownAction::Adding(..) | DropdownAction::Editing(..)) {
             if self.is_dropdown_open {
@@ -620,11 +639,6 @@ impl ConfigModalState {
 
                 return self.save_config(config);
             }
-            KeyCode::Char('u') | KeyCode::Char('U')
-                if self.active_field != ConfigField::BaseUrl && self.active_field != ConfigField::ApiKey =>
-            {
-                return ConfigModalAction::UpdatePricing;
-            }
             KeyCode::Char(' ') => match self.active_field {
                 ConfigField::AutoApprove => self.auto_approve = self.auto_approve.next(),
                 ConfigField::Theme => {
@@ -796,9 +810,18 @@ impl ConfigModalState {
             Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
         };
 
-        lines.push(Line::from(vec![
+        let mut save_spans = vec![
             Span::styled(lang.t(I18nKey::ConfigButtonSave), save_style),
-        ]));
+        ];
+
+        if let Some((time, ref status_text, color)) = self.pricing_status {
+            if time.elapsed().as_secs() < 8 {
+                save_spans.push(Span::raw("   "));
+                save_spans.push(Span::styled(status_text.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+            }
+        }
+
+        lines.push(Line::from(save_spans));
 
         let p_top = Paragraph::new(lines).alignment(Alignment::Left);
         p_top.render(inner_area, buf);

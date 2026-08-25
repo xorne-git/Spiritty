@@ -267,10 +267,16 @@ impl App {
         match res {
             Ok(count) => {
                 let msg = format!("{} ({} modèles)", lang.t(crate::i18n::I18nKey::PricingUpdateSuccess), count);
+                if let ModalState::Config(ref mut config_state) = self.modal {
+                    config_state.pricing_status = Some((std::time::Instant::now(), msg.clone(), ratatui::style::Color::Green));
+                }
                 self.set_toast(msg);
             }
             Err(err) => {
                 let msg = format!("{}: {}", lang.t(crate::i18n::I18nKey::PricingUpdateFailed), err);
+                if let ModalState::Config(ref mut config_state) = self.modal {
+                    config_state.pricing_status = Some((std::time::Instant::now(), msg.clone(), ratatui::style::Color::Red));
+                }
                 self.set_toast(msg);
             }
         }
@@ -326,28 +332,11 @@ impl App {
     }
 
     pub fn scroll_chat_up(&mut self, lines: u16) {
-        if self.chat_scroll_extra_down > 0 {
-            let rem = lines.saturating_sub(self.chat_scroll_extra_down);
-            self.chat_scroll_extra_down = self.chat_scroll_extra_down.saturating_sub(lines);
-            if rem > 0 {
-                self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(rem);
-            }
-        } else {
-            self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(lines);
-        }
+        self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_add(lines);
     }
 
     pub fn scroll_chat_down(&mut self, lines: u16) {
-        if self.chat_scroll_from_bottom > 0 {
-            let rem = lines.saturating_sub(self.chat_scroll_from_bottom);
-            self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_sub(lines);
-            if rem > 0 {
-                self.chat_scroll_extra_down = (self.chat_scroll_extra_down + rem).min(12);
-            }
-        } else {
-            // Force-scroll / overscroll down past estimated end by up to 12 rows
-            self.chat_scroll_extra_down = (self.chat_scroll_extra_down + lines).min(12);
-        }
+        self.chat_scroll_from_bottom = self.chat_scroll_from_bottom.saturating_sub(lines);
     }
 
     pub fn reset_chat_scroll(&mut self) {
@@ -808,16 +797,16 @@ impl App {
             }
             MouseEventKind::ScrollUp => {
                 if self.chat_area.contains(ratatui::layout::Position { x, y }) {
-                    self.scroll_chat_up(3);
+                    self.scroll_chat_up(1);
                 } else if self.terminal_area.contains(ratatui::layout::Position { x, y }) {
-                    self.pty.scroll_up(5);
+                    self.pty.scroll_up(2);
                 }
             }
             MouseEventKind::ScrollDown => {
                 if self.chat_area.contains(ratatui::layout::Position { x, y }) {
-                    self.scroll_chat_down(3);
+                    self.scroll_chat_down(1);
                 } else if self.terminal_area.contains(ratatui::layout::Position { x, y }) {
-                    self.pty.scroll_down(5);
+                    self.pty.scroll_down(2);
                 }
             }
             _ => {}
@@ -1714,7 +1703,7 @@ impl App {
             }
             KeyCode::Home => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.scroll_chat_up(500);
+                    self.scroll_chat_up(u16::MAX / 2);
                 } else {
                     self.cursor_pos = 0;
                 }
@@ -1727,14 +1716,16 @@ impl App {
                 }
             }
             KeyCode::PageUp => {
-                self.scroll_chat_up(15);
+                let page = self.chat_area.height.saturating_sub(2).max(5);
+                self.scroll_chat_up(page);
             }
             KeyCode::PageDown => {
-                self.scroll_chat_down(15);
+                let page = self.chat_area.height.saturating_sub(2).max(5);
+                self.scroll_chat_down(page);
             }
             KeyCode::Up => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.scroll_chat_up(3);
+                    self.scroll_chat_up(1);
                 } else if !self.chat_history.is_empty() {
                     let new_idx = match self.history_index {
                         None => {
@@ -1752,7 +1743,7 @@ impl App {
             }
             KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    self.scroll_chat_down(3);
+                    self.scroll_chat_down(1);
                 } else if let Some(idx) = self.history_index {
                     if idx + 1 < self.chat_history.len() {
                         let new_idx = idx + 1;

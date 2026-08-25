@@ -510,6 +510,16 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> Vec<Span<'
                 spans.push(toast_val);
             }
         }
+    } else if let Some((time, ref msg)) = app.toast_message {
+        if time.elapsed().as_millis() < 4500 {
+            let toast_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+            let toast_val = Span::styled(msg.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+            let toast_w = toast_sep.width() + toast_val.width();
+            if current_width + toast_w <= max_width {
+                spans.push(toast_sep);
+                spans.push(toast_val);
+            }
+        }
     }
 
     spans

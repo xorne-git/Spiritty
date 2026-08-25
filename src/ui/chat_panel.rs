@@ -259,25 +259,11 @@ impl<'a> ChatPanel<'a> {
 
         let content_visual_lines = compute_wrapped_lines_count(&lines, messages_area.width);
 
-        // Add 4 trailing blank lines at the bottom for breathing room only when there are messages
-        if !lines.is_empty() {
-            for _ in 0..4 {
-                lines.push(Line::from(""));
-            }
-        }
-
-        let total_rendered_lines = if content_visual_lines > 0 {
-            content_visual_lines.saturating_add(4)
-        } else {
-            0
-        };
-
         let visible_height = messages_area.height;
-        let max_scroll = total_rendered_lines.saturating_sub(visible_height);
+        let max_scroll = content_visual_lines.saturating_sub(visible_height);
 
         let scroll_from_bottom = self.app.chat_scroll_from_bottom.min(max_scroll);
-        let extra_down = self.app.chat_scroll_extra_down;
-        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom).saturating_add(extra_down);
+        let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
 
         let messages_paragraph = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -290,11 +276,6 @@ impl<'a> ChatPanel<'a> {
                 (
                     format!(" ▲ -{} / {} l. ", scroll_from_bottom, content_visual_lines),
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
-                )
-            } else if extra_down > 0 {
-                (
-                    format!(" ▼ +{} l. ", extra_down),
-                    Style::default().bg(Color::Rgb(40, 75, 130)).fg(Color::White).add_modifier(Modifier::BOLD),
                 )
             } else {
                 (
