@@ -508,6 +508,26 @@ fn test_clean_heredoc_script() {
 }
 
 #[test]
+fn test_clean_heredoc_script_drops_leading_comment() {
+    use spiritty::app::clean_heredoc_script;
+
+    // A leading `# comment` line is a complete (empty) bash command: once injected into the PTY,
+    // it fires the completion sentinel before the heredoc runs, truncating the capture. It must
+    // be stripped so the heredoc opener is the first line sent to the shell.
+    let raw = "# 1. Filtre élargi (tous les POST wp-login.php, sans restriction de code)\nsudo tee /etc/fail2ban/filter.d/wp-auth.conf << 'EOF'\n[Definition]\nfailregex = ^<HOST> .* \"POST /wp-login\\.php HTTP/.*\"\nEOF";
+    let cleaned = clean_heredoc_script(raw);
+    assert!(
+        cleaned.starts_with("sudo tee /etc/fail2ban/filter.d/wp-auth.conf << 'EOF'"),
+        "leading comment should be dropped, got: {:?}",
+        cleaned
+    );
+    assert!(!cleaned.contains("Filtre élargi"));
+    // The heredoc body must be preserved verbatim.
+    assert!(cleaned.contains("[Definition]"));
+    assert!(cleaned.ends_with("EOF"));
+}
+
+#[test]
 fn test_parse_command_execution_request() {
     use spiritty::app::parse_command_execution_request;
 
@@ -725,6 +745,22 @@ fn test_repair_prematurely_closed_code_blocks() {
     let proposals = extract_all_command_proposals(glitched);
     assert_eq!(proposals.len(), 1);
     assert!(proposals[0].starts_with("for v in 7.4 8.4 8.5; do"));
+}
+
+#[test]
+fn test_untagged_output_block_is_not_a_command_proposal() {
+    use spiritty::app::extract_all_command_proposals;
+
+    // The model quoted `free -h` output in an untagged code block as illustration. This must NOT
+    // be extracted as a command proposal (it produced the spurious "Swap:  511Mi  0B  511Mi").
+    let text = "✅ **Swap vidé avec succès**\n\n```\nSwap:  511Mi  0B  511Mi\n```\n\nLe swap est reparti à zéro.";
+    let proposals = extract_all_command_proposals(text);
+    assert!(proposals.is_empty(), "expected no proposals, got: {:?}", proposals);
+
+    // A real untagged shell command must still be extracted.
+    let cmd_text = "Voici la commande :\n\n```\nfree -h | head -n 3\n```";
+    let cmd_proposals = extract_all_command_proposals(cmd_text);
+    assert_eq!(cmd_proposals, vec!["free -h | head -n 3"]);
 }
 
 #[tokio::test]

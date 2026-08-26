@@ -2271,6 +2271,17 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         if word_count >= 7 && !has_shell_meta {
             return false;
         }
+        // 5.4 A single `Label: value value …` line with no shell metacharacters is tabular output
+        //     (e.g. "Swap:  511Mi  0B  511Mi" quoted by the model as illustration), not a command
+        //     to run. Reject it so it never becomes a spurious command proposal.
+        if line_count == 1 && !has_shell_meta {
+            if let Some((label, rest)) = first_line.split_once(':') {
+                let label = label.trim();
+                if !label.is_empty() && !label.contains(char::is_whitespace) && !rest.trim().is_empty() {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -2887,10 +2898,14 @@ pub fn clean_heredoc_script(script: &str) -> String {
         return String::new();
     }
 
-    // 1. Find the first line where a command or heredoc starts
+    // 1. Find the first line where a command or heredoc starts, skipping leading comment
+    //    lines (`# ...`). A leading comment is a complete (empty) command: once injected into
+    //    the PTY, bash executes it immediately and re-displays the prompt, emitting the OSC
+    //    completion sentinel before the heredoc body even runs — truncating the capture to the
+    //    comment line alone ("seul le début du heredoc apparaît").
     let first_cmd_idx = lines
         .iter()
-        .position(|l| l.contains("<<") || is_clean_command_line(l))
+        .position(|l| !l.trim_start().starts_with('#') && (l.contains("<<") || is_clean_command_line(l)))
         .unwrap_or(0);
 
     let mut result_lines: Vec<&str> = Vec::new();
@@ -2919,7 +2934,7 @@ pub fn clean_heredoc_script(script: &str) -> String {
                     active_delimiters.push(delim);
                     in_heredoc = true;
                 }
-            } else if is_clean_command_line(line) {
+            } else if !line.trim_start().starts_with('#') && is_clean_command_line(line) {
                 result_lines.push(line);
             }
         }
