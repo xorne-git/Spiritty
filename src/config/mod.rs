@@ -12,6 +12,8 @@ pub enum ProviderType {
     Gemini,
     Grok,
     DeepSeek,
+    #[serde(rename = "zai")]
+    Zai,
     OpenAI,
     Anthropic,
 }
@@ -24,6 +26,7 @@ impl ProviderType {
             ProviderType::Gemini,
             ProviderType::Grok,
             ProviderType::DeepSeek,
+            ProviderType::Zai,
             ProviderType::OpenAI,
             ProviderType::Anthropic,
         ]
@@ -36,6 +39,7 @@ impl ProviderType {
             ProviderType::Gemini => "Google Gemini",
             ProviderType::Grok => "Grok (xAI)",
             ProviderType::DeepSeek => "DeepSeek",
+            ProviderType::Zai => "Z.ai (GLM)",
             ProviderType::OpenAI => "OpenAI",
             ProviderType::Anthropic => "Anthropic Claude",
         }
@@ -48,6 +52,7 @@ impl ProviderType {
             ProviderType::Gemini => "gemini",
             ProviderType::Grok => "grok",
             ProviderType::DeepSeek => "deepseek",
+            ProviderType::Zai => "zai",
             ProviderType::OpenAI => "openai",
             ProviderType::Anthropic => "anthropic",
         }
@@ -68,6 +73,14 @@ impl ProviderType {
             Some(ProviderType::Grok)
         } else if trimmed.contains("deepseek") {
             Some(ProviderType::DeepSeek)
+        } else if trimmed.contains("zai")
+            || trimmed.contains("z.ai")
+            || trimmed.contains("z_ai")
+            || trimmed.contains("z-ai")
+            || trimmed.contains("zhipu")
+            || trimmed.contains("glm")
+        {
+            Some(ProviderType::Zai)
         } else if trimmed.contains("openai")
             || trimmed.contains("chatgpt")
             || trimmed.contains("gpt")
@@ -87,6 +100,7 @@ impl ProviderType {
             ProviderType::Gemini => "gemini-3.7-flash",
             ProviderType::Grok => "grok-4.6",
             ProviderType::DeepSeek => "deepseek-v4-pro",
+            ProviderType::Zai => "glm-5.3",
             ProviderType::OpenAI => "gpt-5.6-sol",
             ProviderType::Anthropic => "claude-sonnet-5",
         }
@@ -124,6 +138,21 @@ impl ProviderType {
             ],
             ProviderType::Grok => &["grok-4.6", "grok-latest", "grok-2-latest", "grok-beta"],
             ProviderType::DeepSeek => &["deepseek-v4-pro", "deepseek-v4-flash"],
+            ProviderType::Zai => &[
+                "glm-5.3",
+                "glm-5.3-flash",
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5",
+                "glm-5-turbo",
+                "glm-4.7",
+                "glm-4.7-flash",
+                "glm-4.6",
+                "glm-4.5",
+                "glm-4.5-air",
+                "glm-4-plus",
+                "glm-4-flash",
+            ],
             ProviderType::OpenAI => &[
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
@@ -151,6 +180,7 @@ impl ProviderType {
             ProviderType::Gemini => None,
             ProviderType::Grok => Some("https://api.x.ai/v1"),
             ProviderType::DeepSeek => Some("https://api.deepseek.com/v1"),
+            ProviderType::Zai => Some("https://api.z.ai/api/paas/v4"),
             ProviderType::OpenAI => Some("https://api.openai.com/v1"),
             ProviderType::Anthropic => None,
         }
@@ -162,6 +192,7 @@ impl ProviderType {
             ProviderType::Gemini => Some("GEMINI_API_KEY"),
             ProviderType::Grok => Some("XAI_API_KEY"),
             ProviderType::DeepSeek => Some("DEEPSEEK_API_KEY"),
+            ProviderType::Zai => Some("ZAI_API_KEY"),
             ProviderType::OpenAI => Some("OPENAI_API_KEY"),
             ProviderType::Anthropic => Some("ANTHROPIC_API_KEY"),
         }
@@ -645,6 +676,16 @@ IMPORTANT RULES:
         // 2. Fallback to standard provider default env var
         if let Some(default_env) = provider.default_env_var() {
             if let Some(val) = Self::get_env_var(default_env) {
+                return Some(val);
+            }
+        }
+
+        // Additional vendor aliases for Z.ai (Zhipu AI)
+        if provider == ProviderType::Zai {
+            if let Some(val) = Self::get_env_var("ZHIPU_API_KEY") {
+                return Some(val);
+            }
+            if let Some(val) = Self::get_env_var("ZHIPUAI_API_KEY") {
                 return Some(val);
             }
         }

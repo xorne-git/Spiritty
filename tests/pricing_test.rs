@@ -53,6 +53,16 @@ fn test_pricing_registry_builtin_lookups() {
 
     let gemini_pro = registry.get_pricing("gemini", "gemini-1.5-pro");
     assert_eq!(gemini_pro, Some(ModelPricing::new(1.25, 5.00)));
+
+    // Z.ai (GLM) lookups
+    let glm_5_3 = registry.get_pricing("zai", "glm-5.3");
+    assert_eq!(glm_5_3, Some(ModelPricing::new(1.40, 4.40)));
+
+    let glm_5_3_flash = registry.get_pricing("zai", "glm-5.3-flash");
+    assert_eq!(glm_5_3_flash, Some(ModelPricing::new(0.075, 0.25)));
+
+    let glm_4_flash = registry.get_pricing("zai", "glm-4-flash");
+    assert_eq!(glm_4_flash, Some(ModelPricing::free()));
 }
 
 #[test]

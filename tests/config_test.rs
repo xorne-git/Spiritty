@@ -5,12 +5,13 @@ fn test_config_defaults_and_providers() {
     let config = Config::default();
     assert_eq!(config.default_provider, ProviderType::Ollama);
 
-    // Verify all 7 providers are present in default config
+    // Verify all 8 providers are present in default config
     assert!(config.providers.contains_key("ollama"));
     assert!(config.providers.contains_key("lmstudio"));
     assert!(config.providers.contains_key("gemini"));
     assert!(config.providers.contains_key("grok"));
     assert!(config.providers.contains_key("deepseek"));
+    assert!(config.providers.contains_key("zai"));
     assert!(config.providers.contains_key("openai"));
     assert!(config.providers.contains_key("anthropic"));
 
@@ -24,6 +25,14 @@ fn test_config_defaults_and_providers() {
     // Verify Grok default URL
     let grok = config.providers.get("grok").unwrap();
     assert_eq!(grok.base_url.as_deref(), Some("https://api.x.ai/v1"));
+
+    // Verify Z.ai default URL and model
+    let zai = config.providers.get("zai").unwrap();
+    assert_eq!(
+        zai.base_url.as_deref(),
+        Some("https://api.z.ai/api/paas/v4")
+    );
+    assert_eq!(zai.model, "glm-5.3");
 }
 
 #[test]
@@ -55,9 +64,13 @@ fn test_api_key_resolution() {
     // Provider fallback
     unsafe {
         std::env::set_var("DEEPSEEK_API_KEY", "sk-deepseek-test");
+        std::env::set_var("ZAI_API_KEY", "sk-zai-test");
     }
     let resolved_fallback = Config::resolve_api_key_for_provider(ProviderType::DeepSeek, None);
     assert_eq!(resolved_fallback, Some("sk-deepseek-test".to_string()));
+
+    let resolved_zai = Config::resolve_api_key_for_provider(ProviderType::Zai, None);
+    assert_eq!(resolved_zai, Some("sk-zai-test".to_string()));
 }
 
 #[test]

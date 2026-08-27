@@ -70,6 +70,14 @@ pub fn create_provider(config: &Config) -> Box<dyn LlmProvider> {
             provider_cfg.model,
             api_key,
         )),
+        ProviderType::Zai => Box::new(OpenAiCompatibleProvider::new(
+            "Z.ai",
+            provider_cfg
+                .base_url
+                .or_else(|| Some("https://api.z.ai/api/paas/v4".to_string())),
+            provider_cfg.model,
+            api_key,
+        )),
         ProviderType::OpenAI => Box::new(OpenAiCompatibleProvider::new(
             "OpenAI",
             provider_cfg
@@ -180,10 +188,10 @@ pub async fn fetch_available_models(
             }
             Vec::new()
         }
-        ProviderType::OpenAI | ProviderType::Grok | ProviderType::DeepSeek => {
+        ProviderType::OpenAI | ProviderType::Grok | ProviderType::DeepSeek | ProviderType::Zai => {
             if let Some(base) = custom_base_url.or_else(|| provider.default_base_url()) {
                 let base_trimmed = base.trim_end_matches('/');
-                let models_url = if base_trimmed.ends_with("/v1") {
+                let models_url = if base_trimmed.ends_with("/v1") || base_trimmed.ends_with("/v4") {
                     format!("{}/models", base_trimmed)
                 } else {
                     format!("{}/v1/models", base_trimmed)

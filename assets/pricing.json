@@ -82,5 +82,109 @@
   "codestral": {
     "prompt": 0.30,
     "completion": 0.90
+  },
+  "glm-5.3": {
+    "prompt": 1.40,
+    "completion": 4.40
+  },
+  "glm-5.3-flash": {
+    "prompt": 0.075,
+    "completion": 0.25
+  },
+  "glm-5.2": {
+    "prompt": 1.40,
+    "completion": 4.40
+  },
+  "glm-5.1": {
+    "prompt": 1.40,
+    "completion": 4.40
+  },
+  "glm-5": {
+    "prompt": 1.00,
+    "completion": 3.20
+  },
+  "glm-5-turbo": {
+    "prompt": 1.20,
+    "completion": 4.00
+  },
+  "glm-4.7": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-4.7-flash": {
+    "prompt": 0.0,
+    "completion": 0.0
+  },
+  "glm-4.7-flashx": {
+    "prompt": 0.07,
+    "completion": 0.40
+  },
+  "glm-4.6": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-4.5": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-4.5-x": {
+    "prompt": 2.20,
+    "completion": 8.90
+  },
+  "glm-4.5-air": {
+    "prompt": 0.20,
+    "completion": 1.10
+  },
+  "glm-4.5-airx": {
+    "prompt": 1.10,
+    "completion": 4.50
+  },
+  "glm-4.5-flash": {
+    "prompt": 0.0,
+    "completion": 0.0
+  },
+  "glm-4-flash": {
+    "prompt": 0.0,
+    "completion": 0.0
+  },
+  "glm-4-plus": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-4-air": {
+    "prompt": 0.20,
+    "completion": 1.10
+  },
+  "glm-4-long": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-4": {
+    "prompt": 0.60,
+    "completion": 2.20
+  },
+  "glm-5v-turbo": {
+    "prompt": 1.20,
+    "completion": 4.00
+  },
+  "glm-4.6v": {
+    "prompt": 0.30,
+    "completion": 0.90
+  },
+  "glm-ocr": {
+    "prompt": 0.03,
+    "completion": 0.03
+  },
+  "glm-4.6v-flashx": {
+    "prompt": 0.04,
+    "completion": 0.40
+  },
+  "glm-4.5v": {
+    "prompt": 0.60,
+    "completion": 1.80
+  },
+  "glm-4.6v-flash": {
+    "prompt": 0.0,
+    "completion": 0.0
   }
 }

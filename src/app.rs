@@ -833,6 +833,8 @@ impl App {
             || model.contains("gpt-5")
             || model.contains("o1")
             || model.contains("o3")
+            || model.contains("glm")
+            || model.contains("zai")
         {
             131_072
         } else {

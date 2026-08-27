@@ -128,6 +128,34 @@ impl PricingRegistry {
             ModelPricing::new(0.15, 0.15),
         );
 
+        // Z.ai (GLM) - https://docs.z.ai/guides/overview/pricing
+        m.insert("glm-5.3".to_string(), ModelPricing::new(1.40, 4.40));
+        m.insert("glm-5.3-flash".to_string(), ModelPricing::new(0.075, 0.25));
+        m.insert("glm-5.2".to_string(), ModelPricing::new(1.40, 4.40));
+        m.insert("glm-5.1".to_string(), ModelPricing::new(1.40, 4.40));
+        m.insert("glm-5".to_string(), ModelPricing::new(1.00, 3.20));
+        m.insert("glm-5-turbo".to_string(), ModelPricing::new(1.20, 4.00));
+        m.insert("glm-4.7".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-4.7-flash".to_string(), ModelPricing::free());
+        m.insert("glm-4.7-flashx".to_string(), ModelPricing::new(0.07, 0.40));
+        m.insert("glm-4.6".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-4.5".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-4.5-x".to_string(), ModelPricing::new(2.20, 8.90));
+        m.insert("glm-4.5-air".to_string(), ModelPricing::new(0.20, 1.10));
+        m.insert("glm-4.5-airx".to_string(), ModelPricing::new(1.10, 4.50));
+        m.insert("glm-4.5-flash".to_string(), ModelPricing::free());
+        m.insert("glm-4-flash".to_string(), ModelPricing::free());
+        m.insert("glm-4-plus".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-4-air".to_string(), ModelPricing::new(0.20, 1.10));
+        m.insert("glm-4-long".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-4".to_string(), ModelPricing::new(0.60, 2.20));
+        m.insert("glm-5v-turbo".to_string(), ModelPricing::new(1.20, 4.00));
+        m.insert("glm-4.6v".to_string(), ModelPricing::new(0.30, 0.90));
+        m.insert("glm-ocr".to_string(), ModelPricing::new(0.03, 0.03));
+        m.insert("glm-4.6v-flashx".to_string(), ModelPricing::new(0.04, 0.40));
+        m.insert("glm-4.5v".to_string(), ModelPricing::new(0.60, 1.80));
+        m.insert("glm-4.6v-flash".to_string(), ModelPricing::free());
+
         m
     }
 
