@@ -254,6 +254,7 @@ impl HostsStore {
             fs::create_dir_all(parent)?;
         }
         fs::write(&self.path, json).context("Failed to write hosts.json")?;
+        crate::config::restrict_file_permissions(&self.path);
         Ok(())
     }
 

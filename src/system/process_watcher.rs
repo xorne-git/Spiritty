@@ -103,7 +103,23 @@ fn find_foreground_leaf_pid(root_pid: u32) -> Option<u32> {
         }
     }
 
-    // Fallback: scan /proc for any process with PPID == root_pid
+    // Fallback: scan /proc for any process with PPID == root_pid.
+    //
+    // This full-directory scan runs on the UI event thread (called from `on_tick` twice
+    // per poll), and the kernel's `children` file can transiently disappear when a
+    // foreground process is exiting — which would previously trigger it constantly.
+    // Memoize per root pid with a short TTL: shell-tree topology simply does not change
+    // fast enough to justify re-scanning every ~360 ms, and the children-file fast path
+    // above still handles the common case instantly.
+    const FALLBACK_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+    if let Ok(cached) = fallback_scan_cache().lock() {
+        if let Some(entry) = cached.as_ref() {
+            if entry.root == root_pid && entry.at.elapsed() < FALLBACK_TTL {
+                return entry.result;
+            }
+        }
+    }
+
     let mut direct_children = Vec::new();
     if let Ok(entries) = fs::read_dir("/proc") {
         for entry in entries.flatten() {
@@ -123,11 +139,32 @@ fn find_foreground_leaf_pid(root_pid: u32) -> Option<u32> {
         }
     }
 
-    if let Some(&last_child) = direct_children.last() {
-        return find_foreground_leaf_pid(last_child).or(Some(last_child));
-    }
+    let fallback_result = if let Some(&last_child) = direct_children.last() {
+        find_foreground_leaf_pid(last_child).or(Some(last_child))
+    } else {
+        Some(root_pid)
+    };
 
-    Some(root_pid)
+    if let Ok(mut guard) = fallback_scan_cache().lock() {
+        *guard = Some(FallbackScanEntry {
+            at: std::time::Instant::now(),
+            root: root_pid,
+            result: fallback_result,
+        });
+    }
+    fallback_result
+}
+
+struct FallbackScanEntry {
+    at: std::time::Instant,
+    root: u32,
+    result: Option<u32>,
+}
+
+fn fallback_scan_cache() -> &'static std::sync::Mutex<Option<FallbackScanEntry>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<FallbackScanEntry>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 /// Detects current working directory of the process

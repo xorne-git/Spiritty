@@ -81,6 +81,10 @@ pub struct ConfigModalState {
     pub url_cursor: usize,
     pub api_key_input: String,
     pub api_key_cursor: usize,
+    /// Secret currently stored in config for the edited provider, kept OUT of
+    /// `api_key_input`: the modal never echoes an existing key back to the screen.
+    /// An empty input at save-time means "preserve what was there".
+    pub api_key_saved: Option<String>,
     pub pricing_status: Option<(std::time::Instant, String, Color)>,
 }
 
@@ -180,7 +184,7 @@ impl ConfigModalState {
         }
 
         let prov_key = selected_provider.key_str();
-        let (model_input, base_url_input, api_key_input) =
+        let (model_input, base_url_input, api_key_input_pre) =
             if let Some(p_cfg) = config.providers.get(prov_key) {
                 (
                     p_cfg.model.clone(),
@@ -194,6 +198,18 @@ impl ConfigModalState {
                     String::new(),
                 )
             };
+
+        // Never preload an actual secret into the editable field: stash it aside so the
+        // modal can't leak it on screen. Empty field at save-time = keep stored key.
+        // ENV: references are not secrets themselves and stay visible/editable.
+        let api_key_saved = config
+            .providers
+            .get(prov_key)
+            .and_then(|p| p.api_key.clone());
+        let api_key_input = match &api_key_saved {
+            Some(k) if !k.starts_with("ENV:") => String::new(),
+            _ => api_key_input_pre,
+        };
 
         let dropdown_selected_idx = models_per_provider
             .get(prov_key)
@@ -214,6 +230,7 @@ impl ConfigModalState {
             api_key_input,
             url_cursor: url_len,
             api_key_cursor: key_len,
+            api_key_saved,
             is_dropdown_open: false,
             dropdown_selected_idx,
             dropdown_action: DropdownAction::None,
@@ -229,11 +246,17 @@ impl ConfigModalState {
         if let Some(p_cfg) = config.providers.get(prov_key) {
             self.model_input = p_cfg.model.clone();
             self.base_url_input = p_cfg.base_url.clone().unwrap_or_default();
-            self.api_key_input = p_cfg.api_key.clone().unwrap_or_default();
+            self.api_key_saved = p_cfg.api_key.clone();
+            // Same secret-hygiene as open(): never echo a stored key into the field.
+            self.api_key_input = match &self.api_key_saved {
+                Some(k) if !k.starts_with("ENV:") => String::new(),
+                other => other.clone().unwrap_or_default(),
+            };
         } else {
             self.model_input = provider.default_model().to_string();
             self.base_url_input = String::new();
             self.api_key_input = String::new();
+            self.api_key_saved = None;
         }
 
         self.url_cursor = self.base_url_input.chars().count();
@@ -293,8 +316,10 @@ impl ConfigModalState {
             Some(self.base_url_input.trim().to_string())
         };
 
+        // An empty field preserves the previously stored key (secrets are intentionally
+        // not echoed back into the modal); a non-empty value replaces it wholesale.
         let api_key = if self.api_key_input.trim().is_empty() {
-            None
+            self.api_key_saved.clone()
         } else {
             Some(self.api_key_input.trim().to_string())
         };
@@ -347,7 +372,9 @@ impl ConfigModalState {
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
 
         if is_paste {
-            if let Some(text) = crate::system::clipboard::get_clipboard_text() {
+            if let Some(text) = crate::system::clipboard::get_clipboard_text_timeout(
+                std::time::Duration::from_millis(1000),
+            ) {
                 self.handle_paste(text);
                 return ConfigModalAction::None;
             }
@@ -931,19 +958,32 @@ impl ConfigModalState {
         lines.push(Line::from(l3));
         lines.push(Line::from(""));
 
-        // 5. Clé d'API (Editable with cursor & arrow navigation)
+        // 5. Clé d'API (masked while typing — same char count keeps the cursor in sync)
         let mut l4 = vec![Span::styled(
             lang.t(I18nKey::ConfigFieldApiKey),
             Style::default()
                 .fg(if f_key { Color::Cyan } else { Color::White })
                 .add_modifier(Modifier::BOLD),
         )];
+        let masked_key: String = self.api_key_input.chars().map(|_| '•').collect();
         l4.extend(render_editable_text(
-            &self.api_key_input,
+            &masked_key,
             self.api_key_cursor,
             f_key,
             lang.t(I18nKey::ConfigPlaceholderNoKeyRequired),
         ));
+        // Explicit hint when an existing secret will be preserved by saving with the
+        // field left empty (it is deliberately never displayed back).
+        if self.api_key_saved.is_some() && self.api_key_input.is_empty() {
+            l4.push(Span::styled(
+                if lang == crate::i18n::Language::Fr {
+                    "   ✔ conservée si vide"
+                } else {
+                    "   ✔ kept if left empty"
+                },
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
         lines.push(Line::from(l4));
         lines.push(Line::from(""));
 

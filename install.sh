@@ -148,6 +148,22 @@ install_binary() {
     info "Extraction de l'archive..."
     tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "${TMP_DIR}"
 
+    # Integrity check against the published .sha256 (skip with a warning when absent,
+    # hard-fail on mismatch — never install a corrupted or tampered binary).
+    info "Vérification de l'intégrité (sha256)..."
+    if curl -fsSL -o "${TMP_DIR}/${ARCHIVE_NAME}.sha256" "${DOWNLOAD_URL}.sha256"; then
+        COMPUTED="$(command sha256sum < "${TMP_DIR}/${ARCHIVE_NAME}" 2>/dev/null \
+            || command shasum -a 256 < "${TMP_DIR}/${ARCHIVE_NAME}" \
+            | awk '{print $1}')"
+        PUBLISHED="$(awk 'NR==1{print tolower($1)}' "${TMP_DIR}/${ARCHIVE_NAME}.sha256")"
+        if [ -z "$COMPUTED" ] || [ "$COMPUTED" != "$PUBLISHED" ]; then
+            error "Somme de contrôle invalide (attendu ${PUBLISHED:-?}, obtenu ${COMPUTED:-aucun}). Installation annulée."
+        fi
+        success "Somme de contrôle valide."
+    else
+        warn "Fichier .sha256 indisponible pour cette release, vérification ignorée."
+    fi
+
     if [ ! -f "${TMP_DIR}/${BINARY_NAME}" ]; then
         error "Le binaire 'spiritty' n'a pas été trouvé dans l'archive téléchargée."
     fi

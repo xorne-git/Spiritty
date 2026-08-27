@@ -1,8 +1,12 @@
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::OnceLock;
 
 static CLIPBOARD_CHANNEL: OnceLock<Sender<String>> = OnceLock::new();
+/// Guards against stacking multiple concurrent paste reads when the clipboard manager
+/// hangs and the user hammers Ctrl+V: a second request while one is in flight is dropped.
+static PASTE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 fn get_clipboard_sender() -> &'static Sender<String> {
     CLIPBOARD_CHANNEL.get_or_init(|| {
@@ -73,19 +77,38 @@ pub fn copy_to_clipboard(text: &str) {
     let _ = io::stdout().flush();
 }
 
-/// Universal clipboard paste reader: uses arboard and falls back to system CLI (wl-paste / xclip / pbpaste).
-/// Runs the (potentially blocking) read on a background thread with a bounded timeout so a hung
-/// clipboard manager cannot freeze the TUI indefinitely.
-pub fn get_clipboard_text() -> Option<String> {
+/// Fire-and-forget clipboard read: the (potentially blocking) read runs on a dedicated
+/// background thread and the result is delivered through `on_result`, so a hung
+/// wl-paste/xclip can never stall keydown handling on the UI thread. At most one read
+/// is in flight at a time; extra requests while busy are silently dropped.
+pub fn spawn_paste_request<F>(on_result: F)
+where
+    F: FnOnce(Option<String>) + Send + 'static,
+{
+    if PASTE_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("spiritty-clipboard-read".to_string())
+        .spawn(move || {
+            let text = read_clipboard_text_blocking();
+            PASTE_IN_FLIGHT.store(false, Ordering::Release);
+            on_result(text);
+        });
+}
+
+/// Bounded-timeout clipboard read kept for modal paste fields, where the result must
+/// mutate modal state synchronously (no event channel available). The read still runs
+/// on a background thread; the *caller's* thread waits at most `timeout`, so a hung
+/// clipboard manager degrades to a missed paste instead of a frozen UI.
+pub fn get_clipboard_text_timeout(timeout: std::time::Duration) -> Option<String> {
     let (tx, rx) = channel::<Option<String>>();
     let _ = std::thread::Builder::new()
         .name("spiritty-clipboard-read".to_string())
         .spawn(move || {
             let _ = tx.send(read_clipboard_text_blocking());
         });
-    rx.recv_timeout(std::time::Duration::from_millis(1500))
-        .ok()
-        .flatten()
+    rx.recv_timeout(timeout).ok().flatten()
 }
 
 fn read_clipboard_text_blocking() -> Option<String> {

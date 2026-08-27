@@ -171,6 +171,7 @@ impl PricingRegistry {
         let json = serde_json::to_string_pretty(&self.models)
             .context("Failed to serialize pricing cache")?;
         fs::write(&cache_file, json).context("Failed to write pricing.json cache")?;
+        crate::config::restrict_file_permissions(&cache_file);
         Ok(())
     }
 

@@ -564,6 +564,7 @@ IMPORTANT RULES:
             toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
         fs::write(&path, toml_str)
             .with_context(|| format!("Failed to write config file {:?}", path))?;
+        restrict_file_permissions(&path);
         Ok(())
     }
 
@@ -660,23 +661,63 @@ IMPORTANT RULES:
             }
         }
 
+        // Consult the process-level probe cache first: hitting the login shell from the
+        // UI thread on every provider creation used to block keydown handling for tens
+        // of milliseconds (and indefinitely under a slow shell init).
+        if let Some(cached) = shell_env_cache()
+            .lock()
+            .ok()
+            .and_then(|c| c.get(name).cloned())
+        {
+            return cached;
+        }
+
         // Probe default login shell (captures fish / zsh / bash export variables)
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let mut probed: Option<Option<String>> = None;
         if let Ok(output) = std::process::Command::new(&shell)
             .args(["-l", "-c", &format!("echo -n \"${}\"", name)])
             .output()
         {
             if output.status.success() {
                 let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !val.is_empty() {
+                let found = (!val.is_empty()).then_some(val);
+                if let Some(v) = &found {
+                    // SAFETY: single-threaded startup probe, before TUI tasks read this var.
                     unsafe {
-                        env::set_var(name, &val);
+                        env::set_var(name, v);
                     }
-                    return Some(val);
                 }
+                probed = Some(found);
             }
         }
-
-        None
+        let resolved = probed.unwrap_or(None);
+        if let Ok(mut cache) = shell_env_cache().lock() {
+            cache.insert(name.to_string(), resolved.clone());
+        }
+        resolved
     }
 }
+
+/// Process-level memoization of login-shell environment probes, so each variable is only
+/// ever probed once per run regardless of how often a provider is re-created.
+fn shell_env_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>>
+{
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Restricts an app-owned state file to owner-only access. Config files may hold API keys,
+/// session archives hold conversation history — all belong in private storage.
+#[cfg(unix)]
+pub fn restrict_file_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(err) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
+        tracing::warn!("Failed to restrict permissions on {:?}: {}", path, err);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn restrict_file_permissions(_path: &std::path::Path) {}

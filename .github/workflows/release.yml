@@ -73,7 +73,7 @@ jobs:
           cp LICENSE* dist/ 2>/dev/null || true
 
           cd dist
-          tar -czf "../${{ matrix.archive_name }}.tar.gz" spiritty README.md
+          tar -czf "../${{ matrix.archive_name }}.tar.gz" spiritty README.md LICENSE
           cd ..
           shasum -a 256 "${{ matrix.archive_name }}.tar.gz" > "${{ matrix.archive_name }}.tar.gz.sha256"
 

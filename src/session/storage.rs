@@ -105,6 +105,7 @@ impl SessionStorage {
             serde_json::to_string_pretty(session).context("Failed to serialize session to JSON")?;
         fs::write(&file_path, json)
             .with_context(|| format!("Failed to write session file to {:?}", file_path))?;
+        crate::config::restrict_file_permissions(&file_path);
         Ok(())
     }
 

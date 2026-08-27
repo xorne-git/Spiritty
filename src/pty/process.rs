@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::{
     env,
     io::{Read, Write},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -13,15 +16,22 @@ use super::vt::VtScreen;
 pub struct PtyProcess {
     master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    #[allow(dead_code)]
-    child: Box<dyn Child + Send + Sync>,
+    /// PID of the spawned shell, kept for `/proc/<pid>` inspection (SSH detection, CWD…).
+    /// The `Child` handle itself lives in a dedicated reaper thread that emits the exit
+    /// notification once `wait()` completes (see `spawn`), so no zombie is ever left.
+    child_pid: Option<u32>,
     screen: VtScreen,
     current_size: PtySize,
     shell: String,
 }
 
 impl PtyProcess {
-    pub fn spawn(rows: u16, cols: u16, output_tx: UnboundedSender<Vec<u8>>) -> Result<Self> {
+    pub fn spawn(
+        rows: u16,
+        cols: u16,
+        output_tx: UnboundedSender<Vec<u8>>,
+        exit_tx: UnboundedSender<()>,
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let size = PtySize {
             rows: rows.max(1),
@@ -85,7 +95,7 @@ precmd_functions+=(__spiritty_done)
             cmd.cwd(cwd);
         }
 
-        let child = pair
+        let mut child = pair
             .slave
             .spawn_command(cmd)
             .context("Failed to spawn shell process on PTY slave")?;
@@ -107,39 +117,66 @@ precmd_functions+=(__spiritty_done)
         let screen_clone = screen.clone();
         let writer_clone = Arc::clone(&writer);
 
+        // Single-shot exit signaling shared between the reader (EOF side) and the reaper
+        // (wait side): whichever observes the shell termination first notifies the app,
+        // exactly once.
+        let exited = Arc::new(AtomicBool::new(false));
+
+        // Dedicated reaper thread: reaps the child as soon as it terminates (no zombie)
+        // and emits the PTY-exit notification. Without this, `exit` typed inside the
+        // panel left Spiritty running on a dead PTY with an unreaped process behind it.
+        let child_pid = child.process_id();
+        {
+            let exited_reaper = Arc::clone(&exited);
+            let exit_tx_reaper = exit_tx.clone();
+            thread::spawn(move || {
+                let _status = child.wait();
+                if !exited_reaper.swap(true, Ordering::SeqCst) {
+                    let _ = exit_tx_reaper.send(());
+                }
+            });
+        }
+
         // Spawn background thread for continuous PTY output reading
-        thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // EOF
-                        break;
-                    }
-                    Ok(n) => {
-                        let data = buf[..n].to_vec();
+        {
+            let exited_reader = Arc::clone(&exited);
+            let exit_tx_reader = exit_tx;
+            thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => {
+                            // EOF: slave side closed — the shell has terminated.
+                            break;
+                        }
+                        Ok(n) => {
+                            let data = buf[..n].to_vec();
 
-                        // Respond immediately to terminal capability inquiries (DA1, DA2, DSR, CPR, OSC)
-                        respond_to_terminal_queries(&data, &writer_clone, &screen_clone);
+                            // Respond immediately to terminal capability inquiries (DA1, DA2, DSR, CPR, OSC)
+                            respond_to_terminal_queries(&data, &writer_clone, &screen_clone);
 
-                        screen_clone.process(&data);
-                        if output_tx.send(data).is_err() {
-                            // Receiver dropped, stop thread
+                            screen_clone.process(&data);
+                            if output_tx.send(data).is_err() {
+                                // Receiver dropped, stop thread
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            // Read error or PTY closed
                             break;
                         }
                     }
-                    Err(_) => {
-                        // Read error or PTY closed
-                        break;
-                    }
                 }
-            }
-        });
+                if !exited_reader.swap(true, Ordering::SeqCst) {
+                    let _ = exit_tx_reader.send(());
+                }
+            });
+        }
 
         Ok(Self {
             master: pair.master,
             writer,
-            child,
+            child_pid,
             screen,
             current_size: size,
             shell,
@@ -155,7 +192,7 @@ precmd_functions+=(__spiritty_done)
     }
 
     pub fn child_pid(&self) -> Option<u32> {
-        self.child.process_id()
+        self.child_pid
     }
 
     pub fn screen(&self) -> &VtScreen {

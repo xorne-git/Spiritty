@@ -83,6 +83,16 @@ pub struct PtyToolCapture {
     pub command: String,
     pub result_tx: Option<tokio::sync::oneshot::Sender<String>>,
     pub output_bytes: Vec<u8>,
+    /// Incrementally decoded text of `output_bytes`: each arriving chunk is UTF-8 decoded
+    /// once (with a small carry buffer for split multi-byte sequences) instead of the
+    /// entire buffer being re-decoded on every chunk — the old behavior degraded
+    /// quadratically during verbose command output.
+    pub decoded_text: String,
+    /// Raw tail bytes of an incomplete multi-byte UTF-8 sequence, flushed once complete.
+    pub pending_utf8: Vec<u8>,
+    /// First-complete sentinel sighting not yet terminated (`pos`, `prefix_len`, is_osc),
+    /// so later chunks only scan for its terminator instead of the whole buffer again.
+    pub sentinel_pending: Option<(usize, usize, bool)>,
     pub start_time: std::time::Instant,
     pub last_output_time: std::time::Instant,
     /// When `true`, the app records the `[RÉSULTAT...]` in the chat history and triggers the
@@ -151,13 +161,25 @@ impl App {
         initial_cols: u16,
     ) -> Result<Self> {
         let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        let pty = PtyProcess::spawn(initial_rows, initial_cols, pty_tx)?;
+        let (pty_exit_tx, mut pty_exit_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let pty = PtyProcess::spawn(initial_rows, initial_cols, pty_tx, pty_exit_tx)?;
 
         // Forward raw PTY output to unified event channel
         let forward_tx = event_tx.clone();
         tokio::spawn(async move {
             while let Some(bytes) = pty_rx.recv().await {
                 if forward_tx.send(AppEvent::PtyOutput(bytes)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Forward shell termination (EOF or reaped child) so the UI quits cleanly
+        // instead of staying on a dead PTY when the user types `exit`.
+        let exit_forward_tx = event_tx.clone();
+        tokio::spawn(async move {
+            while pty_exit_rx.recv().await.is_some() {
+                if exit_forward_tx.send(AppEvent::PtyExit).is_err() {
                     break;
                 }
             }
@@ -1388,8 +1410,10 @@ impl App {
         if let Some(ref mut capture) = self.active_pty_tool {
             let elapsed_since_start = capture.start_time.elapsed();
             let elapsed_since_last_output = capture.last_output_time.elapsed();
-            let raw_text = String::from_utf8_lossy(&capture.output_bytes).to_string();
-            let is_waiting_password = is_waiting_for_password(&raw_text);
+            let is_waiting_password = is_waiting_for_password(char_safe_tail(
+                &capture.decoded_text,
+                PASSWORD_WINDOW_BYTES,
+            ));
 
             let mut timeout_secs = 45u64;
             if is_waiting_password {
@@ -1417,14 +1441,14 @@ impl App {
 
             let has_output_settled = !shell_has_hooks
                 && !is_waiting_password
-                && !capture.output_bytes.is_empty()
+                && !capture.decoded_text.is_empty()
                 && elapsed_since_start >= std::time::Duration::from_millis(800)
                 && elapsed_since_last_output >= std::time::Duration::from_millis(3000);
 
             if has_output_settled
                 || elapsed_since_start > std::time::Duration::from_secs(timeout_secs)
             {
-                let clean_output = clean_pty_output(&raw_text, &capture.command);
+                let clean_output = clean_pty_output(&capture.decoded_text, &capture.command);
                 let final_summary = if clean_output.is_empty() {
                     "(Commande exécutée avec succès dans le terminal)".to_string()
                 } else {
@@ -1885,9 +1909,15 @@ impl App {
             KeyCode::Char('v') | KeyCode::Char('V')
                 if key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                if let Some(text) = crate::system::clipboard::get_clipboard_text() {
-                    self.handle_paste(text);
-                }
+                // Asynchronous paste: the clipboard read happens on a background thread and
+                // comes back as a regular Paste event, so a hung clipboard manager can never
+                // freeze the UI thread (the old path blocked up to 1.5 s per keystroke).
+                let paste_tx = self.event_tx.clone();
+                crate::system::clipboard::spawn_paste_request(move |text| {
+                    if let Some(text) = text {
+                        let _ = paste_tx.send(AppEvent::Paste(text));
+                    }
+                });
             }
             KeyCode::Char('\n') | KeyCode::Char('\r') => {
                 self.chat_input.insert(self.cursor_pos, '\n');
@@ -2162,6 +2192,9 @@ impl App {
             command,
             result_tx: Some(result_tx),
             output_bytes: Vec::new(),
+            decoded_text: String::new(),
+            pending_utf8: Vec::new(),
+            sentinel_pending: None,
             start_time: now,
             last_output_time: now,
             auto_prompt,
@@ -2205,66 +2238,99 @@ impl App {
             capture.output_bytes.extend_from_slice(bytes);
             capture.last_output_time = std::time::Instant::now();
 
-            let raw_text = String::from_utf8_lossy(&capture.output_bytes);
-            if is_waiting_for_password(&raw_text) {
+            // Incremental UTF-8 decode: only the newly arrived bytes are processed, with a
+            // carry for multi-byte sequences split across chunks. The whole-buffer
+            // from_utf8_lossy this replaces ran on every PTY chunk and made long-running,
+            // verbose commands degrade quadratically.
+            capture.pending_utf8.extend_from_slice(bytes);
+            utf8_decode_incremental(&mut capture.decoded_text, &mut capture.pending_utf8);
+
+            // Password prompts always appear at the tail of the current output — a bounded
+            // window keeps the check O(1) instead of O(buffer).
+            if is_waiting_for_password(char_safe_tail(&capture.decoded_text, PASSWORD_WINDOW_BYTES))
+            {
                 password_prompt_detected = true;
             }
 
-            let text = &raw_text;
-            // Check for the OSC 777 sentinel: \x1b]777;spiritty_done;<status>\x1b\\ or \x07.
+            // Locate the OSC 777 sentinel incrementally. Once seen (complete), its position
+            // is parked in `sentinel_pending` and subsequent chunks only search onward for
+            // the terminator instead of re-scanning the accumulated buffer.
+            //
             // NOTE: we must NOT match the bare `777;spiritty_done;` substring — the command echo
             // is literally `printf '\033]777;spiritty_done;%s\007' $?`, which contains that text
             // (as literal `\033`, no real ESC byte). Matching it would end the capture the moment
             // the command is echoed, mis-parse `\007` as a bogus exit code, and truncate the output.
-            let sentinel_pattern = if let Some(pos) = text.rfind("\x1b]777;spiritty_done;") {
-                Some((pos, 20, true))
-            } else {
-                text.rfind("__SPIRITTY_DONE__:").map(|pos| (pos, 18, false))
-            };
+            const OSC_PREFIX_LEN: usize = "\x1b]777;spiritty_done;".len();
+            const PLAIN_PREFIX_LEN: usize = "__SPIRITTY_DONE__:".len();
 
-            if let Some((pos, prefix_len, is_osc)) = sentinel_pattern {
-                let after = &text[pos + prefix_len..];
-                let found_terminator = if is_osc {
-                    after
-                        .find('\x1b')
-                        .or_else(|| after.find('\x07'))
-                        .or_else(|| after.find('\n'))
-                        .or_else(|| after.find('\r'))
-                        .or_else(|| after.find('\\'))
-                        .or_else(|| after.find(';'))
-                } else {
-                    after.find('\n').or_else(|| after.find('\r'))
-                };
+            if capture.sentinel_pending.is_none() {
+                // Only scan past what was already proven sentinel-free this session:
+                // from just-before the previous end so a pattern split across two chunks
+                // is still caught.
+                let scan_from = char_safe_floor(
+                    &capture.decoded_text,
+                    capture
+                        .decoded_text
+                        .len()
+                        .saturating_sub(OSC_PREFIX_LEN.max(PLAIN_PREFIX_LEN)),
+                );
+                if let Some(rel) =
+                    capture.decoded_text[scan_from..].rfind("\x1b]777;spiritty_done;")
+                {
+                    capture.sentinel_pending = Some((scan_from + rel, OSC_PREFIX_LEN, true));
+                } else if let Some(rel) =
+                    capture.decoded_text[scan_from..].rfind("__SPIRITTY_DONE__:")
+                {
+                    capture.sentinel_pending = Some((scan_from + rel, PLAIN_PREFIX_LEN, false));
+                }
+            }
 
-                if let Some(end_idx) = found_terminator {
-                    let code_str = after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
-                    let exit_code: i32 = code_str.parse().unwrap_or(0);
-                    let raw_output = &text[..pos];
-                    let clean_output = clean_pty_output(raw_output, &capture.command);
-                    let final_summary = if clean_output.is_empty() {
-                        if exit_code == 0 {
-                            "(Commande exécutée avec succès dans le terminal)".to_string()
-                        } else {
-                            format!("(Commande terminée avec le code {})", exit_code)
-                        }
-                    } else if exit_code == 0 {
-                        format!("Sortie dans le terminal:\n{}", clean_output)
+            if let Some((pos, prefix_len, is_osc)) = capture.sentinel_pending {
+                let text = &capture.decoded_text;
+                if pos + prefix_len <= text.len() {
+                    let after = &text[pos + prefix_len..];
+                    let found_terminator = if is_osc {
+                        after
+                            .find('\x1b')
+                            .or(after.find('\x07'))
+                            .or(after.find('\n'))
+                            .or(after.find('\r'))
+                            .or(after.find('\\'))
+                            .or(after.find(';'))
                     } else {
-                        format!(
-                            "Sortie dans le terminal (code {}):\n{}",
-                            exit_code, clean_output
-                        )
+                        after.find('\n').or(after.find('\r'))
                     };
 
-                    let command = capture.command.clone();
-                    let auto_prompt = capture.auto_prompt;
-                    let result_tx = capture.result_tx.take();
-                    self.active_pty_tool = None;
+                    if let Some(end_idx) = found_terminator {
+                        let code_str = after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
+                        let exit_code: i32 = code_str.parse().unwrap_or(0);
+                        let raw_output = &text[..pos];
+                        let clean_output = clean_pty_output(raw_output, &capture.command);
+                        let final_summary = if clean_output.is_empty() {
+                            if exit_code == 0 {
+                                "(Commande exécutée avec succès dans le terminal)".to_string()
+                            } else {
+                                format!("(Commande terminée avec le code {})", exit_code)
+                            }
+                        } else if exit_code == 0 {
+                            format!("Sortie dans le terminal:\n{}", clean_output)
+                        } else {
+                            format!(
+                                "Sortie dans le terminal (code {}):\n{}",
+                                exit_code, clean_output
+                            )
+                        };
 
-                    if auto_prompt {
-                        self.record_command_result(command, final_summary);
-                    } else if let Some(tx) = result_tx {
-                        let _ = tx.send(final_summary);
+                        let command = capture.command.clone();
+                        let auto_prompt = capture.auto_prompt;
+                        let result_tx = capture.result_tx.take();
+                        self.active_pty_tool = None;
+
+                        if auto_prompt {
+                            self.record_command_result(command, final_summary);
+                        } else if let Some(tx) = result_tx {
+                            let _ = tx.send(final_summary);
+                        }
                     }
                 }
             }
@@ -3660,9 +3726,110 @@ fn strip_ansi_sequences(s: &str) -> String {
     out
 }
 
+/// Max window used for tail-only checks (password prompts appear at the end of output).
+const PASSWORD_WINDOW_BYTES: usize = 1024;
+
+/// Largest index ≤ `byte_idx` that lies on a UTF-8 char boundary of `s`.
+fn char_safe_floor(s: &str, byte_idx: usize) -> usize {
+    let mut i = byte_idx.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Char-boundary-safe slice of at most the last `max_bytes` bytes of `s`.
+fn char_safe_tail(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        s
+    } else {
+        &s[char_safe_floor(s, s.len() - max_bytes)..]
+    }
+}
+
+/// Incremental UTF-8 decoder: appends newly valid bytes to `text`, carrying incomplete
+/// multi-byte sequences across calls and replacing genuinely invalid bytes with U+FFFD
+/// (matching `String::from_utf8_lossy` semantics without re-scanning the whole buffer).
+fn utf8_decode_incremental(text: &mut String, pending: &mut Vec<u8>) {
+    loop {
+        match std::str::from_utf8(pending) {
+            Ok(valid) => {
+                text.push_str(valid);
+                pending.clear();
+                break;
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                if valid_up_to > 0 {
+                    if let Ok(chunk) = std::str::from_utf8(&pending[..valid_up_to]) {
+                        text.push_str(chunk);
+                    }
+                    pending.drain(..valid_up_to);
+                }
+                match err.error_len() {
+                    Some(bad_len) => {
+                        // Genuinely invalid bytes: consume them, emit a replacement marker.
+                        text.push('\u{FFFD}');
+                        pending.drain(..bad_len.max(1));
+                    }
+                    None => break, // incomplete sequence: keep as carry
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{clean_pty_output, is_prompt_remnant};
+    use super::{
+        char_safe_floor, char_safe_tail, clean_pty_output, is_prompt_remnant,
+        utf8_decode_incremental,
+    };
+
+    #[test]
+    fn incremental_utf8_decoder_matches_lossy_semantics() {
+        let mut text = String::new();
+        let mut pending: Vec<u8> = Vec::new();
+
+        // A 4-byte emoji split across four chunks must survive intact.
+        for b in [0xF0u8, 0x9F, 0x91, 0x8D] {
+            pending.extend_from_slice(&[b]);
+            utf8_decode_incremental(&mut text, &mut pending);
+        }
+        assert_eq!(text, "\u{1F44D}");
+        assert!(pending.is_empty());
+
+        // Mixed: valid ASCII then é (2 bytes) split across two calls.
+        pending.extend_from_slice(b"ab\xc3");
+        utf8_decode_incremental(&mut text, &mut pending);
+        assert_eq!(text, "\u{1F44D}ab");
+        pending.extend_from_slice(&[0xA9, b'c']);
+        utf8_decode_incremental(&mut text, &mut pending);
+        assert_eq!(text, "\u{1F44D}ab\u{e9}c");
+    }
+
+    #[test]
+    fn incremental_decoder_replaces_invalid_bytes() {
+        let mut text = String::new();
+        let mut pending: Vec<u8> = Vec::new();
+        pending.extend_from_slice(b"ok");
+        utf8_decode_incremental(&mut text, &mut pending);
+        // 0xFF is invalid UTF-8: consumed in one stride, replaced like from_utf8_lossy does.
+        pending.extend_from_slice(&[0xFF, b'!']);
+        utf8_decode_incremental(&mut text, &mut pending);
+        assert_eq!(text, "ok\u{FFFD}!");
+    }
+
+    #[test]
+    fn char_safe_helpers_never_split_multibyte() {
+        let s = "aé👍xyz"; // multibyte interior
+        assert_eq!(char_safe_floor(s, s.len()), s.len());
+        assert!(s.is_char_boundary(char_safe_floor(s, s.len() - 1)));
+        assert!(s.is_char_boundary(char_safe_floor(s, 2)));
+        let tail = char_safe_tail(s, 3);
+        assert!(tail.chars().count() <= 6);
+        assert!(s.ends_with(tail));
+    }
 
     #[test]
     fn strips_git_aware_prompt_remnant() {

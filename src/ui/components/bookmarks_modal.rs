@@ -125,7 +125,9 @@ impl BookmarksModalState {
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
 
         if is_paste && !matches!(self.add_state, AddHostState::None) {
-            if let Some(text) = crate::system::clipboard::get_clipboard_text() {
+            if let Some(text) = crate::system::clipboard::get_clipboard_text_timeout(
+                std::time::Duration::from_millis(1000),
+            ) {
                 self.handle_paste(text);
                 return None;
             }
