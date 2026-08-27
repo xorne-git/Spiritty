@@ -142,9 +142,13 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
   - Capture PTY incrémentale : fin du O(n²) sur commandes verbeuses (décodage UTF-8 avec carry, fenêtres bornées, watermark sentinel).
   - Nettoyage des propositions LLM : lignes interpréteur parasites (`bash`, shebangs, `exit` orphelins) supprimées ; prose/tabulations de sortie ne deviennent plus des cartes ⚡.
   - Provider Z.ai (GLM/Zhipu) ajouté avec pricing intégré et détection d'alias.
+- [x] **Hardening v0.5.0 — Boucle d'outils fiable & UI indestructible :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
+  - Boucle d'outils textuels réellement exécutée à nouveau (markup DSML hybride DeepSeek/GLM parsé) ; échos corrompus des redraws SSH reconnus et retirés — plus d'hallucinations « saboteur » nourries par l'écho.
+  - Fiabilité : écritures PTY off-thread (plus aucun freeze UI sur SSH calé), capture plafonnée à 1 Mio avec nettoyage paresseux + avis de troncature, restauration terminal sur SIGTERM/SIGINT/SIGHUP.
+  - UX : timer « 💭 Deep thinking… » ré-armé à chaque segment de réflexion, plus de double prompt `Alt+N`/`F10` sur une même commande (snippet inerté + Alt+N bloqué pendant un consentement ou une capture).
 - [ ] **Tests de Robustesse :**
   - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).
-  - Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP`.
+  - [x] Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP` (restauration complète du terminal + sortie `128+signal`, même UI figée).
 - [x] **Packaging & Distribution Automatisée :**
   - Script d'installation universel one-line `install.sh` (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) avec détection automatique de l'OS et de l'architecture (`x86_64`, `aarch64`, macOS).
   - Pipeline de publication automatisé GitHub Actions multi-cibles (`release.yml`) générant les binaires allégés (`strip`) et les archives tarball sur chaque tag `v*`.
