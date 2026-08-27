@@ -134,6 +134,14 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
   - Redimensionnement fluide de la séparation gauche/droite à la souris (glisser-déposer) ou au clavier (`Alt + ←` / `Alt + →`).
   - Persistance automatique de la taille des panneaux (`split_ratio`), de la configuration MCP et du thème actif dans `~/.config/spiritty/config.toml`.
   - Diagnostics d'erreur explicites lors de pannes de connexion LLM (serveurs locaux éteints, timeout, erreurs réseau).
+- [x] **Hardening v0.4.5 — Sécurité, Perf & Fiabilité (audit complet) :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
+  - Sécurité human-in-the-loop : faille « Entrée-vide approuve la commande en attente » fermée ; taxonomie de risque à 4 niveaux (`Safe / Standard / Sudo / Risky`) avec auto-approbation `Sudo` couvrant les commandes élevées read-only.
+  - Hygiène des secrets : `config.toml`/`hosts.json`/sessions/pricing écrits en 0600, clé API jamais réaffichée dans la modale (masquage + conservation si vide).
+  - Cycle de vie PTY : sortie propre sur `exit` du shell (`PtyExit` + reaper thread), plus aucun zombie ni panneau figé.
+  - Thread UI jamais bloqué : Ctrl+V asynchrone, probe ENV mémoïsée, scan `/proc` borné (1,5 s TTL).
+  - Capture PTY incrémentale : fin du O(n²) sur commandes verbeuses (décodage UTF-8 avec carry, fenêtres bornées, watermark sentinel).
+  - Nettoyage des propositions LLM : lignes interpréteur parasites (`bash`, shebangs, `exit` orphelins) supprimées ; prose/tabulations de sortie ne deviennent plus des cartes ⚡.
+  - Provider Z.ai (GLM/Zhipu) ajouté avec pricing intégré et détection d'alias.
 - [ ] **Tests de Robustesse :**
   - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).
   - Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP`.

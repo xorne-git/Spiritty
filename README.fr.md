@@ -75,14 +75,14 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 - **Gestion PTY :** [`portable-pty`](https://crates.io/crates/portable-pty).
 - **Émulation de Terminal (VT100/ANSI) :** [`vt100`](https://crates.io/crates/vt100).
 - **Runtime Asynchrone :** [`tokio`](https://tokio.rs/).
-- **Connectivité LLM :** Multi-fournisseurs (Ollama local, LM Studio, Gemini, Claude/Anthropic, OpenAI, DeepSeek, Grok).
+- **Connectivité LLM :** Multi-fournisseurs (Ollama local, LM Studio, Gemini, Claude/Anthropic, OpenAI, DeepSeek, Grok, Z.ai GLM).
 
 ---
 
 ## 🚀 Fonctionnalités Clés
 
 - [x] **Split-Screen Ergonomique :** Agent à gauche, Shell natif interactif (`$SHELL`) à droite avec redimensionnement interactif (souris ou `Alt+Left/Right`).
-- [x] **Multi-Fournisseurs LLM :** Support complet pour LM Studio, Ollama local, Google Gemini, Anthropic Claude, OpenAI, DeepSeek et xAI (Grok) avec détection automatique de la taille de contexte.
+- [x] **Multi-Fournisseurs LLM :** Support complet pour LM Studio, Ollama local, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok) et Z.ai (GLM) avec détection automatique de la taille de contexte.
 - [x] **Gestionnaire de Sessions & Compactage :**
   - Sauvegarde et restauration complètes des sessions dans `~/.config/spiritty/sessions/`.
   - Modale interactive de sessions (`Ctrl + H`) et nouvelle session instantanée (`Ctrl + N`).
@@ -162,9 +162,10 @@ spiritty --help
 
 ## 📂 Documentation du Projet
 
-- 📐 **[ARCHITECTURE.md](file:///home/xorne/Projets/Spiritty/ARCHITECTURE.md)** : Spécifications techniques et conception des sous-systèmes.
-- 🗺️ **[ROADMAP.md](file:///home/xorne/Projets/Spiritty/ROADMAP.md)** : Étapes de développement et jalons des versions.
-- 🤖 **[AGENTS.md](file:///home/xorne/Projets/Spiritty/AGENTS.md)** : Directives de développement et règles pour les assistants IA contribuant au projet.
+- 📐 **[ARCHITECTURE.md](ARCHITECTURE.md)** : Spécifications techniques et conception des sous-systèmes.
+- 🗺️ **[ROADMAP.md](ROADMAP.md)** : Étapes de développement et jalons des versions.
+- 🤖 **[AGENTS.md](AGENTS.md)** : Directives de développement et règles pour les assistants IA contribuant au projet.
+- 📜 **[CHANGELOG.md](CHANGELOG.md)** : Historique détaillé des modifications entre chaque release.
 
 ---
 

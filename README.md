@@ -75,14 +75,14 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 - **PTY Engine:** [`portable-pty`](https://crates.io/crates/portable-pty).
 - **Terminal Emulation (VT100/ANSI):** [`vt100`](https://crates.io/crates/vt100).
 - **Async Runtime:** [`tokio`](https://tokio.rs/).
-- **LLM Connectivity:** Multi-provider support (Local Ollama, LM Studio, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI Grok).
+- **LLM Connectivity:** Multi-provider support (Local Ollama, LM Studio, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI Grok, Z.ai GLM).
 
 ---
 
 ## 🚀 Key Features
 
 - [x] **Ergonomic Split-Screen:** AI Agent on the left, native interactive shell (`$SHELL`) on the right with interactive resizing (mouse drag or `Alt+Left/Right`).
-- [x] **Multi-Provider LLM Engine:** Native streaming support for LM Studio, Ollama, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, and xAI (Grok) with dynamic context window auto-detection.
+- [x] **Multi-Provider LLM Engine:** Native streaming support for LM Studio, Ollama, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok), and Z.ai (GLM) with dynamic context window auto-detection.
 - [x] **Session Management & Smart Compaction:**
   - Full session persistence stored in `~/.config/spiritty/sessions/`.
   - Interactive session browser modal (`Ctrl + H`) and instant clean session creation (`Ctrl + N`).
@@ -162,9 +162,10 @@ spiritty --help
 
 ## 📂 Project Documentation
 
-- 📐 **[ARCHITECTURE.md](file:///home/xorne/Projets/Spiritty/ARCHITECTURE.md)**: Technical architecture and subsystem designs.
-- 🗺️ **[ROADMAP.md](file:///home/xorne/Projets/Spiritty/ROADMAP.md)** : Development milestones and release plan.
-- 🤖 **[AGENTS.md](file:///home/xorne/Projets/Spiritty/AGENTS.md)** : Engineering guidelines and conventions for AI contributors.
+- 📐 **[ARCHITECTURE.md](ARCHITECTURE.md)**: Technical architecture and subsystem designs.
+- 🗺️ **[ROADMAP.md](ROADMAP.md)** : Development milestones and release plan.
+- 🤖 **[AGENTS.md](AGENTS.md)** : Engineering guidelines and conventions for AI contributors.
+- 📜 **[CHANGELOG.md](CHANGELOG.md)** : Detailed history of changes between releases.
 
 ---
 
