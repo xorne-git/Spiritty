@@ -24,18 +24,28 @@ fn test_session_creation_and_title_generation() {
         },
     ];
 
-    let prompt_history = vec!["Comment vérifier l'utilisation de la RAM avec free -h ?".to_string()];
-    session.update_from_chat(&messages, &prompt_history, 120, "Google Gemini", "gemini-2.5-flash");
+    let prompt_history =
+        vec!["Comment vérifier l'utilisation de la RAM avec free -h ?".to_string()];
+    session.update_from_chat(
+        &messages,
+        &prompt_history,
+        120,
+        "Google Gemini",
+        "gemini-2.5-flash",
+    );
     assert_eq!(session.messages.len(), 2);
     assert_eq!(session.prompt_history.len(), 1);
     assert_eq!(session.total_tokens, 120);
-    assert_eq!(session.title, "Comment vérifier l'utilisation de la RAM avec");
+    assert_eq!(
+        session.title,
+        "Comment vérifier l'utilisation de la RAM avec"
+    );
 }
 
 #[test]
 fn test_session_compaction() {
     let mut session = Session::new("LM Studio", "qwen2.5-coder-7b");
-    
+
     // With 4 or fewer messages, compact() does not shrink history
     let short_messages = vec![
         ChatMessage {
@@ -50,7 +60,13 @@ fn test_session_compaction() {
         },
     ];
     let short_history = vec!["Première question".to_string()];
-    session.update_from_chat(&short_messages, &short_history, 50, "LM Studio", "qwen2.5-coder-7b");
+    session.update_from_chat(
+        &short_messages,
+        &short_history,
+        50,
+        "LM Studio",
+        "qwen2.5-coder-7b",
+    );
     assert!(!session.compact());
     assert_eq!(session.messages.len(), 2);
 
@@ -71,7 +87,13 @@ fn test_session_compaction() {
         });
     }
     // Total 16 messages
-    session.update_from_chat(&long_messages, &long_history, 500, "LM Studio", "qwen2.5-coder-7b");
+    session.update_from_chat(
+        &long_messages,
+        &long_history,
+        500,
+        "LM Studio",
+        "qwen2.5-coder-7b",
+    );
     assert_eq!(session.messages.len(), 16);
     assert_eq!(session.prompt_history.len(), 8);
 
@@ -87,7 +109,7 @@ fn test_session_compaction() {
 #[test]
 fn test_session_greeting_refinement() {
     let mut session = Session::new("DeepSeek", "deepseek-v4-flash");
-    
+
     // First message is a simple greeting
     let msgs_greeting = vec![
         ChatMessage {
@@ -101,7 +123,13 @@ fn test_session_greeting_refinement() {
             command_proposal: None,
         },
     ];
-    session.update_from_chat(&msgs_greeting, &["salut".to_string()], 50, "DeepSeek", "deepseek-v4-flash");
+    session.update_from_chat(
+        &msgs_greeting,
+        &["salut".to_string()],
+        50,
+        "DeepSeek",
+        "deepseek-v4-flash",
+    );
     assert_eq!(session.title, "Nouvelle session");
 
     // Next message is a real substantive question
@@ -111,7 +139,16 @@ fn test_session_greeting_refinement() {
         content: "ma session dms+niri ne démarre plus".to_string(),
         command_proposal: None,
     });
-    session.update_from_chat(&msgs_full, &["salut".to_string(), "ma session dms+niri ne démarre plus".to_string()], 100, "DeepSeek", "deepseek-v4-flash");
+    session.update_from_chat(
+        &msgs_full,
+        &[
+            "salut".to_string(),
+            "ma session dms+niri ne démarre plus".to_string(),
+        ],
+        100,
+        "DeepSeek",
+        "deepseek-v4-flash",
+    );
     assert_eq!(session.title, "ma session dms+niri ne démarre plus");
 }
 
@@ -235,11 +272,15 @@ async fn test_app_load_session_shortcut() {
     assert_eq!(app.current_session.id, "test_load_123");
     assert_eq!(app.messages.len(), 2);
     assert_eq!(app.messages[0].content, "Question sauvegardée");
-    assert_eq!(app.config.default_provider, spiritty::config::ProviderType::DeepSeek);
-    assert_eq!(app.config.providers.get("deepseek").unwrap().model, "deepseek-v4-flash");
+    assert_eq!(
+        app.config.default_provider,
+        spiritty::config::ProviderType::DeepSeek
+    );
+    assert_eq!(
+        app.config.providers.get("deepseek").unwrap().model,
+        "deepseek-v4-flash"
+    );
 
     let _ = SessionStorage::delete("test_load_123");
     let _ = SessionStorage::delete(&initial_app_id);
 }
-
-

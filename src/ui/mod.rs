@@ -90,7 +90,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // 2.3 Show subtle split drag guide only when actively dragging
     if app.is_dragging_split {
         let split_x = chat_area.right().saturating_sub(1);
-        let drag_style = Style::default().fg(palette.warning).add_modifier(Modifier::BOLD);
+        let drag_style = Style::default()
+            .fg(palette.warning)
+            .add_modifier(Modifier::BOLD);
         for y in workspace_area.top()..workspace_area.bottom() {
             buf.set_string(split_x, y, "│", drag_style);
         }
@@ -119,10 +121,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
 
         if inner.width > 0 && inner.height > 0 {
-            let s_x = sel.start.0.clamp(inner.left(), inner.right().saturating_sub(1));
-            let s_y = sel.start.1.clamp(inner.top(), inner.bottom().saturating_sub(1));
-            let e_x = sel.end.0.clamp(inner.left(), inner.right().saturating_sub(1));
-            let e_y = sel.end.1.clamp(inner.top(), inner.bottom().saturating_sub(1));
+            let s_x = sel
+                .start
+                .0
+                .clamp(inner.left(), inner.right().saturating_sub(1));
+            let s_y = sel
+                .start
+                .1
+                .clamp(inner.top(), inner.bottom().saturating_sub(1));
+            let e_x = sel
+                .end
+                .0
+                .clamp(inner.left(), inner.right().saturating_sub(1));
+            let e_y = sel
+                .end
+                .1
+                .clamp(inner.top(), inner.bottom().saturating_sub(1));
 
             let (p1, p2) = if (s_y, s_x) <= (e_y, e_x) {
                 ((s_x, s_y), (e_x, e_y))
@@ -149,7 +163,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     if let Some(cell) = buf.cell_mut((col, row)) {
                         row_str.push_str(cell.symbol());
                         if sel.is_selecting {
-                            cell.set_style(Style::default().bg(palette.selection_bg).fg(palette.text_primary));
+                            cell.set_style(
+                                Style::default()
+                                    .bg(palette.selection_bg)
+                                    .fg(palette.text_primary),
+                            );
                         }
                     }
                 }
@@ -173,7 +191,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Render horizontal footer divider liseret (1px centered line)
     let footer_div_style = Style::default().fg(palette.accent_primary);
     for x in footer_divider_area.left()..footer_divider_area.right() {
-        frame.buffer_mut().set_string(x, footer_divider_area.top(), "─", footer_div_style);
+        frame
+            .buffer_mut()
+            .set_string(x, footer_divider_area.top(), "─", footer_div_style);
     }
 
     // Render 1-line Info Footer at bottom
@@ -236,7 +256,13 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
     let width = area.width as usize;
 
     // 1. Build Left Metrics with full priority (reserving a tiny minimum for essential shortcuts if window allows)
-    let min_reserved_for_shortcuts = if width >= 30 { 14 } else if width >= 15 { 6 } else { 0 };
+    let min_reserved_for_shortcuts = if width >= 30 {
+        14
+    } else if width >= 15 {
+        6
+    } else {
+        0
+    };
     let max_left_width = width.saturating_sub(min_reserved_for_shortcuts);
 
     let (left_spans, cost_range) = build_left_metrics(app, lang, max_left_width);
@@ -284,108 +310,274 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
 
     if available_width >= 82 {
         // Tier 1: Full Powerline pills with all shortcuts
-        right.push(Span::styled(lang.t(I18nKey::FooterApprovalLabel), Style::default().fg(Color::DarkGray)));
+        right.push(Span::styled(
+            lang.t(I18nKey::FooterApprovalLabel),
+            Style::default().fg(Color::DarkGray),
+        ));
         right.extend(key_pill("F3", auto_badge_color));
-        right.push(Span::styled(format!(" {} ", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            format!(" {} ", auto_badge_text),
+            Style::default()
+                .fg(auto_badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         right.push(Span::raw(" "));
         right.extend(key_pill("Ctrl", Color::Magenta));
         right.push(Span::raw(" "));
         right.extend(key_pill("P", Color::Magenta));
-        right.push(Span::styled(" Config ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            " Config ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         right.push(Span::raw(" "));
         right.extend(key_pill("Ctrl", Color::Cyan));
         right.push(Span::raw(" "));
         right.extend(key_pill("B", Color::Cyan));
-        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            " Hosts ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         right.push(Span::raw(" "));
         right.extend(key_pill("Ctrl", Color::Rgb(140, 100, 240)));
         right.push(Span::raw(" "));
         right.extend(key_pill("M", Color::Rgb(140, 100, 240)));
-        right.push(Span::styled(" MCP ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            " MCP ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         right.push(Span::raw(" "));
         right.extend(key_pill("Ctrl", Color::LightCyan));
         right.push(Span::raw(" "));
         right.extend(key_pill("H", Color::LightCyan));
-        right.push(Span::styled(" Sessions ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            " Sessions ",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ));
 
         right.push(Span::raw(" "));
         right.extend(key_pill("F1", Color::Cyan));
         right.push(Span::styled(
-            if lang == Language::Fr { " Aide " } else { " Help " },
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            if lang == Language::Fr {
+                " Aide "
+            } else {
+                " Help "
+            },
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ));
     } else if available_width >= 50 {
         // Tier 2: Compact badges with all shortcuts
-        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            format!("F3:{}", auto_badge_text),
+            Style::default()
+                .fg(auto_badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::raw("  "));
 
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("^B", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^B",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("^M", Style::default().fg(Color::Rgb(140, 100, 240)).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^M",
+            Style::default()
+                .fg(Color::Rgb(140, 100, 240))
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" MCP  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("^H", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^H",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Sess  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right.push(Span::styled(
+            if lang == Language::Fr {
+                " Aide"
+            } else {
+                " Help"
+            },
+            Style::default().fg(Color::White),
+        ));
     } else if available_width >= 36 {
         // Tier 3: F3, ^P Config, ^B Hosts, F1 Aide
-        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            format!("F3:{}", auto_badge_text),
+            Style::default()
+                .fg(auto_badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::raw("  "));
 
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("^B", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^B",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right.push(Span::styled(
+            if lang == Language::Fr {
+                " Aide"
+            } else {
+                " Help"
+            },
+            Style::default().fg(Color::White),
+        ));
     } else if available_width >= 24 {
         // Tier 4: F3, ^P Config, F1 Aide
-        right.push(Span::styled(format!("F3:{}", auto_badge_text), Style::default().fg(auto_badge_color).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            format!("F3:{}", auto_badge_text),
+            Style::default()
+                .fg(auto_badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::raw("  "));
 
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right.push(Span::styled(
+            if lang == Language::Fr {
+                " Aide"
+            } else {
+                " Help"
+            },
+            Style::default().fg(Color::White),
+        ));
     } else if available_width >= 18 {
         // Tier 5: Essential ^P Config + F1 Aide
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
 
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
-        right.push(Span::styled(if lang == Language::Fr { " Aide" } else { " Help" }, Style::default().fg(Color::White)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        right.push(Span::styled(
+            if lang == Language::Fr {
+                " Aide"
+            } else {
+                " Help"
+            },
+            Style::default().fg(Color::White),
+        ));
     } else if available_width >= 12 {
         // Tier 6: ^P Config F1
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
     } else if available_width >= 6 {
         // Tier 7: ^P F1
-        right.push(Span::styled("^P", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "^P",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
         right.push(Span::raw(" "));
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
     } else if available_width >= 2 {
         // Tier 8: F1
-        right.push(Span::styled("F1", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        right.push(Span::styled(
+            "F1",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     right
 }
 
-fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<'static>>, Option<(usize, usize)>) {
+fn build_left_metrics(
+    app: &App,
+    lang: Language,
+    max_width: usize,
+) -> (Vec<Span<'static>>, Option<(usize, usize)>) {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current_width = 0;
     let mut cost_col_range = None;
@@ -409,8 +601,18 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
     let spinner_char = get_spinner_char(app.spinner_frame);
 
     // 1. Provider
-    let p_icon = Span::styled(" 󰚩 ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
-    let p_name = Span::styled(provider_name.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    let p_icon = Span::styled(
+        " 󰚩 ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    let p_name = Span::styled(
+        provider_name.to_string(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
     let p_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
 
     let p_w = p_icon.width() + p_name.width() + p_sep.width();
@@ -424,9 +626,19 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
     // 2. Model Name
     let m_span = if is_generating {
         if is_active_generating {
-            Span::styled(format!("{} {}", spinner_char, model_name), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            Span::styled(
+                format!("{} {}", spinner_char, model_name),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            Span::styled(format!("● {}", model_name), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            Span::styled(
+                format!("● {}", model_name),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
         }
     } else {
         Span::styled(model_name, Style::default().fg(Color::LightCyan))
@@ -468,46 +680,68 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
         spans.push(t_val);
     }
 
-    // 4. Cost estimation (if > $0.0001)
-    let cost = if let Ok(guard) = app.pricing_registry.try_read() {
-        app.current_session.estimated_cost_with_pricing(&guard)
-    } else {
-        app.current_session.estimated_cost_usd()
-    };
-    if cost > 0.00005 {
-        let is_deepseek = app.current_session.provider.to_lowercase().contains("deepseek")
-            || app.current_session.model.to_lowercase().contains("deepseek")
-            || matches!(app.config.default_provider, crate::config::ProviderType::DeepSeek);
+    // 4. Cost estimation — shown ONLY when a tariff is actually configured for the active
+    //    model; unknown models display nothing rather than an invented price.
+    let known_cost = app
+        .pricing_registry
+        .try_read()
+        .ok()
+        .and_then(|guard| app.current_session.estimated_cost_opt(&guard));
+    if let Some(cost) = known_cost {
+        if cost > 0.00005 {
+            let is_deepseek = app
+                .current_session
+                .provider
+                .to_lowercase()
+                .contains("deepseek")
+                || app
+                    .current_session
+                    .model
+                    .to_lowercase()
+                    .contains("deepseek")
+                || matches!(
+                    app.config.default_provider,
+                    crate::config::ProviderType::DeepSeek
+                );
 
-        let is_offpeak = is_deepseek && crate::pricing::is_deepseek_offpeak(chrono::Utc::now());
-        let cost_color = if is_deepseek {
-            if is_offpeak {
-                Color::LightGreen
+            let is_offpeak = is_deepseek && crate::pricing::is_deepseek_offpeak(chrono::Utc::now());
+            let cost_color = if is_deepseek {
+                if is_offpeak {
+                    Color::LightGreen
+                } else {
+                    Color::Rgb(240, 140, 40) // Orange for Peak
+                }
             } else {
-                Color::Rgb(240, 140, 40) // Orange for Peak
+                Color::LightGreen
+            };
+
+            let c_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+            let c_icon = Span::styled("💵 ", Style::default().fg(cost_color));
+            let c_val = Span::styled(
+                format!("${:.4}", cost),
+                Style::default().fg(cost_color).add_modifier(Modifier::BOLD),
+            );
+            let c_w = c_sep.width() + c_icon.width() + c_val.width();
+
+            if current_width + c_w <= max_width {
+                cost_col_range = Some((current_width, current_width + c_w));
+                current_width += c_w;
+                spans.push(c_sep);
+                spans.push(c_icon);
+                spans.push(c_val);
             }
-        } else {
-            Color::LightGreen
-        };
-
-        let c_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-        let c_icon = Span::styled("💵 ", Style::default().fg(cost_color));
-        let c_val = Span::styled(format!("${:.4}", cost), Style::default().fg(cost_color).add_modifier(Modifier::BOLD));
-        let c_w = c_sep.width() + c_icon.width() + c_val.width();
-
-        if current_width + c_w <= max_width {
-            cost_col_range = Some((current_width, current_width + c_w));
-            current_width += c_w;
-            spans.push(c_sep);
-            spans.push(c_icon);
-            spans.push(c_val);
         }
     }
 
     // 5. Context window usage
     let ctx_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
     let ctx_icon = Span::styled("📊 ", Style::default().fg(Color::Magenta));
-    let ctx_str = format!("Ctx: {} / {} ({:.0}%)", format_token_count(ctx_used), format_token_count(ctx_total), ctx_pct);
+    let ctx_str = format!(
+        "Ctx: {} / {} ({:.0}%)",
+        format_token_count(ctx_used),
+        format_token_count(ctx_total),
+        ctx_pct
+    );
     let ctx_val = Span::styled(ctx_str, Style::default().fg(Color::Gray));
     let ctx_w = ctx_sep.width() + ctx_icon.width() + ctx_val.width();
 
@@ -528,7 +762,12 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
             } else {
                 format!("Copied ({} chars)", len)
             };
-            let toast_val = Span::styled(msg, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+            let toast_val = Span::styled(
+                msg,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            );
             let toast_w = toast_sep.width() + toast_icon.width() + toast_val.width();
             if current_width + toast_w <= max_width {
                 spans.push(toast_sep);
@@ -539,7 +778,12 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
     } else if let Some((time, ref msg)) = app.toast_message {
         if time.elapsed().as_millis() < 4500 {
             let toast_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-            let toast_val = Span::styled(msg.clone(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+            let toast_val = Span::styled(
+                msg.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
             let toast_w = toast_sep.width() + toast_val.width();
             if current_width + toast_w <= max_width {
                 spans.push(toast_sep);
@@ -551,17 +795,31 @@ fn build_left_metrics(app: &App, lang: Language, max_width: usize) -> (Vec<Span<
     (spans, cost_col_range)
 }
 
-fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x: u16, lang: Language) {
+fn render_pricing_tooltip(
+    app: &App,
+    footer_area: Rect,
+    buf: &mut Buffer,
+    cost_x: u16,
+    lang: Language,
+) {
     let prov_str = app.get_active_provider_name();
     let model_str = app.get_active_model_name();
     let is_deepseek = prov_str.to_lowercase().contains("deepseek")
         || model_str.to_lowercase().contains("deepseek")
-        || matches!(app.config.default_provider, crate::config::ProviderType::DeepSeek);
+        || matches!(
+            app.config.default_provider,
+            crate::config::ProviderType::DeepSeek
+        );
 
-    let pricing = if let Ok(guard) = app.pricing_registry.try_read() {
-        guard.get_pricing(prov_str, &model_str)
-    } else {
-        crate::pricing::ModelPricing::free()
+    // A rate is only ever displayed when one is actually configured for this model.
+    let known_pricing = app
+        .pricing_registry
+        .try_read()
+        .ok()
+        .and_then(|guard| guard.get_pricing(prov_str, &model_str));
+    let Some(pricing) = known_pricing else {
+        render_unknown_pricing_tooltip(footer_area, buf, cost_x, lang, &model_str);
+        return;
     };
 
     let is_offpeak = is_deepseek && crate::pricing::is_deepseek_offpeak(chrono::Utc::now());
@@ -577,7 +835,12 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
             if lang == Language::Fr {
                 l.push(Line::from(vec![
                     Span::styled("• Statut  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Heures creuses actives (-50%)", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Heures creuses actives (-50%)",
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Modèle  : ", Style::default().fg(Color::DarkGray)),
@@ -585,20 +848,38 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Prompt  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok (réduit)", pricing.prompt), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok (réduit)", pricing.prompt),
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Output  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok (réduit)", pricing.completion), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok (réduit)", pricing.completion),
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Horaires: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Week-end 24/24 & Semaine (12h-03h / 06h-08h FR)", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        "Week-end 24/24 & Semaine (12h-03h / 06h-08h FR)",
+                        Style::default().fg(Color::Gray),
+                    ),
                 ]));
             } else {
                 l.push(Line::from(vec![
                     Span::styled("• Status  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Off-Peak Active (-50%)", Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Off-Peak Active (-50%)",
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Model   : ", Style::default().fg(Color::DarkGray)),
@@ -606,15 +887,28 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Prompt  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok (discounted)", pricing.prompt), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok (discounted)", pricing.prompt),
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Output  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok (discounted)", pricing.completion), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok (discounted)", pricing.completion),
+                        Style::default()
+                            .fg(Color::LightGreen)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Hours   : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Weekends 24/7 & Weekdays off-peak UTC", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        "Weekends 24/7 & Weekdays off-peak UTC",
+                        Style::default().fg(Color::Gray),
+                    ),
                 ]));
             }
             (title, Color::LightGreen, l)
@@ -628,7 +922,12 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
             if lang == Language::Fr {
                 l.push(Line::from(vec![
                     Span::styled("• Statut  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Heures pleines actives (Standard)", Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Heures pleines actives (Standard)",
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Modèle  : ", Style::default().fg(Color::DarkGray)),
@@ -636,20 +935,38 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Prompt  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok", pricing.prompt), Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok", pricing.prompt),
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Output  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok", pricing.completion), Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok", pricing.completion),
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Conseil : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Tarif -50% actif dès 12h00 FR (10:00 UTC)", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        "Tarif -50% actif dès 12h00 FR (10:00 UTC)",
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]));
             } else {
                 l.push(Line::from(vec![
                     Span::styled("• Status  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Peak Hours (Standard)", Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "Peak Hours (Standard)",
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Model   : ", Style::default().fg(Color::DarkGray)),
@@ -657,15 +974,28 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Prompt  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok", pricing.prompt), Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok", pricing.prompt),
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Output  : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("${:.3} / 1M tok", pricing.completion), Style::default().fg(Color::Rgb(240, 140, 40)).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!("${:.3} / 1M tok", pricing.completion),
+                        Style::default()
+                            .fg(Color::Rgb(240, 140, 40))
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]));
                 l.push(Line::from(vec![
                     Span::styled("• Tip     : ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("-50% discount resumes at 10:00 UTC", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        "-50% discount resumes at 10:00 UTC",
+                        Style::default().fg(Color::Yellow),
+                    ),
                 ]));
             }
             (title, Color::Rgb(240, 140, 40), l)
@@ -679,17 +1009,34 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
         ]));
         l.push(Line::from(vec![
             Span::styled("• Prompt  : ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("${:.3} / 1M tok", pricing.prompt), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("${:.3} / 1M tok", pricing.prompt),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         l.push(Line::from(vec![
             Span::styled("• Output  : ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("${:.3} / 1M tok", pricing.completion), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("${:.3} / 1M tok", pricing.completion),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         (title, Color::Cyan, l)
     };
 
-    let max_line_len = lines.iter().map(|l| l.width()).max().unwrap_or(50).max(title.chars().count() + 2);
-    let tooltip_width = ((max_line_len as u16) + 4).clamp(52, 72).min(footer_area.width.saturating_sub(2));
+    let max_line_len = lines
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(50)
+        .max(title.chars().count() + 2);
+    let tooltip_width = ((max_line_len as u16) + 4)
+        .clamp(52, 72)
+        .min(footer_area.width.saturating_sub(2));
     let tooltip_height = (lines.len() as u16) + 2;
     let tooltip_x = cost_x
         .saturating_sub(2)
@@ -702,7 +1049,91 @@ fn render_pricing_tooltip(app: &App, footer_area: Rect, buf: &mut Buffer, cost_x
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(popup_rect);
+    block.render(popup_rect, buf);
+
+    let p = Paragraph::new(lines);
+    p.render(inner, buf);
+}
+
+/// Neutral pricing tooltip used when NO tariff is configured for the active model: it never
+/// invents rates, and explains how to fetch the online multi-provider price list.
+fn render_unknown_pricing_tooltip(
+    footer_area: Rect,
+    buf: &mut Buffer,
+    cost_x: u16,
+    lang: Language,
+    model_str: &str,
+) {
+    let is_fr = lang == Language::Fr;
+    let title = if is_fr {
+        " 💵 Tarif non configuré ".to_string()
+    } else {
+        " 💵 Pricing unavailable ".to_string()
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("• Modèle  : ", Style::default().fg(Color::DarkGray)),
+            Span::styled(model_str.to_string(), Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("• Tarif   : ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if is_fr {
+                    "Aucun tarif connu pour ce modèle — coût masqué"
+                } else {
+                    "No pricing known for this model — cost hidden"
+                },
+                Style::default().fg(Color::Yellow),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("• Astuce  : ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if is_fr {
+                    "« Tarifs en ligne » dans la config (Ctrl+P) pour actualiser"
+                } else {
+                    "\"Update Pricing\" in config (Ctrl+P) to refresh"
+                },
+                Style::default().fg(Color::Gray),
+            ),
+        ]),
+    ];
+
+    let max_line_len = lines
+        .iter()
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(50)
+        .max(title.chars().count() + 2);
+    let tooltip_width = ((max_line_len as u16) + 4)
+        .clamp(52, 72)
+        .min(footer_area.width.saturating_sub(2));
+    let tooltip_height = (lines.len() as u16) + 2;
+    let tooltip_x = cost_x
+        .saturating_sub(2)
+        .min(footer_area.right().saturating_sub(tooltip_width));
+    let tooltip_y = footer_area.y.saturating_sub(tooltip_height);
+
+    let popup_rect = Rect::new(tooltip_x, tooltip_y, tooltip_width, tooltip_height);
+    Clear.render(popup_rect, buf);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
 
     let inner = block.inner(popup_rect);
     block.render(popup_rect, buf);
@@ -716,7 +1147,10 @@ fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
         Span::styled("", Style::default().fg(color)),
         Span::styled(
             key.to_string(),
-            Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("", Style::default().fg(color)),
     ]

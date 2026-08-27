@@ -1,8 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
-
-
 #[test]
 fn test_vt_screen_rendering() {
     let mut parser = vt100::Parser::new(5, 80, 1000);
@@ -33,7 +31,8 @@ fn test_paragraph_wrapping_line_count() {
     // Find the last non-empty line in buffer
     let mut rendered_lines: u16 = 0;
     for y in 0..50 {
-        let has_content = (0..width).any(|x| buf.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false));
+        let has_content =
+            (0..width).any(|x| buf.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false));
         if has_content {
             rendered_lines = y + 1;
         }
@@ -117,7 +116,10 @@ fn test_paragraph_wrapping_line_count() {
     }
 
     let calculated = count_lines(&lines, width);
-    println!("Ratatui rendered: {}, Calculated: {}", rendered_lines, calculated);
+    println!(
+        "Ratatui rendered: {}, Calculated: {}",
+        rendered_lines, calculated
+    );
     assert_eq!(rendered_lines, calculated);
 
     // Test 2: Complex multi-line conversation with code blocks, list items, and short lines
@@ -143,14 +145,21 @@ fn test_paragraph_wrapping_line_count() {
 
     let mut rendered_lines2: u16 = 0;
     for y in 0..100 {
-        let has_content = (0..width).any(|x| buf2.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false));
+        let has_content = (0..width).any(|x| {
+            buf2.cell((x, y))
+                .map(|c| c.symbol() != " ")
+                .unwrap_or(false)
+        });
         if has_content {
             rendered_lines2 = y + 1;
         }
     }
 
     let calculated2 = count_lines(&complex_lines, width);
-    println!("Ratatui rendered complex: {}, Calculated: {}", rendered_lines2, calculated2);
+    println!(
+        "Ratatui rendered complex: {}, Calculated: {}",
+        rendered_lines2, calculated2
+    );
     assert_eq!(rendered_lines2, calculated2);
 
     // Test 3: Table and wide horizontal lines
@@ -189,7 +198,10 @@ fn test_paragraph_wrapping_line_count() {
     }
 
     let calculated3 = count_lines(&table_lines, width);
-    println!("Ratatui rendered table: {}, Calculated: {}", rendered_lines3, calculated3);
+    println!(
+        "Ratatui rendered table: {}, Calculated: {}",
+        rendered_lines3, calculated3
+    );
     assert_eq!(rendered_lines3, calculated3);
     let callout_lines = vec![
         Line::from(vec![
@@ -215,7 +227,10 @@ fn test_paragraph_wrapping_line_count() {
     }
 
     let calculated4 = count_lines(&callout_lines, width);
-    println!("Ratatui rendered callout: {}, Calculated: {}", rendered_lines4, calculated4);
+    println!(
+        "Ratatui rendered callout: {}, Calculated: {}",
+        rendered_lines4, calculated4
+    );
     assert_eq!(rendered_lines4, calculated4);
 }
 
@@ -319,10 +334,10 @@ async fn test_chat_scroll_bounds() {
 
 #[tokio::test]
 async fn test_empty_chat_badge_shows_zero() {
-    use spiritty::app::App;
-    use spiritty::ui::chat_panel::ChatPanel;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use spiritty::app::App;
+    use spiritty::ui::chat_panel::ChatPanel;
 
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     let app = App::new(event_tx, 55, 100).expect("create app");
@@ -335,7 +350,11 @@ async fn test_empty_chat_badge_shows_zero() {
         .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
         .collect::<String>();
 
-    assert!(top_header.contains("0 l."), "Empty chat panel header must show 0 l. instead of 4 l. (got: {})", top_header);
+    assert!(
+        top_header.contains("0 l."),
+        "Empty chat panel header must show 0 l. instead of 4 l. (got: {})",
+        top_header
+    );
 }
 
 #[test]
@@ -356,7 +375,8 @@ fn test_markdown_heading_rendering() {
 fn test_clean_multiline_command() {
     use spiritty::app::clean_multiline_command;
 
-    let bad_cmd = "echo \"=== SERVICES ===\" && \\\nsystemctl list-units --type=service && \\\necho \"done\"";
+    let bad_cmd =
+        "echo \"=== SERVICES ===\" && \\\nsystemctl list-units --type=service && \\\necho \"done\"";
     let cleaned = clean_multiline_command(bad_cmd);
     assert_eq!(
         cleaned,
@@ -379,9 +399,15 @@ fn test_clean_multiline_command() {
 
     let heredoc_cmd = "cat > ~/audit_systeme.md << 'EOF'\n# Audit Système - CachyOS\n\n## Informations Clés\n- **Version** : 7.1.8-1-cachyos\nEOF\ncat ~/audit_systeme.md";
     let cleaned_heredoc = clean_multiline_command(heredoc_cmd);
-    assert!(cleaned_heredoc.contains("# Audit Système - CachyOS"), "Markdown headings starting with # must not be stripped in heredocs");
+    assert!(
+        cleaned_heredoc.contains("# Audit Système - CachyOS"),
+        "Markdown headings starting with # must not be stripped in heredocs"
+    );
     assert!(cleaned_heredoc.contains("<< 'EOF'"));
-    assert!(!cleaned_heredoc.contains("&& #"), "Heredoc body lines must not be joined with &&");
+    assert!(
+        !cleaned_heredoc.contains("&& #"),
+        "Heredoc body lines must not be joined with &&"
+    );
 
     let bg_cmd = "npx @deepseek-ai/dsh web > /tmp/dsh.log 2>&1 &\necho \"PID: $!\"\nsleep 2\ncat /tmp/dsh.log";
     let cleaned_bg = clean_multiline_command(bg_cmd);
@@ -431,7 +457,10 @@ async fn test_stop_agent_generation() {
     app.stop_agent_generation();
 
     assert!(!app.agent.is_generating);
-    assert_eq!(app.messages.last().unwrap().content, "Génération partielle...");
+    assert_eq!(
+        app.messages.last().unwrap().content,
+        "Génération partielle..."
+    );
     assert!(app.toast_message.is_some());
 
     let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
@@ -442,7 +471,10 @@ fn test_format_command_for_pty() {
     use spiritty::app::{format_command_for_pty, format_command_for_pty_with_session};
 
     // 1. Simple cd command
-    assert_eq!(format_command_for_pty("cd /var/log", "fish"), " cd /var/log\n");
+    assert_eq!(
+        format_command_for_pty("cd /var/log", "fish"),
+        " cd /var/log\n"
+    );
 
     // 2. Simple single line in local fish (clean native command)
     assert_eq!(format_command_for_pty("free -h", "fish"), " free -h\n");
@@ -468,7 +500,8 @@ fn test_format_command_for_pty() {
     assert_eq!(remote_tool_cmd, " free -h\n");
 
     // 7. Simple single line on remote SSH (manual user Alt+1 -> pure clean command)
-    let remote_user_cmd = format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
+    let remote_user_cmd =
+        format_command_for_pty_with_session("cat ~/audit_systeme.md", "fish", true, false);
     assert_eq!(remote_user_cmd, " cat ~/audit_systeme.md\n");
 }
 
@@ -479,12 +512,18 @@ fn test_repair_missing_heredoc_terminator() {
     // 1. Missing EOF
     let truncated = "cat > ~/audit_systeme.md << 'EOF'\nAudit Système - CachyOS\nDate : 2026-08-20";
     let repaired = repair_missing_heredoc_terminator(truncated);
-    assert_eq!(repaired, "cat > ~/audit_systeme.md << 'EOF'\nAudit Système - CachyOS\nDate : 2026-08-20\nEOF\n");
+    assert_eq!(
+        repaired,
+        "cat > ~/audit_systeme.md << 'EOF'\nAudit Système - CachyOS\nDate : 2026-08-20\nEOF\n"
+    );
 
     // 2. Missing ENDOFFILE
     let truncated2 = "cat << 'ENDOFFILE' > ~/file.txt\nSome content";
     let repaired2 = repair_missing_heredoc_terminator(truncated2);
-    assert_eq!(repaired2, "cat << 'ENDOFFILE' > ~/file.txt\nSome content\nENDOFFILE\n");
+    assert_eq!(
+        repaired2,
+        "cat << 'ENDOFFILE' > ~/file.txt\nSome content\nENDOFFILE\n"
+    );
 
     // 3. Already closed EOF
     let valid = "cat > ~/audit.md << EOF\nContent\nEOF";
@@ -550,7 +589,10 @@ fn test_parse_command_execution_request() {
 
     // Out of bounds / non-command prompts
     assert_eq!(parse_command_execution_request("4", 3), None);
-    assert_eq!(parse_command_execution_request("comment installer nginx ?", 3), None);
+    assert_eq!(
+        parse_command_execution_request("comment installer nginx ?", 3),
+        None
+    );
     assert_eq!(parse_command_execution_request("ok", 0), None);
 }
 
@@ -618,7 +660,10 @@ fn test_prompt_cursor_word_wrapping() {
                 let word_w = str_visual_width(word_trimmed);
                 let trailing_spaces = word.len() - word_trimmed.len();
 
-                if !cursor_found && cursor_byte_pos >= byte_offset && cursor_byte_pos <= byte_offset + word_bytes {
+                if !cursor_found
+                    && cursor_byte_pos >= byte_offset
+                    && cursor_byte_pos <= byte_offset + word_bytes
+                {
                     let inside_offset = cursor_byte_pos - byte_offset;
                     let inside_str = &word[..inside_offset];
                     let inside_w = str_visual_width(inside_str);
@@ -689,10 +734,16 @@ fn test_prompt_cursor_word_wrapping() {
     let width = 74;
 
     let (c_row, c_col, t_rows) = compute_prompt_cursor_and_lines(text, text.len(), width);
-    println!("Prompt end cursor: row {}, col {}, total rows {}", c_row, c_col, t_rows);
+    println!(
+        "Prompt end cursor: row {}, col {}, total rows {}",
+        c_row, c_col, t_rows
+    );
 
     let (c_row2, c_col2, t_rows2) = compute_prompt_cursor_and_lines(text, text.len() - 1, width);
-    println!("Prompt after backspace cursor: row {}, col {}, total rows {}", c_row2, c_col2, t_rows2);
+    println!(
+        "Prompt after backspace cursor: row {}, col {}, total rows {}",
+        c_row2, c_col2, t_rows2
+    );
 
     assert_eq!(t_rows, 3);
     assert_eq!(t_rows2, 3);
@@ -755,7 +806,11 @@ fn test_untagged_output_block_is_not_a_command_proposal() {
     // be extracted as a command proposal (it produced the spurious "Swap:  511Mi  0B  511Mi").
     let text = "✅ **Swap vidé avec succès**\n\n```\nSwap:  511Mi  0B  511Mi\n```\n\nLe swap est reparti à zéro.";
     let proposals = extract_all_command_proposals(text);
-    assert!(proposals.is_empty(), "expected no proposals, got: {:?}", proposals);
+    assert!(
+        proposals.is_empty(),
+        "expected no proposals, got: {:?}",
+        proposals
+    );
 
     // A real untagged shell command must still be extracted.
     let cmd_text = "Voici la commande :\n\n```\nfree -h | head -n 3\n```";
@@ -777,9 +832,11 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         let backend = TestBackend::new(width, 24);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        terminal.draw(|f| {
-            spiritty::ui::draw(f, &mut app);
-        }).unwrap();
+        terminal
+            .draw(|f| {
+                spiritty::ui::draw(f, &mut app);
+            })
+            .unwrap();
 
         let buf = terminal.backend().buffer();
         let footer_y = 23;
@@ -790,25 +847,45 @@ async fn test_responsive_footer_rendering_at_various_widths() {
 
         // 1. Left info (Provider & Model) must always be present (full priority)
         assert!(
-            footer_text.contains("󰚩") || footer_text.contains("Ollama") || footer_text.contains("DeepSeek"),
+            footer_text.contains("󰚩")
+                || footer_text.contains("Ollama")
+                || footer_text.contains("DeepSeek"),
             "Width {} should contain provider/model info! Rendered: '{}'",
             width,
             footer_text
         );
 
         // 2. Right shortcuts: F1 and Ctrl+P / ^P are prioritized
-        assert!(footer_text.contains("F1"), "Width {} should contain F1 shortcut! Rendered: '{}'", width, footer_text);
-        assert!(footer_text.contains("P") || footer_text.contains("Config"), "Width {} should contain P/Config shortcut! Rendered: '{}'", width, footer_text);
+        assert!(
+            footer_text.contains("F1"),
+            "Width {} should contain F1 shortcut! Rendered: '{}'",
+            width,
+            footer_text
+        );
+        assert!(
+            footer_text.contains("P") || footer_text.contains("Config"),
+            "Width {} should contain P/Config shortcut! Rendered: '{}'",
+            width,
+            footer_text
+        );
 
         // 3. Wide terminals show full powerline badges for all features
         if width >= 140 {
-            assert!(footer_text.contains("Hosts") || footer_text.contains("B"), "Width 140 should contain Hosts! Rendered: '{}'", footer_text);
-            assert!(footer_text.contains("MCP") || footer_text.contains("M"), "Width 140 should contain MCP! Rendered: '{}'", footer_text);
-            assert!(footer_text.contains("Sessions") || footer_text.contains("H"), "Width 140 should contain Sessions! Rendered: '{}'", footer_text);
+            assert!(
+                footer_text.contains("Hosts") || footer_text.contains("B"),
+                "Width 140 should contain Hosts! Rendered: '{}'",
+                footer_text
+            );
+            assert!(
+                footer_text.contains("MCP") || footer_text.contains("M"),
+                "Width 140 should contain MCP! Rendered: '{}'",
+                footer_text
+            );
+            assert!(
+                footer_text.contains("Sessions") || footer_text.contains("H"),
+                "Width 140 should contain Sessions! Rendered: '{}'",
+                footer_text
+            );
         }
     }
 }
-
-
-
-

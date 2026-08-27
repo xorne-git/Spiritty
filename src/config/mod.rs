@@ -1,10 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::PathBuf,
-};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -61,7 +57,10 @@ impl ProviderType {
         let trimmed = s.to_lowercase().trim().to_string();
         if trimmed.contains("ollama") {
             Some(ProviderType::Ollama)
-        } else if trimmed.contains("lmstudio") || trimmed.contains("lm_studio") || trimmed.contains("lm-studio") {
+        } else if trimmed.contains("lmstudio")
+            || trimmed.contains("lm_studio")
+            || trimmed.contains("lm-studio")
+        {
             Some(ProviderType::LmStudio)
         } else if trimmed.contains("gemini") || trimmed.contains("google") {
             Some(ProviderType::Gemini)
@@ -69,7 +68,10 @@ impl ProviderType {
             Some(ProviderType::Grok)
         } else if trimmed.contains("deepseek") {
             Some(ProviderType::DeepSeek)
-        } else if trimmed.contains("openai") || trimmed.contains("chatgpt") || trimmed.contains("gpt") {
+        } else if trimmed.contains("openai")
+            || trimmed.contains("chatgpt")
+            || trimmed.contains("gpt")
+        {
             Some(ProviderType::OpenAI)
         } else if trimmed.contains("anthropic") || trimmed.contains("claude") {
             Some(ProviderType::Anthropic)
@@ -120,16 +122,8 @@ impl ProviderType {
                 "gemini-2.5-pro",
                 "gemini-2.0-flash",
             ],
-            ProviderType::Grok => &[
-                "grok-4.6",
-                "grok-latest",
-                "grok-2-latest",
-                "grok-beta",
-            ],
-            ProviderType::DeepSeek => &[
-                "deepseek-v4-pro",
-                "deepseek-v4-flash",
-            ],
+            ProviderType::Grok => &["grok-4.6", "grok-latest", "grok-2-latest", "grok-beta"],
+            ProviderType::DeepSeek => &["deepseek-v4-pro", "deepseek-v4-flash"],
             ProviderType::OpenAI => &[
                 "gpt-5.6-sol",
                 "gpt-5.6-terra",
@@ -379,7 +373,9 @@ impl Config {
     }
 
     pub fn get_theme(&self) -> String {
-        self.theme.clone().unwrap_or_else(|| "spiritty_dark".to_string())
+        self.theme
+            .clone()
+            .unwrap_or_else(|| "spiritty_dark".to_string())
     }
 
     pub fn get_language(&self) -> Language {
@@ -392,14 +388,14 @@ impl Config {
     }
 
     pub fn config_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Could not find standard config directory (~/.config)")?;
+        let config_dir =
+            dirs::config_dir().context("Could not find standard config directory (~/.config)")?;
         Ok(config_dir.join("spiritty").join("config.toml"))
     }
 
     pub fn prompt_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Could not find standard config directory (~/.config)")?;
+        let config_dir =
+            dirs::config_dir().context("Could not find standard config directory (~/.config)")?;
         Ok(config_dir.join("spiritty").join("system_prompt.md"))
     }
 
@@ -436,7 +432,8 @@ impl Config {
                         // Ensure all providers have valid configs
                         for p in ProviderType::all() {
                             let key = p.key_str();
-                            let default_models: Vec<String> = p.popular_models().iter().map(|s| s.to_string()).collect();
+                            let default_models: Vec<String> =
+                                p.popular_models().iter().map(|s| s.to_string()).collect();
 
                             if let Some(p_cfg) = config.providers.get_mut(key) {
                                 // Fix obsolete or empty model names
@@ -453,7 +450,11 @@ impl Config {
                                     p_cfg.models = default_models;
                                 } else {
                                     // Clean up obsolete model names
-                                    p_cfg.models.retain(|m| m != "deepseek-chat" && m != "deepseek-reasoner" && m != "deepseek-v4-pr");
+                                    p_cfg.models.retain(|m| {
+                                        m != "deepseek-chat"
+                                            && m != "deepseek-reasoner"
+                                            && m != "deepseek-v4-pr"
+                                    });
                                 }
                             } else {
                                 let api_key = p.default_env_var().map(|env| format!("ENV:{}", env));
@@ -559,8 +560,8 @@ IMPORTANT RULES:
                 .with_context(|| format!("Failed to create directory {:?}", parent))?;
         }
 
-        let toml_str = toml::to_string_pretty(self)
-            .context("Failed to serialize config to TOML")?;
+        let toml_str =
+            toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
         fs::write(&path, toml_str)
             .with_context(|| format!("Failed to write config file {:?}", path))?;
         Ok(())
@@ -568,13 +569,27 @@ IMPORTANT RULES:
 
     pub fn get_active_provider_config(&self) -> ProviderConfig {
         let key = self.default_provider.key_str();
-        self.providers.get(key).cloned().unwrap_or_else(|| ProviderConfig {
-            model: self.default_provider.default_model().to_string(),
-            models: self.default_provider.popular_models().iter().map(|s| s.to_string()).collect(),
-            base_url: self.default_provider.default_base_url().map(|s| s.to_string()),
-            api_key: self.default_provider.default_env_var().map(|env| format!("ENV:{}", env)),
-            context_window: None,
-        })
+        self.providers
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| ProviderConfig {
+                model: self.default_provider.default_model().to_string(),
+                models: self
+                    .default_provider
+                    .popular_models()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                base_url: self
+                    .default_provider
+                    .default_base_url()
+                    .map(|s| s.to_string()),
+                api_key: self
+                    .default_provider
+                    .default_env_var()
+                    .map(|env| format!("ENV:{}", env)),
+                context_window: None,
+            })
     }
 
     pub fn get_models_for_provider(&self, provider: ProviderType) -> Vec<String> {
@@ -588,7 +603,11 @@ IMPORTANT RULES:
                 return list;
             }
         }
-        provider.popular_models().iter().map(|s| s.to_string()).collect()
+        provider
+            .popular_models()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     pub fn resolve_api_key(raw_key: Option<&str>) -> Option<String> {
@@ -604,7 +623,10 @@ IMPORTANT RULES:
         }
     }
 
-    pub fn resolve_api_key_for_provider(provider: ProviderType, raw_key: Option<&str>) -> Option<String> {
+    pub fn resolve_api_key_for_provider(
+        provider: ProviderType,
+        raw_key: Option<&str>,
+    ) -> Option<String> {
         // 1. If explicit key is set in config
         if let Some(key) = raw_key {
             let trimmed = key.trim();

@@ -101,8 +101,8 @@ impl SessionStorage {
         let id = sanitize_id(&session.id)?;
         let dir = Self::sessions_dir()?;
         let file_path = dir.join(format!("{}.json", id));
-        let json = serde_json::to_string_pretty(session)
-            .context("Failed to serialize session to JSON")?;
+        let json =
+            serde_json::to_string_pretty(session).context("Failed to serialize session to JSON")?;
         fs::write(&file_path, json)
             .with_context(|| format!("Failed to write session file to {:?}", file_path))?;
         Ok(())

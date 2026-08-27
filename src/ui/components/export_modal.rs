@@ -48,8 +48,12 @@ impl ExportModalState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<ExportModalAction> {
-        let is_paste = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT))
+        let is_paste = (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            || key.modifiers.contains(
+                crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+            ))
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
 
         if is_paste {
@@ -104,7 +108,12 @@ impl ExportModalState {
                 self.cursor = self.file_path_input.chars().count();
                 None
             }
-            KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+            {
                 let mut chars: Vec<char> = self.file_path_input.chars().collect();
                 chars.insert(self.cursor, c);
                 self.file_path_input = chars.into_iter().collect();
@@ -147,7 +156,9 @@ impl ExportModal {
             .padding(Padding::horizontal(1))
             .title(Span::styled(
                 title,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let inner_area = block.inner(modal_area);
@@ -169,8 +180,18 @@ impl ExportModal {
             "Destination file path:"
         };
         let p_label = Paragraph::new(Line::from(vec![
-            Span::styled("❯ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(prompt_text, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "❯ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                prompt_text,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         p_label.render(chunks[0], buf);
 
@@ -182,7 +203,8 @@ impl ExportModal {
         let input_inner = input_box.inner(chunks[1]);
         input_box.render(chunks[1], buf);
 
-        let input_spans = render_editable_text(&state.file_path_input, state.cursor, true, "~/session.md");
+        let input_spans =
+            render_editable_text(&state.file_path_input, state.cursor, true, "~/session.md");
         let p_input = Paragraph::new(Line::from(input_spans));
         p_input.render(input_inner, buf);
 
@@ -194,26 +216,46 @@ impl ExportModal {
         };
         let p_hint = Paragraph::new(Line::from(Span::styled(
             hint_text,
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )));
         p_hint.render(chunks[2], buf);
 
         // 4. Separator Line
         let sep_y = chunks[3].top();
         let border_style = Style::default().fg(Color::Cyan);
-        buf.set_string(modal_area.left(), sep_y, symbols::line::NORMAL.vertical_right, border_style);
+        buf.set_string(
+            modal_area.left(),
+            sep_y,
+            symbols::line::NORMAL.vertical_right,
+            border_style,
+        );
         for x in (modal_area.left() + 1)..(modal_area.right().saturating_sub(1)) {
             buf.set_string(x, sep_y, symbols::line::NORMAL.horizontal, border_style);
         }
-        buf.set_string(modal_area.right().saturating_sub(1), sep_y, symbols::line::NORMAL.vertical_left, border_style);
+        buf.set_string(
+            modal_area.right().saturating_sub(1),
+            sep_y,
+            symbols::line::NORMAL.vertical_left,
+            border_style,
+        );
 
         // 5. Footer actions
         let mut footer = Vec::new();
         footer.extend(key_pill("Enter", Color::Green));
-        footer.push(Span::raw(if lang == Language::Fr { " Valider et Exporter   " } else { " Confirm & Export   " }));
+        footer.push(Span::raw(if lang == Language::Fr {
+            " Valider et Exporter   "
+        } else {
+            " Confirm & Export   "
+        }));
 
         footer.extend(key_pill("Esc", Color::DarkGray));
-        footer.push(Span::raw(if lang == Language::Fr { " Annuler" } else { " Cancel" }));
+        footer.push(Span::raw(if lang == Language::Fr {
+            " Annuler"
+        } else {
+            " Cancel"
+        }));
 
         let p_footer = Paragraph::new(Line::from(footer)).alignment(Alignment::Center);
         p_footer.render(chunks[4], buf);
@@ -223,15 +265,29 @@ impl ExportModal {
 fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
     vec![
         Span::styled("", Style::default().fg(color)),
-        Span::styled(key, Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            key,
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("", Style::default().fg(color)),
     ]
 }
 
-fn render_editable_text<'a>(text: &'a str, cursor: usize, is_focused: bool, placeholder: &'a str) -> Vec<Span<'a>> {
+fn render_editable_text<'a>(
+    text: &'a str,
+    cursor: usize,
+    is_focused: bool,
+    placeholder: &'a str,
+) -> Vec<Span<'a>> {
     if !is_focused {
         if text.is_empty() {
-            return vec![Span::styled(placeholder, Style::default().fg(Color::DarkGray))];
+            return vec![Span::styled(
+                placeholder,
+                Style::default().fg(Color::DarkGray),
+            )];
         }
         return vec![Span::styled(text, Style::default().fg(Color::White))];
     }
@@ -240,25 +296,47 @@ fn render_editable_text<'a>(text: &'a str, cursor: usize, is_focused: bool, plac
     let mut spans = Vec::new();
 
     if chars.is_empty() {
-        spans.push(Span::styled(" ", Style::default().bg(Color::Yellow).fg(Color::Black)));
+        spans.push(Span::styled(
+            " ",
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ));
         return spans;
     }
 
     let cursor = cursor.min(chars.len());
     let before: String = chars[..cursor].iter().collect();
     if !before.is_empty() {
-        spans.push(Span::styled(before, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            before,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
     }
 
     if cursor < chars.len() {
         let cur_char = chars[cursor].to_string();
-        spans.push(Span::styled(cur_char, Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            cur_char,
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ));
         let after: String = chars[(cursor + 1)..].iter().collect();
         if !after.is_empty() {
-            spans.push(Span::styled(after, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(
+                after,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
     } else {
-        spans.push(Span::styled(" ", Style::default().bg(Color::Yellow).fg(Color::Black)));
+        spans.push(Span::styled(
+            " ",
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ));
     }
 
     spans

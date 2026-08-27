@@ -112,7 +112,8 @@ impl CliOptions {
                     } else if arg.starts_with("--provider=") {
                         opts.provider = Some(arg.trim_start_matches("--provider=").to_string());
                     } else if arg.starts_with("--auto-approve=") {
-                        opts.auto_approve = Some(arg.trim_start_matches("--auto-approve=").to_string());
+                        opts.auto_approve =
+                            Some(arg.trim_start_matches("--auto-approve=").to_string());
                     } else if !arg.starts_with('-') {
                         positional.push(arg.clone());
                     }
@@ -183,12 +184,18 @@ KEYBOARD SHORTCUTS (TUI):
         }
 
         println!("📜 Sessions enregistrées ({} au total) :\n", headers.len());
-        println!("{:<24}  {:<18}  {:<32}  TITRE", "ID SESSION", "DERNIÈRE MAJ", "MODÈLE / PROVIDER");
+        println!(
+            "{:<24}  {:<18}  {:<32}  TITRE",
+            "ID SESSION", "DERNIÈRE MAJ", "MODÈLE / PROVIDER"
+        );
         println!("{}", "─".repeat(95));
 
         for h in headers {
             let prov_model = format!("{} ({})", h.model, h.provider);
-            println!("{:<24}  {:<18}  {:<32}  {}", h.id, h.updated_at, prov_model, h.title);
+            println!(
+                "{:<24}  {:<18}  {:<32}  {}",
+                h.id, h.updated_at, prov_model, h.title
+            );
         }
         println!("\nPour reprendre une session : spiritty -s <ID>");
         Ok(())

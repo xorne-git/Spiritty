@@ -248,14 +248,19 @@ impl App {
 
         app.probe_provider_models(ProviderType::LmStudio);
         app.probe_provider_models(ProviderType::Ollama);
-        if app.config.default_provider != ProviderType::LmStudio && app.config.default_provider != ProviderType::Ollama {
+        if app.config.default_provider != ProviderType::LmStudio
+            && app.config.default_provider != ProviderType::Ollama
+        {
             app.probe_provider_models(app.config.default_provider);
         }
 
         Ok(app)
     }
 
-    pub fn trigger_pricing_update(&self) {
+    /// Refreshes the online pricing registry (multi-provider listing). When `announce` is
+    /// false the refresh runs silently (startup auto-refresh): the cache is updated but no
+    /// toast is emitted on either outcome.
+    pub fn trigger_pricing_update_announced(&self, announce: bool) {
         let registry_arc = self.pricing_registry.clone();
         let event_tx = self.event_tx.clone();
         let client = reqwest::Client::new();
@@ -263,6 +268,10 @@ impl App {
         tokio::spawn(async move {
             let mut reg = registry_arc.write().await;
             let result = reg.fetch_online_and_update(&client).await;
+            drop(reg);
+            if !announce {
+                return;
+            }
             let event_payload = match result {
                 Ok(count) => Ok(count),
                 Err(e) => Err(e.to_string()),
@@ -271,20 +280,40 @@ impl App {
         });
     }
 
+    pub fn trigger_pricing_update(&self) {
+        self.trigger_pricing_update_announced(true);
+    }
+
     pub fn on_pricing_updated(&mut self, res: Result<usize, String>) {
         let lang = self.config.get_language();
         match res {
             Ok(count) => {
-                let msg = format!("{} ({} modèles)", lang.t(crate::i18n::I18nKey::PricingUpdateSuccess), count);
+                let msg = format!(
+                    "{} ({} modèles)",
+                    lang.t(crate::i18n::I18nKey::PricingUpdateSuccess),
+                    count
+                );
                 if let ModalState::Config(ref mut config_state) = self.modal {
-                    config_state.pricing_status = Some((std::time::Instant::now(), msg.clone(), ratatui::style::Color::Green));
+                    config_state.pricing_status = Some((
+                        std::time::Instant::now(),
+                        msg.clone(),
+                        ratatui::style::Color::Green,
+                    ));
                 }
                 self.set_toast(msg);
             }
             Err(err) => {
-                let msg = format!("{}: {}", lang.t(crate::i18n::I18nKey::PricingUpdateFailed), err);
+                let msg = format!(
+                    "{}: {}",
+                    lang.t(crate::i18n::I18nKey::PricingUpdateFailed),
+                    err
+                );
                 if let ModalState::Config(ref mut config_state) = self.modal {
-                    config_state.pricing_status = Some((std::time::Instant::now(), msg.clone(), ratatui::style::Color::Red));
+                    config_state.pricing_status = Some((
+                        std::time::Instant::now(),
+                        msg.clone(),
+                        ratatui::style::Color::Red,
+                    ));
                 }
                 self.set_toast(msg);
             }
@@ -295,7 +324,10 @@ impl App {
         let key = provider.key_str().to_string();
         let p_cfg = self.config.providers.get(&key).cloned();
         let base_url = p_cfg.as_ref().and_then(|c| c.base_url.clone());
-        let api_key = Config::resolve_api_key_for_provider(provider, p_cfg.as_ref().and_then(|c| c.api_key.as_deref()));
+        let api_key = Config::resolve_api_key_for_provider(
+            provider,
+            p_cfg.as_ref().and_then(|c| c.api_key.as_deref()),
+        );
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
@@ -303,7 +335,8 @@ impl App {
                 provider,
                 base_url.as_deref(),
                 api_key.as_deref(),
-            ).await;
+            )
+            .await;
 
             if !fetched.is_empty() {
                 let _ = event_tx.send(AppEvent::ModelsLoaded {
@@ -324,7 +357,10 @@ impl App {
         }
 
         if let ModalState::Config(ref mut config_state) = self.modal {
-            let entry = config_state.models_per_provider.entry(provider_key.clone()).or_default();
+            let entry = config_state
+                .models_per_provider
+                .entry(provider_key.clone())
+                .or_default();
             for m in &models {
                 if !entry.contains(m) {
                     entry.push(m.clone());
@@ -332,7 +368,10 @@ impl App {
             }
             if config_state.selected_provider.key_str() == provider_key {
                 if let Some(current_models) = config_state.models_per_provider.get(&provider_key) {
-                    if let Some(pos) = current_models.iter().position(|m| *m == config_state.model_input) {
+                    if let Some(pos) = current_models
+                        .iter()
+                        .position(|m| *m == config_state.model_input)
+                    {
                         config_state.dropdown_selected_idx = pos;
                     }
                 }
@@ -405,7 +444,11 @@ impl App {
                     self.chat_history = loaded
                         .messages
                         .iter()
-                        .filter(|m| m.role == MessageRole::User && !m.content.starts_with("💻 `") && !m.content.starts_with("[RÉSULTAT"))
+                        .filter(|m| {
+                            m.role == MessageRole::User
+                                && !m.content.starts_with("💻 `")
+                                && !m.content.starts_with("[RÉSULTAT")
+                        })
                         .map(|m| m.content.clone())
                         .collect();
                 }
@@ -422,7 +465,8 @@ impl App {
                         }
                     }
                     let _ = self.config.save();
-                    self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                    self.agent
+                        .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                     self.trigger_context_probe();
                 }
 
@@ -430,7 +474,10 @@ impl App {
                 self.chat_input.clear();
                 self.cursor_pos = 0;
                 self.reset_chat_scroll();
-                self.set_toast(format!("📂 Session '{}' restaurée ({} messages)", title, count));
+                self.set_toast(format!(
+                    "📂 Session '{}' restaurée ({} messages)",
+                    title, count
+                ));
             }
             Err(e) => {
                 self.set_toast(format!("⚠️ Erreur chargement session : {}", e));
@@ -461,22 +508,30 @@ impl App {
         if let Some(prov_str) = provider {
             if let Some(p_type) = crate::config::ProviderType::from_key(&prov_str) {
                 self.config.default_provider = p_type;
-                self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                self.agent
+                    .reload_config(self.config.clone(), Some(self.event_tx.clone()));
             }
         }
         if let Some(model_str) = model {
             let p_key = self.config.default_provider.key_str().to_string();
             if let Some(p_conf) = self.config.providers.get_mut(&p_key) {
                 p_conf.model = model_str;
-                self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                self.agent
+                    .reload_config(self.config.clone(), Some(self.event_tx.clone()));
             }
         }
         if let Some(lvl_str) = auto_approve {
             match lvl_str.to_lowercase().as_str() {
                 "off" | "none" => self.config.auto_approve = crate::config::AutoApproveLevel::Off,
-                "safe" | "read_only" | "readonly" => self.config.auto_approve = crate::config::AutoApproveLevel::Safe,
-                "sudo" | "standard" => self.config.auto_approve = crate::config::AutoApproveLevel::Sudo,
-                "yolo" | "all" | "auto" => self.config.auto_approve = crate::config::AutoApproveLevel::Yolo,
+                "safe" | "read_only" | "readonly" => {
+                    self.config.auto_approve = crate::config::AutoApproveLevel::Safe
+                }
+                "sudo" | "standard" => {
+                    self.config.auto_approve = crate::config::AutoApproveLevel::Sudo
+                }
+                "yolo" | "all" | "auto" => {
+                    self.config.auto_approve = crate::config::AutoApproveLevel::Yolo
+                }
                 _ => {}
             }
         }
@@ -505,9 +560,15 @@ impl App {
         self.modal = ModalState::None;
         let lang = self.config.get_language();
         self.set_toast(if lang == Language::Fr {
-            format!("✨ Nouvelle session démarrée ({} • {})", active_provider, active_model)
+            format!(
+                "✨ Nouvelle session démarrée ({} • {})",
+                active_provider, active_model
+            )
         } else {
-            format!("✨ New session started ({} • {})", active_provider, active_model)
+            format!(
+                "✨ New session started ({} • {})",
+                active_provider, active_model
+            )
         });
     }
 
@@ -539,7 +600,9 @@ impl App {
     pub fn default_export_path(&self) -> String {
         let now = chrono::Local::now();
         let date_str = now.format("%Y-%m-%d").to_string();
-        let title_slug = self.current_session.title
+        let title_slug = self
+            .current_session
+            .title
             .to_lowercase()
             .replace(|c: char| !c.is_alphanumeric() && c != '-', "_")
             .trim_matches('_')
@@ -562,7 +625,10 @@ impl App {
         }
     }
 
-    pub fn export_current_session_markdown_to(&mut self, target_path: &str) -> Result<String, std::io::Error> {
+    pub fn export_current_session_markdown_to(
+        &mut self,
+        target_path: &str,
+    ) -> Result<String, std::io::Error> {
         let resolved_path = expand_tilde(target_path);
         if let Some(parent) = resolved_path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -572,15 +638,36 @@ impl App {
 
         let now = chrono::Local::now();
         let mut content = String::new();
-        content.push_str(&format!("# 👻 Rapport d'Intervention Spiritty — {}\n\n", self.current_session.title));
-        content.push_str(&format!("- **Date & Heure :** {}\n", now.format("%Y-%m-%d %H:%M:%S")));
-        content.push_str(&format!("- **Session ID :** `{}`\n", self.current_session.id));
-        content.push_str(&format!("- **Fournisseur & Modèle :** {} (`{}`)\n", self.current_session.provider, self.current_session.model));
-        content.push_str(&format!("- **Environnement Cible :** {}\n", self.system_context.active_session.display_label()));
+        content.push_str(&format!(
+            "# 👻 Rapport d'Intervention Spiritty — {}\n\n",
+            self.current_session.title
+        ));
+        content.push_str(&format!(
+            "- **Date & Heure :** {}\n",
+            now.format("%Y-%m-%d %H:%M:%S")
+        ));
+        content.push_str(&format!(
+            "- **Session ID :** `{}`\n",
+            self.current_session.id
+        ));
+        content.push_str(&format!(
+            "- **Fournisseur & Modèle :** {} (`{}`)\n",
+            self.current_session.provider, self.current_session.model
+        ));
+        content.push_str(&format!(
+            "- **Environnement Cible :** {}\n",
+            self.system_context.active_session.display_label()
+        ));
         if let Some(ref profile) = self.system_context.active_remote_profile {
-            content.push_str(&format!("- **Profil Serveur Distant :** {} (Kernel: {}, Init: {})\n", profile.distro, profile.kernel, profile.init_system));
+            content.push_str(&format!(
+                "- **Profil Serveur Distant :** {} (Kernel: {}, Init: {})\n",
+                profile.distro, profile.kernel, profile.init_system
+            ));
         } else {
-            content.push_str(&format!("- **Distribution Locale :** {} (Kernel: {})\n", self.system_context.distro, self.system_context.kernel));
+            content.push_str(&format!(
+                "- **Distribution Locale :** {} (Kernel: {})\n",
+                self.system_context.distro, self.system_context.kernel
+            ));
         }
         if let Some(ref cwd) = self.system_context.current_dir {
             content.push_str(&format!("- **Répertoire de travail (PWD) :** `{}`\n", cwd));
@@ -593,16 +680,28 @@ impl App {
         for msg in &self.messages {
             match msg.role {
                 MessageRole::User => {
-                    if msg.content.starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '") {
-                        content.push_str(&format!("> 💻 **Résultat d'exécution :**\n```\n{}\n```\n\n", msg.content));
+                    if msg
+                        .content
+                        .starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '")
+                    {
+                        content.push_str(&format!(
+                            "> 💻 **Résultat d'exécution :**\n```\n{}\n```\n\n",
+                            msg.content
+                        ));
                     } else if msg.content.starts_with("💻 ") {
-                        content.push_str(&format!("> 💻 **Commande exécutée :** `{}`\n\n", msg.content.trim_start_matches("💻 ")));
+                        content.push_str(&format!(
+                            "> 💻 **Commande exécutée :** `{}`\n\n",
+                            msg.content.trim_start_matches("💻 ")
+                        ));
                     } else {
                         content.push_str(&format!("### 👤 Utilisateur\n\n{}\n\n", msg.content));
                     }
                 }
                 MessageRole::Assistant => {
-                    content.push_str(&format!("### 👻 Spiritty (Assistant IA)\n\n{}\n\n", msg.content));
+                    content.push_str(&format!(
+                        "### 👻 Spiritty (Assistant IA)\n\n{}\n\n",
+                        msg.content
+                    ));
                 }
                 MessageRole::System => {}
             }
@@ -644,7 +743,11 @@ impl App {
             self.current_turn_tokens = 0;
             self.focus = Focus::Chat;
 
-            let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
+            let _ = self.agent.send_prompt(
+                self.messages.clone(),
+                &self.system_context,
+                self.event_tx.clone(),
+            );
         }
     }
 
@@ -717,17 +820,23 @@ impl App {
     }
 
     pub fn get_total_tokens_used(&self) -> usize {
-        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum::<usize>() + self.chat_input.len();
+        let total_chars: usize =
+            self.messages.iter().map(|m| m.content.len()).sum::<usize>() + self.chat_input.len();
         ((total_chars as f64) / 3.8).ceil() as usize
     }
 
     pub fn get_context_used_tokens(&self) -> usize {
-        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum::<usize>() + self.chat_input.len() + 1500;
+        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum::<usize>()
+            + self.chat_input.len()
+            + 1500;
         ((total_chars as f64) / 3.8).ceil() as usize
     }
 
     pub fn get_tokens_per_sec(&self) -> Option<f64> {
-        if self.agent.is_generating && self.pending_tool_approval.is_none() && self.active_pty_tool.is_none() {
+        if self.agent.is_generating
+            && self.pending_tool_approval.is_none()
+            && self.active_pty_tool.is_none()
+        {
             if let (Some(first), Some(last_chunk)) = (self.first_chunk_time, self.last_chunk_time) {
                 // If model is actively emitting chunks (< 800ms), compute live streaming speed
                 if last_chunk.elapsed().as_millis() < 800 {
@@ -742,7 +851,10 @@ impl App {
     }
 
     pub fn update_terminal_size(&mut self, area: Rect) {
-        if area.width > 0 && area.height > 0 && self.terminal_inner_size != (area.height, area.width) {
+        if area.width > 0
+            && area.height > 0
+            && self.terminal_inner_size != (area.height, area.width)
+        {
             self.terminal_inner_size = (area.height, area.width);
             let _ = self.pty.resize(area.height, area.width);
         }
@@ -760,7 +872,7 @@ impl App {
         }
 
         let border_x = self.chat_area.right();
-        
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if x >= border_x.saturating_sub(1) && x <= border_x.saturating_add(1) {
@@ -775,7 +887,10 @@ impl App {
                         end: (x, y),
                         is_selecting: true,
                     });
-                } else if self.terminal_area.contains(ratatui::layout::Position { x, y }) {
+                } else if self
+                    .terminal_area
+                    .contains(ratatui::layout::Position { x, y })
+                {
                     self.focus = Focus::Terminal;
                     self.is_dragging_split = false;
                     self.mouse_selection = Some(MouseSelection {
@@ -809,14 +924,20 @@ impl App {
             MouseEventKind::ScrollUp => {
                 if self.chat_area.contains(ratatui::layout::Position { x, y }) {
                     self.scroll_chat_up(1);
-                } else if self.terminal_area.contains(ratatui::layout::Position { x, y }) {
+                } else if self
+                    .terminal_area
+                    .contains(ratatui::layout::Position { x, y })
+                {
                     self.pty.scroll_up(2);
                 }
             }
             MouseEventKind::ScrollDown => {
                 if self.chat_area.contains(ratatui::layout::Position { x, y }) {
                     self.scroll_chat_down(1);
-                } else if self.terminal_area.contains(ratatui::layout::Position { x, y }) {
+                } else if self
+                    .terminal_area
+                    .contains(ratatui::layout::Position { x, y })
+                {
                     self.pty.scroll_down(2);
                 }
             }
@@ -865,7 +986,8 @@ impl App {
     pub fn cycle_auto_approve(&mut self) -> crate::config::AutoApproveLevel {
         let next_level = self.config.auto_approve.next();
         self.config.auto_approve = next_level;
-        self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+        self.agent
+            .reload_config(self.config.clone(), Some(self.event_tx.clone()));
         let _ = self.config.save();
         next_level
     }
@@ -882,19 +1004,24 @@ impl App {
 
         // F3 or Ctrl+Y cycles through Auto-Approve modes (Safe -> Sudo -> YOLO -> Off -> Safe)
         if key.code == KeyCode::F(3)
-            || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')))
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')))
         {
             self.cycle_auto_approve();
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+        {
             self.modal = match self.modal {
                 ModalState::Config(_) => ModalState::None,
                 _ => {
                     self.probe_provider_models(ProviderType::LmStudio);
                     self.probe_provider_models(ProviderType::Ollama);
-                    if self.config.default_provider != ProviderType::LmStudio && self.config.default_provider != ProviderType::Ollama {
+                    if self.config.default_provider != ProviderType::LmStudio
+                        && self.config.default_provider != ProviderType::Ollama
+                    {
                         self.probe_provider_models(self.config.default_provider);
                     }
                     ModalState::Config(ConfigModalState::from_config(&self.config))
@@ -903,7 +1030,9 @@ impl App {
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H'))
+        {
             self.save_current_session();
             self.modal = match self.modal {
                 ModalState::Sessions(_) => ModalState::None,
@@ -912,18 +1041,26 @@ impl App {
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
+        {
             self.modal = match self.modal {
                 ModalState::Bookmarks(_) => ModalState::None,
                 _ => {
-                    let active_ssh = self.system_context.active_session.ssh_target().map(|s| s.to_string());
+                    let active_ssh = self
+                        .system_context
+                        .active_session
+                        .ssh_target()
+                        .map(|s| s.to_string());
                     ModalState::Bookmarks(BookmarksModalState::new(&self.hosts_store, active_ssh))
                 }
             };
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
+        {
             self.modal = match self.modal {
                 ModalState::Export(_) => ModalState::None,
                 _ => {
@@ -934,7 +1071,9 @@ impl App {
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M'))
+        {
             self.modal = match self.modal {
                 ModalState::Mcp(_) => ModalState::None,
                 _ => {
@@ -964,7 +1103,9 @@ impl App {
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F'))
+        {
             self.chat_search_active = !self.chat_search_active;
             if self.chat_search_active {
                 self.chat_search_query.clear();
@@ -975,7 +1116,9 @@ impl App {
             return;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
+        {
             self.new_session();
             return;
         }
@@ -1064,7 +1207,8 @@ impl App {
         if let Some(action) = mcp_action {
             match action {
                 crate::ui::components::McpModalAction::ServersChanged => {
-                    self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                    self.agent
+                        .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                     if let ModalState::Mcp(ref mut mcp_state) = self.modal {
                         mcp_state.sync_with_config(&self.config);
                     }
@@ -1088,7 +1232,8 @@ impl App {
                 self.theme = config_state.theme;
                 match action {
                     crate::ui::components::ConfigModalAction::SaveAndClose => {
-                        self.agent.reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                        self.agent
+                            .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                         self.trigger_context_probe();
                         self.modal = ModalState::None;
                     }
@@ -1102,18 +1247,27 @@ impl App {
                 }
                 return;
             }
-            ModalState::Sessions(_) | ModalState::Bookmarks(_) | ModalState::Export(_) | ModalState::Mcp(_) => return,
+            ModalState::Sessions(_)
+            | ModalState::Bookmarks(_)
+            | ModalState::Export(_)
+            | ModalState::Mcp(_) => return,
             ModalState::None => {}
         }
 
         // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss, Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
         if key.modifiers.contains(KeyModifiers::ALT) {
-            if matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) && self.proactive_error_diagnosis.is_some() {
+            if matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D'))
+                && self.proactive_error_diagnosis.is_some()
+            {
                 self.trigger_proactive_diagnosis();
                 return;
             }
 
-            if matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('c') | KeyCode::Char('C')) && self.proactive_error_diagnosis.is_some() {
+            if matches!(
+                key.code,
+                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('c') | KeyCode::Char('C')
+            ) && self.proactive_error_diagnosis.is_some()
+            {
                 self.proactive_error_diagnosis = None;
                 return;
             }
@@ -1139,7 +1293,8 @@ impl App {
 
         // 4. Universal focus toggle keys
         let is_shift_tab = key.code == KeyCode::BackTab;
-        let is_ctrl_space = key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(' ');
+        let is_ctrl_space =
+            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(' ');
         let is_f6 = key.code == KeyCode::F(6);
 
         if is_shift_tab || is_ctrl_space || is_f6 {
@@ -1148,7 +1303,9 @@ impl App {
         }
 
         // 5. Global quit
-        if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
+        {
             self.should_quit = true;
             return;
         }
@@ -1160,11 +1317,15 @@ impl App {
     }
 
     fn handle_terminal_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::PageUp || (key.code == KeyCode::Up && key.modifiers.contains(KeyModifiers::SHIFT)) {
+        if key.code == KeyCode::PageUp
+            || (key.code == KeyCode::Up && key.modifiers.contains(KeyModifiers::SHIFT))
+        {
             self.pty.scroll_up(15);
             return;
         }
-        if key.code == KeyCode::PageDown || (key.code == KeyCode::Down && key.modifiers.contains(KeyModifiers::SHIFT)) {
+        if key.code == KeyCode::PageDown
+            || (key.code == KeyCode::Down && key.modifiers.contains(KeyModifiers::SHIFT))
+        {
             self.pty.scroll_down(15);
             return;
         }
@@ -1177,7 +1338,15 @@ impl App {
         // If user is typing normal commands, dismiss any lingering error toast
         if self.proactive_error_diagnosis.is_some()
             && (!key.modifiers.contains(KeyModifiers::ALT)
-                || !matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('c') | KeyCode::Char('C')))
+                || !matches!(
+                    key.code,
+                    KeyCode::Char('d')
+                        | KeyCode::Char('D')
+                        | KeyCode::Char('x')
+                        | KeyCode::Char('X')
+                        | KeyCode::Char('c')
+                        | KeyCode::Char('C')
+                ))
         {
             self.proactive_error_diagnosis = None;
         }
@@ -1193,7 +1362,10 @@ impl App {
             KeyCode::Backspace => {
                 self.terminal_input_buffer.pop();
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.terminal_input_buffer.push(c);
             }
             _ => {}
@@ -1233,10 +1405,15 @@ impl App {
             // silence-based settle below is only a fallback for shells that deliver no sentinel
             // (remote SSH without our hooks, or sh/dash/ash), where it previously fired too early
             // on a quiet stretch (network I/O, sudo password wait) and truncated the output.
-            let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+            let is_remote = matches!(
+                self.system_context.active_session,
+                crate::system::ActiveSession::Ssh { .. }
+            );
             let shell_name = self.pty.shell_name().to_lowercase();
             let shell_has_hooks = !is_remote
-                && (shell_name.contains("bash") || shell_name.contains("zsh") || shell_name.contains("fish"));
+                && (shell_name.contains("bash")
+                    || shell_name.contains("zsh")
+                    || shell_name.contains("fish"));
 
             let has_output_settled = !shell_has_hooks
                 && !is_waiting_password
@@ -1244,7 +1421,9 @@ impl App {
                 && elapsed_since_start >= std::time::Duration::from_millis(800)
                 && elapsed_since_last_output >= std::time::Duration::from_millis(3000);
 
-            if has_output_settled || elapsed_since_start > std::time::Duration::from_secs(timeout_secs) {
+            if has_output_settled
+                || elapsed_since_start > std::time::Duration::from_secs(timeout_secs)
+            {
                 let clean_output = clean_pty_output(&raw_text, &capture.command);
                 let final_summary = if clean_output.is_empty() {
                     "(Commande exécutée avec succès dans le terminal)".to_string()
@@ -1299,7 +1478,10 @@ impl App {
                     self.trigger_background_host_probe(target);
                 }
             }
-            ActiveSession::Container { runtime, container_id } => {
+            ActiveSession::Container {
+                runtime,
+                container_id,
+            } => {
                 self.system_context.active_remote_profile = None;
                 self.set_toast(format!("📦 {}: {}", runtime, container_id));
             }
@@ -1317,13 +1499,25 @@ impl App {
         tokio::spawn(async move {
             let probe_cmd = HostsStore::generate_probe_command();
             let res = tokio::process::Command::new("ssh")
-                .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=accept-new", &target, probe_cmd])
+                .args([
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=4",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    &target,
+                    probe_cmd,
+                ])
                 .output()
                 .await;
             if let Ok(out) = res {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout).to_string();
-                    let _ = event_tx.send(AppEvent::RemoteHostProbed { target, output: text });
+                    let _ = event_tx.send(AppEvent::RemoteHostProbed {
+                        target,
+                        output: text,
+                    });
                 }
             }
         });
@@ -1334,13 +1528,20 @@ impl App {
             let distro_name = profile.distro.clone();
             let _ = self.hosts_store.upsert(profile.clone());
             if let Some(active_target) = self.system_context.active_session.ssh_target() {
-                if self.hosts_store.get(active_target).map(|p| p.target.as_str()) == Some(&profile.target)
+                if self
+                    .hosts_store
+                    .get(active_target)
+                    .map(|p| p.target.as_str())
+                    == Some(&profile.target)
                     || active_target == target
                     || target.contains(active_target)
                     || active_target.contains(&target)
                 {
                     self.system_context.active_remote_profile = Some(profile);
-                    self.set_toast(format!("🌐 {} — Profil {} enregistré", active_target, distro_name));
+                    self.set_toast(format!(
+                        "🌐 {} — Profil {} enregistré",
+                        active_target, distro_name
+                    ));
                 }
             }
             if let ModalState::Bookmarks(ref mut bm_state) = self.modal {
@@ -1350,7 +1551,12 @@ impl App {
     }
 
     pub fn trigger_host_scan(&mut self) {
-        if let Some(target) = self.system_context.active_session.ssh_target().map(|s| s.to_string()) {
+        if let Some(target) = self
+            .system_context
+            .active_session
+            .ssh_target()
+            .map(|s| s.to_string())
+        {
             self.set_toast("🌐 Scan de l'environnement distant en arrière-plan...".to_string());
             self.trigger_background_host_probe(target);
         } else {
@@ -1398,8 +1604,13 @@ impl App {
     pub fn current_active_shell(&self) -> &str {
         match &self.system_context.active_session {
             crate::system::ActiveSession::Ssh { .. } => "bash",
-            crate::system::ActiveSession::Local { foreground_process: Some(proc) }
-                if proc == "bash" || proc == "zsh" || proc == "sh" || proc == "dash" || proc == "ash" =>
+            crate::system::ActiveSession::Local {
+                foreground_process: Some(proc),
+            } if proc == "bash"
+                || proc == "zsh"
+                || proc == "sh"
+                || proc == "dash"
+                || proc == "ash" =>
             {
                 proc.as_str()
             }
@@ -1444,7 +1655,10 @@ impl App {
                 return true;
             } else {
                 let shell = self.current_active_shell();
-                let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+                let is_remote = matches!(
+                    self.system_context.active_session,
+                    crate::system::ActiveSession::Ssh { .. }
+                );
                 let pty_cmd = format_command_for_pty_with_session(&cmd, shell, is_remote, false);
                 // Clear any dirty prompt buffer cleanly without printing ^C
                 let _ = self.pty.write_all(b"\x15");
@@ -1474,7 +1688,7 @@ impl App {
                         }
                     }
                     return;
-                } else if is_natural_approval_phrase(&input) {
+                } else if !input.is_empty() && is_natural_approval_phrase(&input) {
                     self.chat_input.clear();
                     self.cursor_pos = 0;
                     if let Some(mut pending) = self.pending_tool_approval.take() {
@@ -1514,7 +1728,8 @@ impl App {
                                 self.chat_search_match_idx -= 1;
                             }
                         } else {
-                            self.chat_search_match_idx = (self.chat_search_match_idx + 1) % matches.len();
+                            self.chat_search_match_idx =
+                                (self.chat_search_match_idx + 1) % matches.len();
                         }
                     }
                     return;
@@ -1539,7 +1754,10 @@ impl App {
                     }
                     return;
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
                     let mut chars: Vec<char> = self.chat_search_query.chars().collect();
                     chars.insert(self.chat_search_cursor, c);
                     self.chat_search_query = chars.into_iter().collect();
@@ -1586,7 +1804,9 @@ impl App {
                 if !input.is_empty() && !self.agent.is_generating {
                     // Check if input is a natural command execution request ("ok", "oui", "vas y", "lance", "2", "lance 2", etc.)
                     let proposals = self.all_command_proposals();
-                    if let Some(target_idx) = parse_command_execution_request(&input, proposals.len()) {
+                    if let Some(target_idx) =
+                        parse_command_execution_request(&input, proposals.len())
+                    {
                         self.chat_input.clear();
                         self.cursor_pos = 0;
                         self.history_index = None;
@@ -1627,7 +1847,11 @@ impl App {
                     self.current_turn_tokens = 0;
 
                     // Trigger LLM streaming with live system context
-                    let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
+                    let _ = self.agent.send_prompt(
+                        self.messages.clone(),
+                        &self.system_context,
+                        self.event_tx.clone(),
+                    );
                 }
             }
 
@@ -1658,7 +1882,9 @@ impl App {
                 self.chat_input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
             }
-            KeyCode::Char('v') | KeyCode::Char('V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('v') | KeyCode::Char('V')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 if let Some(text) = crate::system::clipboard::get_clipboard_text() {
                     self.handle_paste(text);
                 }
@@ -1668,7 +1894,9 @@ impl App {
                 self.cursor_pos += 1;
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                {
                     self.chat_input.insert(self.cursor_pos, c);
                     self.cursor_pos += c.len_utf8();
                 }
@@ -1708,14 +1936,18 @@ impl App {
                 }
             }
             KeyCode::Home => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     self.scroll_chat_up(u16::MAX / 2);
                 } else {
                     self.cursor_pos = 0;
                 }
             }
             KeyCode::End => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.modifiers.contains(KeyModifiers::SHIFT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     self.reset_chat_scroll();
                 } else {
                     self.cursor_pos = self.chat_input.len();
@@ -1875,7 +2107,10 @@ impl App {
                 let tool_indicator_start = format!("💻 `{}`...", command);
                 let web_indicator_start = format!("{}...", command);
                 if let Some(pos) = content.rfind(&tool_indicator_start) {
-                    content.replace_range(pos..pos + tool_indicator_start.len(), &format!("💻 `{}`", command));
+                    content.replace_range(
+                        pos..pos + tool_indicator_start.len(),
+                        &format!("💻 `{}`", command),
+                    );
                     last_msg.content = content;
                 } else if let Some(pos) = content.rfind(&web_indicator_start) {
                     content.replace_range(pos..pos + web_indicator_start.len(), &command);
@@ -1890,7 +2125,10 @@ impl App {
         if !command.starts_with("🌐") && !command.starts_with("🔌") {
             self.messages.push(ChatMessage {
                 role: MessageRole::User,
-                content: format!("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '{}']:\n{}", command, output),
+                content: format!(
+                    "[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '{}']:\n{}",
+                    command, output
+                ),
                 command_proposal: None,
             });
         }
@@ -1904,7 +2142,10 @@ impl App {
         auto_prompt: bool,
     ) {
         let shell = self.current_active_shell();
-        let is_remote = matches!(self.system_context.active_session, crate::system::ActiveSession::Ssh { .. });
+        let is_remote = matches!(
+            self.system_context.active_session,
+            crate::system::ActiveSession::Ssh { .. }
+        );
         let formatted_cmd = format_command_for_pty_with_session(&command, shell, is_remote, true);
 
         // Clear any dirty prompt buffer cleanly without printing ^C
@@ -1951,7 +2192,11 @@ impl App {
         });
         self.chat_scroll_from_bottom = 0;
         self.focus = Focus::Chat;
-        let _ = self.agent.send_prompt(self.messages.clone(), &self.system_context, self.event_tx.clone());
+        let _ = self.agent.send_prompt(
+            self.messages.clone(),
+            &self.system_context,
+            self.event_tx.clone(),
+        );
     }
 
     pub fn on_pty_output(&mut self, bytes: &[u8]) {
@@ -1980,7 +2225,13 @@ impl App {
             if let Some((pos, prefix_len, is_osc)) = sentinel_pattern {
                 let after = &text[pos + prefix_len..];
                 let found_terminator = if is_osc {
-                    after.find('\x1b').or_else(|| after.find('\x07')).or_else(|| after.find('\n')).or_else(|| after.find('\r')).or_else(|| after.find('\\')).or_else(|| after.find(';'))
+                    after
+                        .find('\x1b')
+                        .or_else(|| after.find('\x07'))
+                        .or_else(|| after.find('\n'))
+                        .or_else(|| after.find('\r'))
+                        .or_else(|| after.find('\\'))
+                        .or_else(|| after.find(';'))
                 } else {
                     after.find('\n').or_else(|| after.find('\r'))
                 };
@@ -1999,7 +2250,10 @@ impl App {
                     } else if exit_code == 0 {
                         format!("Sortie dans le terminal:\n{}", clean_output)
                     } else {
-                        format!("Sortie dans le terminal (code {}):\n{}", exit_code, clean_output)
+                        format!(
+                            "Sortie dans le terminal (code {}):\n{}",
+                            exit_code, clean_output
+                        )
                     };
 
                     let command = capture.command.clone();
@@ -2072,7 +2326,12 @@ impl App {
         self.chat_scroll_from_bottom = 0;
     }
 
-    pub fn on_agent_usage(&mut self, prompt_tokens: usize, completion_tokens: usize, exact_speed: Option<f64>) {
+    pub fn on_agent_usage(
+        &mut self,
+        prompt_tokens: usize,
+        completion_tokens: usize,
+        exact_speed: Option<f64>,
+    ) {
         if prompt_tokens > 0 {
             self.current_session.prompt_tokens += prompt_tokens;
         }
@@ -2080,7 +2339,8 @@ impl App {
             self.current_session.completion_tokens += completion_tokens;
             self.current_turn_tokens = completion_tokens;
         }
-        self.current_session.total_tokens = self.current_session.prompt_tokens + self.current_session.completion_tokens;
+        self.current_session.total_tokens =
+            self.current_session.prompt_tokens + self.current_session.completion_tokens;
         if let Some(speed) = exact_speed {
             self.last_tokens_per_sec = Some(speed);
         }
@@ -2108,7 +2368,10 @@ impl App {
         if self.current_session.total_tokens == 0 && self.current_turn_tokens > 0 {
             self.current_session.completion_tokens += self.current_turn_tokens;
             self.current_session.total_tokens = self.get_total_tokens_used();
-            self.current_session.prompt_tokens = self.current_session.total_tokens.saturating_sub(self.current_session.completion_tokens);
+            self.current_session.prompt_tokens = self
+                .current_session
+                .total_tokens
+                .saturating_sub(self.current_session.completion_tokens);
         }
 
         self.agent.is_generating = false;
@@ -2116,7 +2379,8 @@ impl App {
         self.chat_scroll_from_bottom = 0;
 
         // Clean up any trailing empty assistant placeholders
-        self.messages.retain(|m| !m.content.trim().is_empty() || m.role != MessageRole::Assistant);
+        self.messages
+            .retain(|m| !m.content.trim().is_empty() || m.role != MessageRole::Assistant);
 
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
@@ -2135,7 +2399,9 @@ impl App {
                 if last_msg.content.is_empty() {
                     last_msg.content = format!("⚠️ Erreur : {}", error);
                 } else {
-                    last_msg.content.push_str(&format!("\n\n⚠️ Erreur : {}", error));
+                    last_msg
+                        .content
+                        .push_str(&format!("\n\n⚠️ Erreur : {}", error));
                 }
             } else {
                 self.messages.push(ChatMessage {
@@ -2186,8 +2452,22 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
     // 1. Tags that are explicitly output or data formats
     if matches!(
         tag.as_str(),
-        "output" | "result" | "text" | "txt" | "log" | "logs" | "tree" | "table"
-            | "json" | "yaml" | "toml" | "md" | "markdown" | "diff" | "status" | "info"
+        "output"
+            | "result"
+            | "text"
+            | "txt"
+            | "log"
+            | "logs"
+            | "tree"
+            | "table"
+            | "json"
+            | "yaml"
+            | "toml"
+            | "md"
+            | "markdown"
+            | "diff"
+            | "status"
+            | "info"
     ) {
         return false;
     }
@@ -2228,8 +2508,18 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         return false;
     }
 
+    // 3.5 Reject blocks that are pure data, not commands — e.g. a list of IP addresses the
+    //     model is presenting as output ("103.213.238.91 202.165.15.132 210.79.142.201").
+    //     Without this they'd be rendered as spurious command cards ("⚡ COMMANDE #N").
+    if looks_like_ip_list(trimmed) {
+        return false;
+    }
+
     // 4. Known shell language tags
-    if matches!(tag.as_str(), "bash" | "sh" | "zsh" | "fish" | "shell" | "cmd" | "terminal" | "console") {
+    if matches!(
+        tag.as_str(),
+        "bash" | "sh" | "zsh" | "fish" | "shell" | "cmd" | "terminal" | "console"
+    ) {
         return true;
     }
 
@@ -2237,11 +2527,18 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
     if tag.is_empty() {
         let lines: Vec<&str> = trimmed.lines().collect();
         // 5.1 Every non-empty line must look like a raw command line, not prose/bullets/escapes.
-        if lines.iter().any(|l| !l.trim().is_empty() && !is_clean_command_line(l.trim())) {
+        if lines
+            .iter()
+            .any(|l| !l.trim().is_empty() && !is_clean_command_line(l.trim()))
+        {
             return false;
         }
         let first_line = lines.first().copied().unwrap_or("").trim();
-        if first_line.starts_with('{') || first_line.starts_with('[') || first_line.starts_with('<') || first_line.starts_with('#') {
+        if first_line.starts_with('{')
+            || first_line.starts_with('[')
+            || first_line.starts_with('<')
+            || first_line.starts_with('#')
+        {
             return false;
         }
         let colon_count = trimmed.matches(':').count();
@@ -2261,14 +2558,21 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         {
             return false;
         }
-        if (trimmed.ends_with('.') || trimmed.ends_with('!') || trimmed.ends_with('?') || trimmed.ends_with('…')) && word_count >= 2 {
+        if (trimmed.ends_with('.')
+            || trimmed.ends_with('!')
+            || trimmed.ends_with('?')
+            || trimmed.ends_with('…'))
+            && word_count >= 2
+        {
             return false;
         }
         // 5.3 A block with many words and no shell metacharacters is very likely prose, not a command.
-        let has_shell_meta = ["|", "&", ";", ">", "<", "$", "(", ")", "{", "}", "*", "~", "`", "&&", "="]
-            .iter()
-            .any(|m| trimmed.contains(m));
-        if word_count >= 7 && !has_shell_meta {
+        let has_shell_meta = [
+            "|", "&", ";", ">", "<", "$", "(", ")", "{", "}", "*", "~", "`", "&&", "=",
+        ]
+        .iter()
+        .any(|m| trimmed.contains(m));
+        if word_count >= 5 && !has_shell_meta {
             return false;
         }
         // 5.4 A single `Label: value value …` line with no shell metacharacters is tabular output
@@ -2277,15 +2581,65 @@ pub fn is_executable_command_block(fence_tag: &str, content: &str) -> bool {
         if line_count == 1 && !has_shell_meta {
             if let Some((label, rest)) = first_line.split_once(':') {
                 let label = label.trim();
-                if !label.is_empty() && !label.contains(char::is_whitespace) && !rest.trim().is_empty() {
+                if !label.is_empty()
+                    && !label.contains(char::is_whitespace)
+                    && !rest.trim().is_empty()
+                {
                     return false;
                 }
             }
+        }
+        // 5.5 A short capitalized sentence without any shell metacharacter ("Mail queue is
+        //     empty", "No certificates found") is output the model quoted inside a plain
+        //     fence, not an executable command. Reject it too.
+        if line_count == 1
+            && word_count >= 3
+            && !has_shell_meta
+            && looks_like_capitalized_prose(trimmed)
+        {
+            return false;
         }
         return true;
     }
 
     false
+}
+
+/// True for a single-line natural-language sentence that starts with an uppercase letter and is
+/// otherwise made of lowercase letters, spaces, apostrophes or hyphens only — the typical shape
+/// of command output quoted by models ("Mail queue is empty"). Real shell commands are either
+/// lowercase, contain paths/flags/options or use shell metacharacters, so this stays conservative.
+fn looks_like_capitalized_prose(s: &str) -> bool {
+    let first = match s.chars().next() {
+        Some(c) if c.is_uppercase() => c,
+        _ => return false,
+    };
+    let _ = first;
+    s.chars()
+        .skip(1)
+        .all(|c| c.is_lowercase() || c.is_whitespace() || c == '\'' || c == '-')
+}
+
+/// True if every whitespace-separated token in `content` looks like an IPv4 address (optionally
+/// with a `:port` suffix). Used to reject lists of IP addresses the model presents as output
+/// (e.g. "103.213.238.91 202.165.15.132 210.79.142.201") so they are not treated as commands.
+fn looks_like_ip_list(content: &str) -> bool {
+    let tokens: Vec<&str> = content.split_whitespace().collect();
+    if tokens.is_empty() {
+        return false;
+    }
+    tokens.iter().all(|t| is_ipv4_token(t))
+}
+
+fn is_ipv4_token(t: &str) -> bool {
+    // Ignore an optional `:port` (or `/mask`) suffix.
+    let host = t.split(':').next().unwrap_or(t);
+    let host = host.split('/').next().unwrap_or(host);
+    let parts: Vec<&str> = host.split('.').collect();
+    parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 3 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Repairs AI glitches where the model outputs an empty code block like:
@@ -2339,8 +2693,14 @@ pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
 
         if let Some(end_idx) = code_rest.find("```") {
             let code_content = code_rest[..end_idx].trim();
-            if is_executable_command_block(fence_tag, code_content) && !list.contains(&code_content.to_string()) {
-                list.push(code_content.to_string());
+            if is_executable_command_block(fence_tag, code_content) {
+                // Strip spurious interpreter framing (`bash`, `sudo sh`, shebang lines, a
+                // dangling trailing `exit`) so the proposal executes the real command instead
+                // of spawning a nested shell and swallowing the rest of the block.
+                let cleaned = sanitize_proposed_command(code_content);
+                if !cleaned.is_empty() && !list.contains(&cleaned) {
+                    list.push(cleaned);
+                }
             }
             remaining = &code_rest[end_idx + 3..];
         } else {
@@ -2356,12 +2716,62 @@ pub fn extract_command_proposal(text: &str) -> Option<String> {
     extract_all_command_proposals(text).into_iter().next()
 }
 
+/// True when a line is a bare interpreter invocation framing a command transcript rather than
+/// part of the command itself — e.g. `bash`, `sudo sh`, `zsh`, or a shebang line. LLMs often
+/// prepend such a line to a ```bash``` block (mimicking an interactive transcript); injecting
+/// it into the PTY spawns a nested shell that swallows the following lines.
+fn is_interpreter_invocation_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.starts_with("#!") {
+        return true;
+    }
+    let rest = t.strip_prefix("sudo ").unwrap_or(t).trim();
+    matches!(
+        rest,
+        "bash" | "sh" | "zsh" | "fish" | "dash" | "ksh" | "ash"
+    )
+}
+
+/// Cleans a proposed command: drops leading blank/interpreter-invocation lines (`bash`,
+/// `sudo sh`, `#!…`) and trailing dangling `exit`/`logout` lines. Returns an empty string when
+/// nothing executable remains. Real commands like `bash -c '…'` or `bash <<EOF` are untouched
+/// because the bare-token match never fires on them.
+pub fn sanitize_proposed_command(raw: &str) -> String {
+    let mut lines: Vec<&str> = raw.lines().collect();
+
+    while let Some(first) = lines.first() {
+        if first.trim().is_empty() || is_interpreter_invocation_line(first) {
+            lines.remove(0);
+        } else {
+            break;
+        }
+    }
+
+    // Mirror cleanup: a trailing bare `exit` / `exit N` / `logout` would close the user's
+    // own interactive shell once executed in the PTY, so it is stripped as well.
+    while let Some(last) = lines.last() {
+        let t = last.trim();
+        let is_exit_code = t
+            .strip_prefix("exit ")
+            .map(|n| n.trim().parse::<i32>().is_ok())
+            .unwrap_or(false);
+        if t.is_empty() || t == "exit" || t == "logout" || is_exit_code {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+
+    lines.join("\n")
+}
+
 pub fn is_natural_approval_phrase(text: &str) -> bool {
     let clean = text.trim().to_lowercase();
+    // NOTE: an empty string must NOT be an approval phrase — pressing bare Enter while a
+    // permission card is displayed used to execute the pending command (even Risky ones).
     matches!(
         clean.as_str(),
-        "" | "ok"
-            | "oui"
+        "ok" | "oui"
             | "o"
             | "yes"
             | "y"
@@ -2411,9 +2821,28 @@ pub fn parse_command_execution_request(text: &str, num_proposals: usize) -> Opti
 
     // Numbered requests: "1", "2", "cmd 1", "commande 2", "lance 1", "lance la 2", "alt 1", "la 1"
     let patterns = [
-        "commande #", "commande ", "cmd #", "cmd ", "lance la commande #", "lance la commande ",
-        "lance la ", "lance le ", "lance #", "lance ", "exécute la commande #", "exécute la commande ",
-        "exécute la ", "exécute #", "exécute ", "execute #", "execute ", "run #", "run ", "alt+", "alt ", "la "
+        "commande #",
+        "commande ",
+        "cmd #",
+        "cmd ",
+        "lance la commande #",
+        "lance la commande ",
+        "lance la ",
+        "lance le ",
+        "lance #",
+        "lance ",
+        "exécute la commande #",
+        "exécute la commande ",
+        "exécute la ",
+        "exécute #",
+        "exécute ",
+        "execute #",
+        "execute ",
+        "run #",
+        "run ",
+        "alt+",
+        "alt ",
+        "la ",
     ];
 
     let mut candidate = clean.as_str();
@@ -2523,7 +2952,10 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
 
         match config.default_provider {
             ProviderType::LmStudio => {
-                let base_url = p_cfg.base_url.as_deref().unwrap_or("http://localhost:1234/v1");
+                let base_url = p_cfg
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("http://localhost:1234/v1");
                 let root_url = base_url.trim_end_matches("/v1").trim_end_matches('/');
                 let api_url = format!("{}/api/v0/models", root_url);
 
@@ -2531,16 +2963,22 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
                     if let Ok(json) = resp.json::<serde_json::Value>().await {
                         if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
                             for item in data {
-                                let id = item.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-                                let is_loaded = item.get("state").and_then(|v| v.as_str()) == Some("loaded");
+                                let id =
+                                    item.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                                let is_loaded =
+                                    item.get("state").and_then(|v| v.as_str()) == Some("loaded");
                                 if is_loaded || id == p_cfg.model {
-                                    if let Some(loaded_ctx) = item.get("loaded_context_length").and_then(|v| v.as_u64()) {
+                                    if let Some(loaded_ctx) =
+                                        item.get("loaded_context_length").and_then(|v| v.as_u64())
+                                    {
                                         if loaded_ctx > 0 {
                                             target.store(loaded_ctx as usize, Ordering::Relaxed);
                                             return;
                                         }
                                     }
-                                    if let Some(max_ctx) = item.get("max_context_length").and_then(|v| v.as_u64()) {
+                                    if let Some(max_ctx) =
+                                        item.get("max_context_length").and_then(|v| v.as_u64())
+                                    {
                                         if max_ctx > 0 {
                                             target.store(max_ctx as usize, Ordering::Relaxed);
                                             return;
@@ -2553,7 +2991,10 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
                 }
             }
             ProviderType::Ollama => {
-                let base_url = p_cfg.base_url.as_deref().unwrap_or("http://localhost:11434");
+                let base_url = p_cfg
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("http://localhost:11434");
                 let root_url = base_url.trim_end_matches("/v1").trim_end_matches('/');
                 let api_url = format!("{}/api/show", root_url);
 
@@ -2605,8 +3046,15 @@ pub fn is_waiting_for_password(raw_text: &str) -> bool {
 fn clean_pty_output(raw: &str, command: &str) -> String {
     let no_ansi = strip_ansi_sequences(raw);
     let no_cr = no_ansi.replace('\r', "");
+    // Strip stray terminal control characters (BEL \x07, etc.) that leak into the captured
+    // output. The terminal renders them as a bell or nothing, but they pollute the model-facing
+    // text (e.g. a leaked OSC-sentinel BEL terminator or a prompt-start marker).
+    let no_ctrl: String = no_cr
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect();
 
-    let mut lines: Vec<&str> = no_cr.lines().collect();
+    let mut lines: Vec<&str> = no_ctrl.lines().collect();
 
     // Filter out internal sentinel, command echo remnants, or sudo password prompts
     lines.retain(|l| {
@@ -2630,7 +3078,8 @@ fn clean_pty_output(raw: &str, command: &str) -> String {
         let cmd_t = command.trim();
         if first_t == cmd_t
             || first_t.starts_with(cmd_t)
-            || (first_t.contains(cmd_t) && (first_t.contains("printf '\\033]777") || first_t.contains("printf '\\e]777")))
+            || (first_t.contains(cmd_t)
+                && (first_t.contains("printf '\\033]777") || first_t.contains("printf '\\e]777")))
             || (first_t.ends_with(cmd_t) && first_t.len() <= cmd_t.len() + 10)
         {
             lines.remove(0);
@@ -2660,19 +3109,21 @@ fn is_prompt_remnant(line: &str) -> bool {
     if t.is_empty() {
         return true;
     }
-    // Single decorative prompt symbol (e.g. `∙`, `❯`, `➜`, `λ`, `›`)
-    if t.chars().count() <= 2 && t.chars().all(|c| "∙•·❯➜λ›".contains(c)) {
+    // Single decorative prompt symbol (e.g. `∙`, `❯`, `➜`, `λ`, `›`, `±`)
+    if t.chars().count() <= 2 && t.chars().all(|c| "∙•·❯➜λ›±◆✗✔".contains(c)) {
         return true;
     }
-    // Standard shell prompt: user@host:path…$ / host:~# / host:/path>  (short, ends with a marker)
+    // Standard shell prompt: user@host:path…$ / host:~# / host:/path>  (short, ends with a marker).
+    // Also matches git-aware prompts like `[user@host:path] branch(+0/-7) ±`.
     let ends_marker = t.ends_with('$')
         || t.ends_with('#')
         || t.ends_with('>')
         || t.ends_with('%')
         || t.ends_with('❯')
         || t.ends_with('➜')
-        || t.ends_with('λ');
-    if ends_marker && t.len() <= 64 && (t.contains(':') || t.contains('~') || t.contains('@')) {
+        || t.ends_with('λ')
+        || t.ends_with('±');
+    if ends_marker && t.len() <= 96 && (t.contains(':') || t.contains('~') || t.contains('@')) {
         return true;
     }
     false
@@ -2720,7 +3171,13 @@ pub fn clean_multiline_command(command: &str) -> String {
             || *l == "done"
             || *l == "fi"
             || l.contains("IFS=")
-            || (l.contains('=') && !l.starts_with("echo ") && !l.starts_with("printf ") && l.split('=').next().map(|v| v.chars().all(|c| c.is_alphanumeric() || c == '_')).unwrap_or(false))
+            || (l.contains('=')
+                && !l.starts_with("echo ")
+                && !l.starts_with("printf ")
+                && l.split('=')
+                    .next()
+                    .map(|v| v.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(false))
     });
 
     if has_shebang || has_bash_keywords {
@@ -2740,7 +3197,8 @@ pub fn clean_multiline_command(command: &str) -> String {
     for (i, line) in lines.iter().enumerate() {
         let mut l = line.trim();
         // Strip trailing line-continuation backslashes (but not \( or escaped chars)
-        while l.ends_with('\\') && !l.ends_with(r"\(") && !l.ends_with(r"\)") && !l.ends_with(r"\;") {
+        while l.ends_with('\\') && !l.ends_with(r"\(") && !l.ends_with(r"\)") && !l.ends_with(r"\;")
+        {
             l = l[..l.len() - 1].trim();
         }
 
@@ -2814,7 +3272,12 @@ pub fn sanitize_bash_command_syntax(cmd: &str) -> String {
                         // Check preceding non-whitespace character in `out`
                         let prev_non_ws = out.trim_end().chars().last();
                         if let Some(prev) = prev_non_ws {
-                            if prev != ';' && prev != '&' && prev != '|' && prev != '\n' && prev != '{' {
+                            if prev != ';'
+                                && prev != '&'
+                                && prev != '|'
+                                && prev != '\n'
+                                && prev != '{'
+                            {
                                 let trimmed_len = out.trim_end().len();
                                 out.truncate(trimmed_len);
                                 out.push(';');
@@ -2905,7 +3368,9 @@ pub fn clean_heredoc_script(script: &str) -> String {
     //    comment line alone ("seul le début du heredoc apparaît").
     let first_cmd_idx = lines
         .iter()
-        .position(|l| !l.trim_start().starts_with('#') && (l.contains("<<") || is_clean_command_line(l)))
+        .position(|l| {
+            !l.trim_start().starts_with('#') && (l.contains("<<") || is_clean_command_line(l))
+        })
         .unwrap_or(0);
 
     let mut result_lines: Vec<&str> = Vec::new();
@@ -2999,13 +3464,19 @@ pub fn repair_missing_heredoc_terminator(script: &str) -> String {
             // Extract the delimiter token (surrounded optionally by ' or " or naked)
             let (delim, delim_end_pos) = if let Some(stripped) = rest_trimmed.strip_prefix('\'') {
                 if let Some(end) = stripped.find('\'') {
-                    (&stripped[..end], abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1)
+                    (
+                        &stripped[..end],
+                        abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1,
+                    )
                 } else {
                     ("", abs_pos)
                 }
             } else if let Some(stripped) = rest_trimmed.strip_prefix('"') {
                 if let Some(end) = stripped.find('"') {
-                    (&stripped[..end], abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1)
+                    (
+                        &stripped[..end],
+                        abs_pos + (rest.len() - rest_trimmed.len()) + 1 + end + 1,
+                    )
                 } else {
                     ("", abs_pos)
                 }
@@ -3078,7 +3549,9 @@ pub fn is_bash_specific_syntax(cmd: &str) -> bool {
         if let Some(eq_idx) = p.find('=') {
             if eq_idx > 0 {
                 let var_name = &p[..eq_idx];
-                if var_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                if var_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
                     && !p.starts_with("--")
                     && !p.starts_with('-')
                 {
@@ -3187,3 +3660,118 @@ fn strip_ansi_sequences(s: &str) -> String {
     out
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{clean_pty_output, is_prompt_remnant};
+
+    #[test]
+    fn strips_git_aware_prompt_remnant() {
+        assert!(is_prompt_remnant(
+            "[xorne@prod:/var/www/xorne/resa-prod/config] main(+0/-7) ±"
+        ));
+        assert!(is_prompt_remnant("[user@host:~] main ±"));
+        assert!(!is_prompt_remnant("HTTP 200 - 0.062107s"));
+        assert!(!is_prompt_remnant("active"));
+    }
+
+    #[test]
+    fn strips_bell_and_prompt_from_captured_output() {
+        let raw = "curl -sk -o /dev/null -w \"HTTP %{http_code}\"\x07 https://x/\r\nHTTP 200 - 0.062107s\r\n[xorne@prod:/var/www/xorne/resa-prod/config] main(+0/-7) ±";
+        let cmd = "curl -sk -o /dev/null -w \"HTTP %{http_code}\" https://x/";
+        let cleaned = clean_pty_output(raw, cmd);
+        // The echo line (with leaked BEL) and the trailing prompt must be removed.
+        assert_eq!(cleaned, "HTTP 200 - 0.062107s");
+    }
+
+    #[test]
+    fn rejects_ip_list_as_command_proposal() {
+        use super::is_executable_command_block;
+        // A list of IP addresses the model presents as output must NOT become a command card.
+        assert!(!is_executable_command_block(
+            "",
+            "103.213.238.91 202.165.15.132 210.79.142.201"
+        ));
+        assert!(!is_executable_command_block(
+            "bash",
+            "51.38.226.204   121.161.242.168   43.164.190.60   37.59.112.122"
+        ));
+        assert!(is_executable_command_block(
+            "bash",
+            "ss -tn state established | grep '185.177.72'"
+        ));
+        assert!(is_executable_command_block(
+            "",
+            "systemctl status fail2ban --no-pager | head -30"
+        ));
+    }
+
+    #[test]
+    fn rejects_quoted_output_prose_as_command_proposal() {
+        use super::is_executable_command_block;
+        // Regression (user report screen 3): "Mail queue is empty" was rendered inside a
+        // plain fence by the model and became a spurious "⚡ COMMANDE #1" card.
+        assert!(!is_executable_command_block("", "Mail queue is empty"));
+        assert!(!is_executable_command_block("", "No certificates found"));
+        // Real commands keep passing.
+        assert!(is_executable_command_block("", "df -h"));
+        assert!(is_executable_command_block("", "git status"));
+        assert!(is_executable_command_block("bash", "systemctl list-units --type=service --state=running --no-pager | grep -Ei 'php|apache'"));
+    }
+
+    #[test]
+    fn strips_interpreter_framing_lines_from_proposals() {
+        use super::{extract_all_command_proposals, sanitize_proposed_command};
+        let real_cmd = "echo \"=== FSTAB (entrées swap) ===\" && grep -n 'swap' /etc/fstab";
+
+        // Direct helper: leading blank + `bash` framing lines are gone.
+        let cleaned = sanitize_proposed_command(&format!("bash\n\n{}", real_cmd));
+        assert_eq!(cleaned, real_cmd);
+
+        // sudo-prefixed and shebang framings too.
+        assert_eq!(
+            sanitize_proposed_command(&format!("sudo sh\n#! /bin/bash\n{}", real_cmd)),
+            real_cmd
+        );
+
+        // A trailing dangling exit would kill the user's own shell once injected.
+        assert_eq!(
+            sanitize_proposed_command(&format!("{}\nexit", real_cmd)),
+            real_cmd
+        );
+        assert_eq!(
+            sanitize_proposed_command(&format!("bash\n{}\nlogout", real_cmd)),
+            real_cmd
+        );
+
+        // Real commands using the interpreter explicitly stay untouched…
+        assert_eq!(
+            sanitize_proposed_command("bash -c 'echo hi'"),
+            "bash -c 'echo hi'"
+        );
+        assert_eq!(
+            sanitize_proposed_command("bash <<EOF\necho hi\nEOF"),
+            "bash <<EOF\necho hi\nEOF"
+        );
+        // …and a block that contains nothing executable yields no proposal at all.
+        assert_eq!(sanitize_proposed_command("bash\nexit"), "");
+
+        // End-to-end through the extractor (user report screen 2): the bare `bash` line must
+        // not be part of what gets injected into the PTY.
+        let md = format!("```bash\nbash\n{real}\n```\n", real = real_cmd);
+        let proposals = extract_all_command_proposals(&md);
+        assert_eq!(proposals, vec![real_cmd.to_string()]);
+    }
+
+    #[test]
+    fn empty_input_is_not_an_approval_phrase() {
+        use super::{is_natural_approval_phrase, is_natural_decline_phrase};
+        // Regression: bare Enter while a permission card is displayed used to approve it
+        // (even Risky commands) because "" matched the approval phrase list.
+        assert!(!is_natural_approval_phrase(""));
+        assert!(!is_natural_approval_phrase("   "));
+        assert!(is_natural_approval_phrase("ok"));
+        assert!(is_natural_approval_phrase("oui"));
+        // Decline phrases were never empty-matching; keep it that way.
+        assert!(!is_natural_decline_phrase(""));
+    }
+}

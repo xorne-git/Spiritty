@@ -7,11 +7,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
+use super::LlmProvider;
 use crate::{
     app::{ChatMessage, MessageRole},
     event::AppEvent,
 };
-use super::LlmProvider;
 
 pub struct GeminiProvider {
     base_url: String,
@@ -99,14 +99,18 @@ impl LlmProvider for GeminiProvider {
         cancel: CancellationToken,
     ) -> Result<()> {
         if self.api_key.trim().is_empty() {
-            let err = "Clé d'API Gemini manquante. Configurez-la avec Ctrl+P ou exportez GEMINI_API_KEY.".to_string();
+            let err =
+                "Clé d'API Gemini manquante. Configurez-la avec Ctrl+P ou exportez GEMINI_API_KEY."
+                    .to_string();
             let _ = event_tx.send(AppEvent::AgentError(err.clone()));
             anyhow::bail!(err);
         }
 
         let system_instruction = if !system_prompt.is_empty() {
             Some(GeminiSystemInstruction {
-                parts: vec![GeminiPart { text: system_prompt }],
+                parts: vec![GeminiPart {
+                    text: system_prompt,
+                }],
             })
         } else {
             None
@@ -198,7 +202,8 @@ impl LlmProvider for GeminiProvider {
                                             for part in parts {
                                                 if let Some(text) = part.text {
                                                     if !text.is_empty() {
-                                                        let _ = event_tx.send(AppEvent::AgentChunk(text));
+                                                        let _ = event_tx
+                                                            .send(AppEvent::AgentChunk(text));
                                                     }
                                                 }
                                             }
@@ -216,7 +221,9 @@ impl LlmProvider for GeminiProvider {
                 },
                 Ok(None) => break,
                 Err(_) => {
-                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Gemini (timeout SSE).".to_string();
+                    let err_msg =
+                        "Délai d'inactivité de 25s dépassé sur le flux Gemini (timeout SSE)."
+                            .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }

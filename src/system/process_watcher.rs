@@ -36,7 +36,10 @@ impl ActiveSession {
             ActiveSession::Ssh { target, .. } => {
                 format!("SSH: {}", target)
             }
-            ActiveSession::Container { runtime, container_id } => {
+            ActiveSession::Container {
+                runtime,
+                container_id,
+            } => {
                 format!("{}: {}", runtime, container_id)
             }
         }
@@ -284,7 +287,10 @@ fn parse_ssh_args(args: &[String]) -> Option<ActiveSession> {
         }
 
         // Flags that take an argument
-        if matches!(arg.as_str(), "-i" | "-F" | "-o" | "-c" | "-b" | "-E" | "-J" | "-W" | "-w" | "-B" | "-S") {
+        if matches!(
+            arg.as_str(),
+            "-i" | "-F" | "-o" | "-c" | "-b" | "-E" | "-J" | "-W" | "-w" | "-B" | "-S"
+        ) {
             skip_next = true;
             continue;
         }

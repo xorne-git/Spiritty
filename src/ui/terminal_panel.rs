@@ -29,26 +29,58 @@ impl<'a> TerminalPanel<'a> {
             crate::system::ActiveSession::Ssh { ref target, .. } => {
                 if let Some(ref profile) = self.app.system_context.active_remote_profile {
                     (
-                        format!("🌐 SSH: {} ({})", target, profile.distro.split_whitespace().next().unwrap_or(&profile.distro)),
-                        Style::default().fg(if is_focused { palette.warning } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
+                        format!(
+                            "🌐 SSH: {} ({})",
+                            target,
+                            profile
+                                .distro
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or(&profile.distro)
+                        ),
+                        Style::default()
+                            .fg(if is_focused {
+                                palette.warning
+                            } else {
+                                palette.border_unfocused
+                            })
+                            .add_modifier(Modifier::BOLD),
                     )
                 } else {
                     (
                         format!("🌐 SSH: {}", target),
-                        Style::default().fg(if is_focused { palette.warning } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(if is_focused {
+                                palette.warning
+                            } else {
+                                palette.border_unfocused
+                            })
+                            .add_modifier(Modifier::BOLD),
                     )
                 }
             }
-            crate::system::ActiveSession::Container { ref runtime, ref container_id } => {
-                (
-                    format!("📦 {}: {}", runtime, container_id),
-                    Style::default().fg(if is_focused { palette.accent_secondary } else { palette.border_unfocused }).add_modifier(Modifier::BOLD),
-                )
-            }
-            crate::system::ActiveSession::Local { ref foreground_process } => {
+            crate::system::ActiveSession::Container {
+                ref runtime,
+                ref container_id,
+            } => (
+                format!("📦 {}: {}", runtime, container_id),
+                Style::default()
+                    .fg(if is_focused {
+                        palette.accent_secondary
+                    } else {
+                        palette.border_unfocused
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            crate::system::ActiveSession::Local {
+                ref foreground_process,
+            } => {
                 let base = if let Some(proc) = foreground_process {
                     if proc != "fish" && proc != "bash" && proc != "zsh" && proc != "sh" {
-                        format!("💻 {} ({})", self.app.system_context.terminal_emulator, proc)
+                        format!(
+                            "💻 {} ({})",
+                            self.app.system_context.terminal_emulator, proc
+                        )
                     } else {
                         format!("💻 {}", self.app.system_context.terminal_emulator)
                     }
@@ -56,7 +88,10 @@ impl<'a> TerminalPanel<'a> {
                     format!("💻 {}", self.app.system_context.terminal_emulator)
                 };
 
-                let cwd_info = match (&self.app.system_context.current_dir, &self.app.system_context.git_branch) {
+                let cwd_info = match (
+                    &self.app.system_context.current_dir,
+                    &self.app.system_context.git_branch,
+                ) {
                     (Some(cwd), Some(branch)) => format!(" [ {} ] ( {})", cwd, branch),
                     (Some(cwd), None) => format!(" [ {} ]", cwd),
                     _ => String::new(),
@@ -80,19 +115,18 @@ impl<'a> TerminalPanel<'a> {
                 };
 
                 let style = Style::default()
-                    .fg(if is_focused { palette.accent_primary } else { palette.border_unfocused })
+                    .fg(if is_focused {
+                        palette.accent_primary
+                    } else {
+                        palette.border_unfocused
+                    })
                     .add_modifier(Modifier::BOLD);
                 (text, style)
             }
         };
 
         // 1. Icon + Title on the LEFT of terminal panel (1 char padding)
-        buf.set_string(
-            area.left() + 1,
-            area.top(),
-            &title_text,
-            title_style,
-        );
+        buf.set_string(area.left() + 1, area.top(), &title_text, title_style);
 
         let (scroll_offset, total_lines) = self.app.pty.scroll_info();
 
@@ -101,12 +135,19 @@ impl<'a> TerminalPanel<'a> {
             let (badge_text, badge_style) = if scroll_offset > 0 {
                 (
                     format!("▲ -{} / {} l.", scroll_offset, total_lines),
-                    Style::default().bg(palette.accent_primary).fg(Color::Black).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .bg(palette.accent_primary)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
                 )
             } else {
                 (
                     format!("📜 {} l.", total_lines),
-                    Style::default().fg(if is_focused { palette.accent_primary } else { palette.border_unfocused }),
+                    Style::default().fg(if is_focused {
+                        palette.accent_primary
+                    } else {
+                        palette.border_unfocused
+                    }),
                 )
             };
 
@@ -159,7 +200,9 @@ impl<'a> TerminalPanel<'a> {
                     .padding(Padding::horizontal(1))
                     .title(Span::styled(
                         title,
-                        Style::default().fg(palette.warning).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD),
                     ));
 
                 let inner_toast = block.inner(toast_area);
@@ -167,32 +210,40 @@ impl<'a> TerminalPanel<'a> {
 
                 let max_text_len = (inner_toast.width.saturating_sub(6)) as usize;
                 let cmd_short = if diag.command.len() > max_text_len {
-                    let cut = diag.command.floor_char_boundary(max_text_len.saturating_sub(1));
+                    let cut = diag
+                        .command
+                        .floor_char_boundary(max_text_len.saturating_sub(1));
                     format!("{}…", &diag.command[..cut])
                 } else {
                     diag.command.clone()
                 };
 
                 let line1 = Line::from(vec![
+                    Span::styled("Cmd: ", Style::default().fg(palette.text_secondary)),
                     Span::styled(
-                        "Cmd: ",
-                        Style::default().fg(palette.text_secondary),
+                        cmd_short,
+                        Style::default()
+                            .fg(palette.text_primary)
+                            .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(cmd_short, Style::default().fg(palette.text_primary).add_modifier(Modifier::BOLD)),
                 ]);
 
-                let line2 = Line::from(vec![
-                    Span::styled(
-                        if lang == Language::Fr { "Diagnostiquer avec l'agent IA ?" } else { "Diagnose with AI agent?" },
-                        Style::default().fg(palette.text_secondary),
-                    ),
-                ]);
+                let line2 = Line::from(vec![Span::styled(
+                    if lang == Language::Fr {
+                        "Diagnostiquer avec l'agent IA ?"
+                    } else {
+                        "Diagnose with AI agent?"
+                    },
+                    Style::default().fg(palette.text_secondary),
+                )]);
 
                 let mut btn_spans = Vec::new();
                 btn_spans.extend(key_pill("Alt + D", palette.success));
                 btn_spans.push(Span::styled(
                     " OK  ",
-                    Style::default().fg(palette.text_primary).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.text_primary)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 btn_spans.extend(key_pill("Alt + X", palette.text_secondary));
                 btn_spans.push(Span::styled(
@@ -226,7 +277,10 @@ fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
         Span::styled("", Style::default().fg(color)),
         Span::styled(
             key.to_string(),
-            Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("", Style::default().fg(color)),
     ]

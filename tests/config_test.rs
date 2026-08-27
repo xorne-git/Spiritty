@@ -16,7 +16,10 @@ fn test_config_defaults_and_providers() {
 
     // Verify LM Studio default URL and model
     let lmstudio = config.providers.get("lmstudio").unwrap();
-    assert_eq!(lmstudio.base_url.as_deref(), Some("http://localhost:1234/v1"));
+    assert_eq!(
+        lmstudio.base_url.as_deref(),
+        Some("http://localhost:1234/v1")
+    );
 
     // Verify Grok default URL
     let grok = config.providers.get("grok").unwrap();
@@ -71,7 +74,9 @@ fn test_custom_system_prompt() {
         terminal_emulator: "Ghostty v1.3.1".to_string(),
         package_managers: vec!["pacman".to_string()],
         desktop_env: Some("niri".to_string()),
-        active_session: spiritty::system::ActiveSession::Local { foreground_process: None },
+        active_session: spiritty::system::ActiveSession::Local {
+            foreground_process: None,
+        },
         active_remote_profile: None,
         current_dir: Some("~/Projets/Spiritty".to_string()),
         git_branch: Some("main".to_string()),
@@ -134,7 +139,10 @@ theme = "tokyo_night"
     let cfg: Config = toml::from_str(toml_data).unwrap();
     assert_eq!(cfg.get_split_ratio(), 42);
     assert_eq!(cfg.get_theme(), "tokyo_night");
-    assert_eq!(ThemeId::parse_or_default(&cfg.get_theme()), ThemeId::TokyoNight);
+    assert_eq!(
+        ThemeId::parse_or_default(&cfg.get_theme()),
+        ThemeId::TokyoNight
+    );
 
     // Test clamp on split_ratio
     let clamped_low: Config = toml::from_str("split_ratio = 5").unwrap();
@@ -143,4 +151,3 @@ theme = "tokyo_night"
     let clamped_high: Config = toml::from_str("split_ratio = 99").unwrap();
     assert_eq!(clamped_high.get_split_ratio(), 85);
 }
-

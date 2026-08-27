@@ -64,8 +64,14 @@ impl Session {
 
     /// Calculates estimated session cost in USD with a specific PricingRegistry
     pub fn estimated_cost_with_pricing(&self, registry: &crate::pricing::PricingRegistry) -> f64 {
-        let pricing = registry.get_pricing(&self.provider, &self.model);
-        pricing.calculate_cost(self.prompt_tokens, self.completion_tokens)
+        self.estimated_cost_opt(registry).unwrap_or(0.0)
+    }
+
+    /// Estimated session cost only when a tariff is actually configured for this session's
+    /// provider/model — `None` otherwise, so the UI can hide the cost instead of guessing.
+    pub fn estimated_cost_opt(&self, registry: &crate::pricing::PricingRegistry) -> Option<f64> {
+        let pricing = registry.get_pricing(&self.provider, &self.model)?;
+        Some(pricing.calculate_cost(self.prompt_tokens, self.completion_tokens))
     }
 
     /// Synchronizes session with current chat messages, prompt history, total tokens, and active provider/model.
@@ -170,7 +176,10 @@ impl Session {
         let summary_text = if summary_points.is_empty() {
             "Contexte précédent archivé et compacté.".to_string()
         } else {
-            format!("Contexte précédent compacté :\n{}", summary_points.join("\n"))
+            format!(
+                "Contexte précédent compacté :\n{}",
+                summary_points.join("\n")
+            )
         };
 
         self.compacted_summary = Some(summary_text.clone());

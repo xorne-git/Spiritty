@@ -26,7 +26,10 @@ pub enum AppEvent {
         approval_tx: tokio::sync::oneshot::Sender<bool>,
     },
     AgentToolStart(String),
-    AgentToolDone { command: String, output: String },
+    AgentToolDone {
+        command: String,
+        output: String,
+    },
     AgentPtyToolExecute {
         command: String,
         result_tx: tokio::sync::oneshot::Sender<String>,
@@ -67,7 +70,9 @@ impl EventHandler {
                             continue;
                         }
                         // Only handle Press events to avoid double trigger on Windows/Linux
-                        if key.kind == KeyEventKind::Press && event_tx.send(AppEvent::Key(key)).is_err() {
+                        if key.kind == KeyEventKind::Press
+                            && event_tx.send(AppEvent::Key(key)).is_err()
+                        {
                             break;
                         }
                     }

@@ -57,7 +57,9 @@ impl std::str::FromStr for ThemeId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.trim().to_lowercase().as_str() {
-            "catppuccin" | "catppuccin_mocha" | "catppuccin-mocha" | "mocha" => ThemeId::CatppuccinMocha,
+            "catppuccin" | "catppuccin_mocha" | "catppuccin-mocha" | "mocha" => {
+                ThemeId::CatppuccinMocha
+            }
             "tokyo" | "tokyo_night" | "tokyonight" | "tokyo-night" => ThemeId::TokyoNight,
             "nord" | "nordic" => ThemeId::Nord,
             "gruvbox" | "gruvbox_dark" | "gruvbox-dark" => ThemeId::GruvboxDark,
@@ -95,26 +97,26 @@ impl ThemeId {
             ThemeId::CatppuccinMocha => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (17, 17, 27),   // #11111b (Crust)
-                gradient_end: (30, 30, 46),     // #1e1e2e (Base)
-                border_focused: Color::Rgb(203, 166, 247),   // Mauve
-                border_unfocused: Color::Rgb(88, 91, 112),   // Surface2
-                accent_primary: Color::Rgb(137, 180, 250),   // Blue
+                gradient_start: (17, 17, 27), // #11111b (Crust)
+                gradient_end: (30, 30, 46),   // #1e1e2e (Base)
+                border_focused: Color::Rgb(203, 166, 247), // Mauve
+                border_unfocused: Color::Rgb(88, 91, 112), // Surface2
+                accent_primary: Color::Rgb(137, 180, 250), // Blue
                 accent_secondary: Color::Rgb(203, 166, 247), // Mauve
-                success: Color::Rgb(166, 227, 161),          // Green
-                warning: Color::Rgb(250, 179, 135),          // Peach
-                danger: Color::Rgb(243, 139, 168),           // Red
-                text_primary: Color::Rgb(205, 214, 244),     // Text
-                text_secondary: Color::Rgb(166, 173, 200),   // Subtext0
-                text_dim: Color::Rgb(108, 112, 134),         // Overlay0
-                selection_bg: Color::Rgb(69, 71, 90),        // Surface1
+                success: Color::Rgb(166, 227, 161), // Green
+                warning: Color::Rgb(250, 179, 135), // Peach
+                danger: Color::Rgb(243, 139, 168), // Red
+                text_primary: Color::Rgb(205, 214, 244), // Text
+                text_secondary: Color::Rgb(166, 173, 200), // Subtext0
+                text_dim: Color::Rgb(108, 112, 134), // Overlay0
+                selection_bg: Color::Rgb(69, 71, 90), // Surface1
             },
             ThemeId::TokyoNight => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (15, 15, 24),   // #0f0f18
-                gradient_end: (26, 27, 38),     // #1a1b26
-                border_focused: Color::Rgb(122, 162, 247),   // #7aa2f7
+                gradient_start: (15, 15, 24),              // #0f0f18
+                gradient_end: (26, 27, 38),                // #1a1b26
+                border_focused: Color::Rgb(122, 162, 247), // #7aa2f7
                 border_unfocused: Color::Rgb(65, 72, 104),
                 accent_primary: Color::Rgb(122, 162, 247),
                 accent_secondary: Color::Rgb(187, 154, 247), // #bb9af7
@@ -129,8 +131,8 @@ impl ThemeId {
             ThemeId::Nord => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (24, 28, 36),   // #181c24
-                gradient_end: (46, 52, 64),     // #2e3440 (nord0)
+                gradient_start: (24, 28, 36),                // #181c24
+                gradient_end: (46, 52, 64),                  // #2e3440 (nord0)
                 border_focused: Color::Rgb(136, 192, 208),   // #88c0d0 (nord8)
                 border_unfocused: Color::Rgb(76, 86, 106),   // #4c566a (nord3)
                 accent_primary: Color::Rgb(136, 192, 208),   // #88c0d0
@@ -146,8 +148,8 @@ impl ThemeId {
             ThemeId::GruvboxDark => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (20, 20, 20),   // #141414
-                gradient_end: (40, 40, 40),     // #282828
+                gradient_start: (20, 20, 20),                // #141414
+                gradient_end: (40, 40, 40),                  // #282828
                 border_focused: Color::Rgb(254, 128, 25),    // #fe8019 (Orange)
                 border_unfocused: Color::Rgb(80, 73, 69),    // #504945
                 accent_primary: Color::Rgb(250, 189, 47),    // #fabd2f (Yellow)
@@ -163,8 +165,8 @@ impl ThemeId {
             ThemeId::Dracula => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (20, 20, 30),   // #14141e
-                gradient_end: (40, 42, 54),     // #282a36
+                gradient_start: (20, 20, 30),                // #14141e
+                gradient_end: (40, 42, 54),                  // #282a36
                 border_focused: Color::Rgb(189, 147, 249),   // #bd93f9 (Purple)
                 border_unfocused: Color::Rgb(68, 71, 90),    // #44475a
                 accent_primary: Color::Rgb(255, 121, 198),   // #ff79c6 (Pink)
@@ -174,14 +176,14 @@ impl ThemeId {
                 danger: Color::Rgb(255, 85, 85),             // #ff5555 (Red)
                 text_primary: Color::Rgb(248, 248, 242),     // #f8f8f2
                 text_secondary: Color::Rgb(189, 147, 249),
-                text_dim: Color::Rgb(98, 114, 164),          // #6272a4
+                text_dim: Color::Rgb(98, 114, 164), // #6272a4
                 selection_bg: Color::Rgb(68, 71, 90),
             },
             ThemeId::Monokai => ThemePalette {
                 id: *self,
                 name: self.display_name(),
-                gradient_start: (18, 19, 16),   // #121310
-                gradient_end: (39, 40, 34),     // #272822
+                gradient_start: (18, 19, 16),                // #121310
+                gradient_end: (39, 40, 34),                  // #272822
                 border_focused: Color::Rgb(166, 226, 46),    // #a6e22e (Green)
                 border_unfocused: Color::Rgb(73, 72, 62),    // #49483e
                 accent_primary: Color::Rgb(249, 38, 114),    // #f92672 (Pink)
@@ -191,7 +193,7 @@ impl ThemeId {
                 danger: Color::Rgb(249, 38, 114),            // #f92672 (Red)
                 text_primary: Color::Rgb(248, 248, 242),     // #f8f8f2
                 text_secondary: Color::Rgb(165, 158, 134),
-                text_dim: Color::Rgb(117, 113, 94),          // #75715e
+                text_dim: Color::Rgb(117, 113, 94), // #75715e
                 selection_bg: Color::Rgb(59, 58, 48),
             },
         }

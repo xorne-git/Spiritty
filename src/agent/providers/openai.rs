@@ -8,11 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use super::LlmProvider;
 use crate::{
     app::{ChatMessage, MessageRole},
     event::AppEvent,
 };
-use super::LlmProvider;
 
 pub struct OpenAiCompatibleProvider {
     name: String,
@@ -144,7 +144,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
             model: &self.model,
             messages: api_messages,
             stream: true,
-            stream_options: Some(StreamOptions { include_usage: true }),
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
             max_tokens: None,
             temperature: Some(0.2),
         };
@@ -253,7 +255,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     break;
                 }
                 Err(_) => {
-                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE).".to_string();
+                    let err_msg =
+                        "Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE)."
+                            .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }

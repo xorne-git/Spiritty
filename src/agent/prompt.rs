@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use crate::{config::Config, i18n::Language, system::SystemContext};
+use std::path::PathBuf;
 
 /// Builds the system prompt specialized for terminal, DevOps, and system troubleshooting in the target language.
 /// Supports custom system prompt from config.toml or ~/.config/spiritty/system_prompt.md.
@@ -16,7 +16,9 @@ pub fn build_system_prompt(lang: Language, sys: &SystemContext, config: &Config)
     // 2. Custom prompt file specified in config.toml (system_prompt_file = "...")
     if let Some(ref path_str) = config.system_prompt_file {
         let expanded_path = if let Some(stripped) = path_str.strip_prefix("~/") {
-            dirs::home_dir().map(|h| h.join(stripped)).unwrap_or_else(|| PathBuf::from(path_str))
+            dirs::home_dir()
+                .map(|h| h.join(stripped))
+                .unwrap_or_else(|| PathBuf::from(path_str))
         } else {
             PathBuf::from(path_str)
         };

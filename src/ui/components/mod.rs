@@ -5,7 +5,9 @@ pub mod help_modal;
 pub mod mcp_modal;
 pub mod session_modal;
 
-pub use bookmarks_modal::{AddHostState, BookmarksModal, BookmarksModalAction, BookmarksModalState};
+pub use bookmarks_modal::{
+    AddHostState, BookmarksModal, BookmarksModalAction, BookmarksModalState,
+};
 pub use config_modal::{ConfigModalAction, ConfigModalState};
 pub use export_modal::{ExportModal, ExportModalAction, ExportModalState};
 pub use help_modal::HelpModal;

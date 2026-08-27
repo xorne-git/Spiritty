@@ -33,7 +33,8 @@ pub trait LlmProvider: Send + Sync {
 pub fn create_provider(config: &Config) -> Box<dyn LlmProvider> {
     let provider_type = config.default_provider;
     let provider_cfg = config.get_active_provider_config();
-    let api_key = Config::resolve_api_key_for_provider(provider_type, provider_cfg.api_key.as_deref());
+    let api_key =
+        Config::resolve_api_key_for_provider(provider_type, provider_cfg.api_key.as_deref());
 
     match provider_type {
         ProviderType::Ollama => Box::new(OllamaProvider::new(
@@ -42,7 +43,9 @@ pub fn create_provider(config: &Config) -> Box<dyn LlmProvider> {
         )),
         ProviderType::LmStudio => Box::new(OpenAiCompatibleProvider::new(
             "LM Studio",
-            provider_cfg.base_url.or_else(|| Some("http://localhost:1234/v1".to_string())),
+            provider_cfg
+                .base_url
+                .or_else(|| Some("http://localhost:1234/v1".to_string())),
             provider_cfg.model,
             api_key,
         )),
@@ -53,19 +56,25 @@ pub fn create_provider(config: &Config) -> Box<dyn LlmProvider> {
         )),
         ProviderType::Grok => Box::new(OpenAiCompatibleProvider::new(
             "Grok (xAI)",
-            provider_cfg.base_url.or_else(|| Some("https://api.x.ai/v1".to_string())),
+            provider_cfg
+                .base_url
+                .or_else(|| Some("https://api.x.ai/v1".to_string())),
             provider_cfg.model,
             api_key,
         )),
         ProviderType::DeepSeek => Box::new(OpenAiCompatibleProvider::new(
             "DeepSeek",
-            provider_cfg.base_url.or_else(|| Some("https://api.deepseek.com/v1".to_string())),
+            provider_cfg
+                .base_url
+                .or_else(|| Some("https://api.deepseek.com/v1".to_string())),
             provider_cfg.model,
             api_key,
         )),
         ProviderType::OpenAI => Box::new(OpenAiCompatibleProvider::new(
             "OpenAI",
-            provider_cfg.base_url.or_else(|| Some("https://api.openai.com/v1".to_string())),
+            provider_cfg
+                .base_url
+                .or_else(|| Some("https://api.openai.com/v1".to_string())),
             provider_cfg.model,
             api_key,
         )),
@@ -192,7 +201,12 @@ pub async fn fetch_available_models(
                             .data
                             .into_iter()
                             .map(|m| m.id)
-                            .filter(|id| !id.contains("embedding") && !id.contains("whisper") && !id.contains("dall-e") && !id.contains("tts"))
+                            .filter(|id| {
+                                !id.contains("embedding")
+                                    && !id.contains("whisper")
+                                    && !id.contains("dall-e")
+                                    && !id.contains("tts")
+                            })
                             .collect();
                         if !names.is_empty() {
                             return names;

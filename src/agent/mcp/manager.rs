@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::config::{Config, McpServerConfig};
 use super::{process::McpProcess, McpToolDefinition};
+use crate::config::{Config, McpServerConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpStatus {
@@ -43,7 +43,10 @@ impl McpManager {
         }
     }
 
-    pub fn load_from_config(config: &Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::AppEvent>>) -> Self {
+    pub fn load_from_config(
+        config: &Config,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::AppEvent>>,
+    ) -> Self {
         let manager = Self::new();
         let mgr_clone = manager.clone();
         let cfg_clone = config.clone();
@@ -55,7 +58,11 @@ impl McpManager {
         manager
     }
 
-    pub async fn reload(&self, config: &Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::AppEvent>>) {
+    pub async fn reload(
+        &self,
+        config: &Config,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::AppEvent>>,
+    ) {
         let mut new_servers = HashMap::new();
         let mut new_statuses = Vec::new();
 
@@ -95,7 +102,10 @@ impl McpManager {
                             command: s_cfg.command.clone(),
                             args: s_cfg.args.clone(),
                             enabled: true,
-                            status: McpStatus::Error(format!("Échec de découverte des outils: {}", err)),
+                            status: McpStatus::Error(format!(
+                                "Échec de découverte des outils: {}",
+                                err
+                            )),
                             tools: Vec::new(),
                         });
                     }
@@ -181,7 +191,11 @@ impl McpManager {
         Ok(res.to_plain_text())
     }
 
-    pub async fn test_single_server(&self, name: &str, s_cfg: &McpServerConfig) -> Result<Vec<McpToolDefinition>> {
+    pub async fn test_single_server(
+        &self,
+        name: &str,
+        s_cfg: &McpServerConfig,
+    ) -> Result<Vec<McpToolDefinition>> {
         let proc = McpProcess::spawn(name, &s_cfg.command, &s_cfg.args, &s_cfg.env).await?;
         let tools = proc.list_tools().await?;
         Ok(tools)

@@ -111,7 +111,10 @@ fn read_clipboard_text_blocking() -> Option<String> {
             }
         }
 
-        if let Ok(output) = std::process::Command::new("xclip").args(["-selection", "clipboard", "-o"]).output() {
+        if let Ok(output) = std::process::Command::new("xclip")
+            .args(["-selection", "clipboard", "-o"])
+            .output()
+        {
             if output.status.success() {
                 if let Ok(text) = String::from_utf8(output.stdout) {
                     if !text.is_empty() {

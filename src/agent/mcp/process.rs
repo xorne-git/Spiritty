@@ -39,9 +39,12 @@ impl McpProcess {
         // Kill the child process when the handle is dropped (no orphan/zombie leak on reload/shutdown).
         cmd.kill_on_drop(true);
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("Failed to spawn MCP server '{}' with command '{}'", name, command))?;
+        let mut child = cmd.spawn().with_context(|| {
+            format!(
+                "Failed to spawn MCP server '{}' with command '{}'",
+                name, command
+            )
+        })?;
 
         let stdin = child
             .stdin
@@ -54,7 +57,8 @@ impl McpProcess {
         let stderr = child.stderr.take();
 
         let stdin = Arc::new(Mutex::new(stdin));
-        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<JsonRpcResponse>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let child = Arc::new(Mutex::new(child));
         let last_stderr = Arc::new(Mutex::new(String::new()));
 
@@ -129,7 +133,9 @@ impl McpProcess {
                 if !err_msg.is_empty() {
                     let relevant = err_msg
                         .lines()
-                        .find(|l| l.contains("error") || l.contains("Error") || l.contains("not found"))
+                        .find(|l| {
+                            l.contains("error") || l.contains("Error") || l.contains("not found")
+                        })
                         .unwrap_or_else(|| err_msg.lines().next().unwrap_or(&err_msg));
                     anyhow::bail!("{}: {}", e, relevant);
                 } else {
@@ -141,7 +147,9 @@ impl McpProcess {
                 if !err_msg.is_empty() {
                     let relevant = err_msg
                         .lines()
-                        .find(|l| l.contains("error") || l.contains("Error") || l.contains("not found"))
+                        .find(|l| {
+                            l.contains("error") || l.contains("Error") || l.contains("not found")
+                        })
                         .unwrap_or_else(|| err_msg.lines().next().unwrap_or(&err_msg));
                     anyhow::bail!("MCP error: {}", relevant);
                 } else {
@@ -151,7 +159,11 @@ impl McpProcess {
         }
     }
 
-    async fn send_request(&self, method: &str, params: Option<serde_json::Value>) -> Result<serde_json::Value> {
+    async fn send_request(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
         let id = self.req_id.fetch_add(1, Ordering::Relaxed);
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -170,8 +182,17 @@ impl McpProcess {
 
         {
             let mut sin = self.stdin.lock().await;
-            sin.write_all(json_line.as_bytes()).await?;
-            sin.flush().await?;
+            // On a failed write/flush the pending entry must be removed BEFORE propagating:
+            // the reader will never see this id, so leaving it in the map would leak both
+            // the entry and its oneshot sender.
+            if let Err(e) = sin.write_all(json_line.as_bytes()).await {
+                self.pending.lock().await.remove(&id);
+                return Err(anyhow::Error::new(e).context("MCP stdin write failed"));
+            }
+            if let Err(e) = sin.flush().await {
+                self.pending.lock().await.remove(&id);
+                return Err(anyhow::Error::new(e).context("MCP stdin flush failed"));
+            }
         }
 
         let resp = timeout(Duration::from_secs(20), rx).await;
@@ -191,7 +212,11 @@ impl McpProcess {
         resp.result.context("Empty result in MCP response")
     }
 
-    async fn send_notification(&self, method: &str, params: Option<serde_json::Value>) -> Result<()> {
+    async fn send_notification(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<()> {
         let notif = JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -217,7 +242,8 @@ impl McpProcess {
         });
 
         let _ = self.send_request("initialize", Some(init_params)).await?;
-        self.send_notification("notifications/initialized", None).await?;
+        self.send_notification("notifications/initialized", None)
+            .await?;
         Ok(())
     }
 
@@ -227,7 +253,11 @@ impl McpProcess {
         Ok(parsed.tools)
     }
 
-    pub async fn call_tool(&self, name: &str, arguments: serde_json::Value) -> Result<McpToolCallResult> {
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<McpToolCallResult> {
         let params = json!({
             "name": name,
             "arguments": arguments

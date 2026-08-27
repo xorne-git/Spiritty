@@ -7,11 +7,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 
+use super::LlmProvider;
 use crate::{
     app::{ChatMessage, MessageRole},
     event::AppEvent,
 };
-use super::LlmProvider;
 
 pub struct AnthropicProvider {
     base_url: String,
@@ -216,7 +216,10 @@ impl LlmProvider for AnthropicProvider {
                                     return Ok(());
                                 }
                                 AnthropicEvent::Error { error } => {
-                                    let err_msg = format!("Anthropic API error ({}): {}", error.error_type, error.message);
+                                    let err_msg = format!(
+                                        "Anthropic API error ({}): {}",
+                                        error.error_type, error.message
+                                    );
                                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                                     anyhow::bail!(err_msg);
                                 }
@@ -232,7 +235,9 @@ impl LlmProvider for AnthropicProvider {
                 },
                 Ok(None) => break,
                 Err(_) => {
-                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Anthropic (timeout SSE).".to_string();
+                    let err_msg =
+                        "Délai d'inactivité de 25s dépassé sur le flux Anthropic (timeout SSE)."
+                            .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }

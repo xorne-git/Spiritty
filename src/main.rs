@@ -1,9 +1,7 @@
 use anyhow::Result;
 use crossterm::{
     cursor::{EnableBlinking, SetCursorStyle},
-    event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    },
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -80,6 +78,9 @@ async fn main() -> Result<()> {
     let mut app = App::new(event_handler.sender(), initial_rows, initial_cols)?;
     app.debug = cli.debug;
 
+    // Silent multi-provider pricing refresh at startup (updates the local cache; no toast)
+    app.trigger_pricing_update_announced(false);
+
     // Apply CLI session resumption or overrides
     if cli.continue_last_session {
         if let Ok(sessions) = spiritty::session::SessionStorage::list_sessions() {
@@ -91,12 +92,7 @@ async fn main() -> Result<()> {
         app.load_session(session_id);
     }
 
-    app.apply_cli_overrides(
-        cli.provider,
-        cli.model,
-        cli.auto_approve,
-        cli.ssh_target,
-    );
+    app.apply_cli_overrides(cli.provider, cli.model, cli.auto_approve, cli.ssh_target);
 
     if let Some(ref prompt) = cli.initial_prompt {
         app.submit_initial_prompt(prompt);
@@ -107,7 +103,10 @@ async fn main() -> Result<()> {
 
     // Restore terminal state cleanly
     let _ = execute!(terminal.backend_mut(), SetCursorStyle::DefaultUserShape);
-    let _ = execute!(terminal.backend_mut(), crossterm::event::PopKeyboardEnhancementFlags);
+    let _ = execute!(
+        terminal.backend_mut(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -163,12 +162,19 @@ async fn run_loop(
                 }
                 AppEvent::AgentChunk(chunk) => app.on_agent_chunk(chunk),
                 AppEvent::AgentDone => app.on_agent_done(),
-                AppEvent::AgentUsage { prompt_tokens, completion_tokens, exact_speed } => {
+                AppEvent::AgentUsage {
+                    prompt_tokens,
+                    completion_tokens,
+                    exact_speed,
+                } => {
                     app.on_agent_usage(prompt_tokens, completion_tokens, exact_speed);
                 }
                 AppEvent::McpServersUpdated => app.on_mcp_servers_updated(),
                 AppEvent::AgentError(err) => app.on_agent_error(err),
-                AppEvent::AgentToolRequest { command, approval_tx } => {
+                AppEvent::AgentToolRequest {
+                    command,
+                    approval_tx,
+                } => {
                     app.on_agent_tool_request(command, approval_tx);
                 }
                 AppEvent::AgentToolStart(cmd) => app.on_agent_tool_start(cmd),
@@ -179,7 +185,10 @@ async fn run_loop(
                     app.on_agent_pty_tool_execute(command, result_tx, false);
                 }
                 AppEvent::AgentNewTurn => app.on_agent_new_turn(),
-                AppEvent::ModelsLoaded { provider_key, models } => {
+                AppEvent::ModelsLoaded {
+                    provider_key,
+                    models,
+                } => {
                     app.on_models_loaded(provider_key, models);
                 }
                 AppEvent::RemoteHostProbed { target, output } => {
@@ -194,7 +203,9 @@ async fn run_loop(
                 AppEvent::Tick => {
                     app.on_tick();
                     // Only re-render on Tick if a spinner animation is actively running or dragging
-                    should_render = app.agent.is_generating || app.active_pty_tool.is_some() || app.is_dragging_split;
+                    should_render = app.agent.is_generating
+                        || app.active_pty_tool.is_some()
+                        || app.is_dragging_split;
                 }
             }
 

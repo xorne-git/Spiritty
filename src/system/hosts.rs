@@ -41,7 +41,14 @@ impl HostProfile {
     }
 
     pub fn display_badge(&self) -> String {
-        format!("{} ({})", self.target, self.distro.split_whitespace().next().unwrap_or(&self.distro))
+        format!(
+            "{} ({})",
+            self.target,
+            self.distro
+                .split_whitespace()
+                .next()
+                .unwrap_or(&self.distro)
+        )
     }
 }
 
@@ -138,11 +145,16 @@ impl HostsStore {
     }
 
     pub fn is_favorite(&self, target: &str) -> bool {
-        self.bookmarks.iter().any(|b| b.target == target && b.is_favorite)
+        self.bookmarks
+            .iter()
+            .any(|b| b.target == target && b.is_favorite)
     }
 
     pub fn get_alias(&self, target: &str) -> Option<&str> {
-        self.bookmarks.iter().find(|b| b.target == target).and_then(|b| b.alias.as_deref())
+        self.bookmarks
+            .iter()
+            .find(|b| b.target == target)
+            .and_then(|b| b.alias.as_deref())
     }
 
     pub fn list_all_entries(&self) -> Vec<HostEntry> {
@@ -175,7 +187,9 @@ impl HostsStore {
 
         // Sort favorites first, then alphabetically
         entries.sort_by(|a, b| {
-            b.is_favorite.cmp(&a.is_favorite).then_with(|| a.target.cmp(&b.target))
+            b.is_favorite
+                .cmp(&a.is_favorite)
+                .then_with(|| a.target.cmp(&b.target))
         });
 
         entries
@@ -266,7 +280,11 @@ impl HostsStore {
             &clean_raw
         };
 
-        let lines: Vec<&str> = section.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = section
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
         if lines.is_empty() {
             return None;
         }
@@ -285,22 +303,38 @@ impl HostsStore {
 
         for &raw_l in &lines {
             if let Some(idx) = raw_l.find("PRETTY_NAME=") {
-                let val = raw_l[idx + "PRETTY_NAME=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                let val = raw_l[idx + "PRETTY_NAME=".len()..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 if !val.is_empty() {
                     pretty_name = Some(val);
                 }
             } else if let Some(idx) = raw_l.find("NAME=") {
-                let val = raw_l[idx + "NAME=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                let val = raw_l[idx + "NAME=".len()..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 if !val.is_empty() {
                     name = Some(val);
                 }
             } else if let Some(idx) = raw_l.find("ID=") {
-                let val = raw_l[idx + "ID=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                let val = raw_l[idx + "ID=".len()..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 if !val.is_empty() {
                     id_name = Some(val);
                 }
             } else if let Some(idx) = raw_l.find("VERSION_ID=") {
-                let val = raw_l[idx + "VERSION_ID=".len()..].trim().trim_matches('"').trim_matches('\'').to_string();
+                let val = raw_l[idx + "VERSION_ID=".len()..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
                 if !val.is_empty() {
                     version_str = Some(val);
                 }
@@ -337,7 +371,10 @@ impl HostsStore {
         // Process remaining lines for kernel, whoami, hostname, binaries
         for line in non_os_release_lines {
             if line.contains('/') {
-                let bin = Path::new(line).file_name().and_then(|n| n.to_str()).unwrap_or(line);
+                let bin = Path::new(line)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(line);
                 match bin {
                     "apt" | "pacman" | "dnf" | "yum" | "apk" | "brew" | "zypper" | "nix" => {
                         if !package_managers.contains(&bin.to_string()) {
@@ -348,7 +385,13 @@ impl HostsStore {
                     "rc-service" => init_system = "OpenRC".to_string(),
                     _ => {}
                 }
-            } else if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && line.contains('.') {
+            } else if line
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+                && line.contains('.')
+            {
                 kernel = line.to_string();
             } else if user == "root" && !line.is_empty() && !line.contains(' ') {
                 if hostname.is_none() {
@@ -410,7 +453,8 @@ vps-web-01
 SPIRITTY_PROBE_END
 "#;
 
-        let profile = HostsStore::parse_probe_output("root@vps-web-01", sample).expect("Parsed profile");
+        let profile =
+            HostsStore::parse_probe_output("root@vps-web-01", sample).expect("Parsed profile");
         assert_eq!(profile.target, "root@vps-web-01");
         assert_eq!(profile.distro, "Debian GNU/Linux 12 (bookworm)");
         assert_eq!(profile.kernel, "6.1.0-18-amd64");
@@ -434,7 +478,8 @@ alpine-node-02
 SPIRITTY_PROBE_END
 "#;
 
-        let profile = HostsStore::parse_probe_output("admin@alpine-node-02", sample).expect("Parsed profile");
+        let profile =
+            HostsStore::parse_probe_output("admin@alpine-node-02", sample).expect("Parsed profile");
         assert_eq!(profile.distro, "Alpine Linux v3.19");
         assert_eq!(profile.package_managers, vec!["apk"]);
         assert_eq!(profile.init_system, "OpenRC");
@@ -459,7 +504,8 @@ gg
 SPIRITTY_PROBE_END
 "#;
 
-        let profile = HostsStore::parse_probe_output("gg.xorne.net", sample).expect("Parsed profile");
+        let profile =
+            HostsStore::parse_probe_output("gg.xorne.net", sample).expect("Parsed profile");
         assert_eq!(profile.target, "gg.xorne.net");
         assert_eq!(profile.distro, "Ubuntu 24.04.4 LTS");
         assert_eq!(profile.kernel, "6.8.0-137-generic");

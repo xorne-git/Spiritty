@@ -21,9 +21,21 @@ pub enum McpModalAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddMcpState {
     None,
-    EnteringName { input: String, cursor: usize },
-    EnteringCommand { name: String, input: String, cursor: usize },
-    EnteringArgs { name: String, command: String, input: String, cursor: usize },
+    EnteringName {
+        input: String,
+        cursor: usize,
+    },
+    EnteringCommand {
+        name: String,
+        input: String,
+        cursor: usize,
+    },
+    EnteringArgs {
+        name: String,
+        command: String,
+        input: String,
+        cursor: usize,
+    },
 }
 
 pub struct McpModalState {
@@ -59,7 +71,8 @@ impl McpModalState {
     }
 
     pub fn sync_with_config(&mut self, config: &Config) {
-        self.servers.retain(|s| config.mcp_servers.contains_key(&s.name));
+        self.servers
+            .retain(|s| config.mcp_servers.contains_key(&s.name));
         for (name, s_cfg) in &config.mcp_servers {
             if let Some(existing) = self.servers.iter_mut().find(|s| s.name == *name) {
                 existing.command = s_cfg.command.clone();
@@ -136,7 +149,11 @@ impl McpModalState {
         // Confirmation for delete
         if let Some(name) = self.confirm_delete_name.clone() {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('o') | KeyCode::Char('O') | KeyCode::Enter => {
+                KeyCode::Char('y')
+                | KeyCode::Char('Y')
+                | KeyCode::Char('o')
+                | KeyCode::Char('O')
+                | KeyCode::Enter => {
                     config.mcp_servers.remove(&name);
                     let _ = config.save();
                     self.servers.retain(|s| s.name != name);
@@ -144,7 +161,10 @@ impl McpModalState {
                         self.selected_index = self.servers.len() - 1;
                     }
                     self.confirm_delete_name = None;
-                    self.status_message = Some((std::time::Instant::now(), format!("Serveur MCP '{}' supprimé", name)));
+                    self.status_message = Some((
+                        std::time::Instant::now(),
+                        format!("Serveur MCP '{}' supprimé", name),
+                    ));
                     return Some(McpModalAction::ServersChanged);
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -156,8 +176,12 @@ impl McpModalState {
         }
 
         // Check for Ctrl+V / Shift+Ctrl+V clipboard paste in add wizard
-        let is_paste = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT))
+        let is_paste = (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            || key.modifiers.contains(
+                crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+            ))
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
 
         if is_paste && !matches!(self.add_state, AddMcpState::None) {
@@ -215,7 +239,12 @@ impl McpModalState {
                 KeyCode::End => {
                     *cursor = input.chars().count();
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+                {
                     let mut chars: Vec<char> = input.chars().collect();
                     chars.insert(*cursor, c);
                     *input = chars.into_iter().collect();
@@ -223,7 +252,11 @@ impl McpModalState {
                 }
                 _ => {}
             },
-            AddMcpState::EnteringCommand { name, input, cursor } => match key.code {
+            AddMcpState::EnteringCommand {
+                name,
+                input,
+                cursor,
+            } => match key.code {
                 KeyCode::Esc => {
                     next_add_state = Some(AddMcpState::None);
                 }
@@ -267,7 +300,12 @@ impl McpModalState {
                 KeyCode::End => {
                     *cursor = input.chars().count();
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+                {
                     let mut chars: Vec<char> = input.chars().collect();
                     chars.insert(*cursor, c);
                     *input = chars.into_iter().collect();
@@ -275,7 +313,12 @@ impl McpModalState {
                 }
                 _ => {}
             },
-            AddMcpState::EnteringArgs { name, command, input, cursor } => match key.code {
+            AddMcpState::EnteringArgs {
+                name,
+                command,
+                input,
+                cursor,
+            } => match key.code {
                 KeyCode::Esc => {
                     next_add_state = Some(AddMcpState::None);
                 }
@@ -315,7 +358,10 @@ impl McpModalState {
                         self.selected_index = self.servers.len().saturating_sub(1);
                     }
 
-                    self.status_message = Some((std::time::Instant::now(), format!("Serveur MCP '{}' ajouté", name)));
+                    self.status_message = Some((
+                        std::time::Instant::now(),
+                        format!("Serveur MCP '{}' ajouté", name),
+                    ));
                     next_add_state = Some(AddMcpState::None);
                     server_changed = true;
                 }
@@ -348,7 +394,12 @@ impl McpModalState {
                 KeyCode::End => {
                     *cursor = input.chars().count();
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+                {
                     let mut chars: Vec<char> = input.chars().collect();
                     chars.insert(*cursor, c);
                     *input = chars.into_iter().collect();
@@ -445,9 +496,19 @@ fn wizard_input_spans<'a>(input: &'a str, cursor: usize) -> Vec<Span<'a>> {
     let before: String = chars[..cursor].iter().collect();
     let after: String = chars[cursor..].iter().collect();
     vec![
-        Span::styled(before, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            before,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("█", Style::default().fg(Color::Yellow)),
-        Span::styled(after, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            after,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]
 }
 
@@ -476,7 +537,9 @@ impl<'a> Widget for McpModal<'a> {
             .border_style(Style::default().fg(Color::Rgb(140, 100, 240)))
             .title(Span::styled(
                 " 🔌 Serveurs MCP (Model Context Protocol) ",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ))
             .title_alignment(Alignment::Left)
             .padding(Padding::uniform(1));
@@ -486,10 +549,10 @@ impl<'a> Widget for McpModal<'a> {
 
         let chunks = Layout::default()
             .constraints([
-                Constraint::Length(9),  // Servers list
-                Constraint::Min(6),     // Tools inspector
-                Constraint::Length(2),  // Status / Wizard
-                Constraint::Length(1),  // Shortcuts footer
+                Constraint::Length(9), // Servers list
+                Constraint::Min(6),    // Tools inspector
+                Constraint::Length(2), // Status / Wizard
+                Constraint::Length(1), // Shortcuts footer
             ])
             .split(inner_area);
 
@@ -506,7 +569,14 @@ impl<'a> Widget for McpModal<'a> {
         }
 
         let mut rows = Vec::new();
-        for (i, s) in self.state.servers.iter().enumerate().skip(offset).take(visible) {
+        for (i, s) in self
+            .state
+            .servers
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(visible)
+        {
             let is_selected = i == self.state.selected_index;
             let check_icon = if s.enabled { " [x] " } else { " [ ] " };
             let (status_text, status_style) = match &s.status {
@@ -514,7 +584,10 @@ impl<'a> Widget for McpModal<'a> {
                     format!("🟢 Actif ({} outils)", count),
                     Style::default().fg(Color::Green),
                 ),
-                McpStatus::Disabled => ("⚪ Désactivé".to_string(), Style::default().fg(Color::DarkGray)),
+                McpStatus::Disabled => (
+                    "⚪ Désactivé".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 McpStatus::Error(e) => {
                     let short_e = if e.len() > 25 {
                         let cut = e.floor_char_boundary(25);
@@ -522,7 +595,10 @@ impl<'a> Widget for McpModal<'a> {
                     } else {
                         e.clone()
                     };
-                    (format!("🔴 Erreur : {}", short_e), Style::default().fg(Color::Red))
+                    (
+                        format!("🔴 Erreur : {}", short_e),
+                        Style::default().fg(Color::Red),
+                    )
                 }
             };
 
@@ -557,7 +633,9 @@ impl<'a> Widget for McpModal<'a> {
             .border_style(Style::default().fg(Color::DarkGray))
             .title(Span::styled(
                 " Serveurs configurés ",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let table = Table::new(
@@ -588,7 +666,9 @@ impl<'a> Widget for McpModal<'a> {
             .border_style(Style::default().fg(Color::DarkGray))
             .title(Span::styled(
                 " Outils exposés au modèle IA ",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let detail_inner = detail_block.inner(chunks[1]);
@@ -598,7 +678,9 @@ impl<'a> Widget for McpModal<'a> {
             if selected.tools.is_empty() {
                 let msg = match &selected.status {
                     McpStatus::Connected(_) => "Aucun outil exposé par ce serveur.",
-                    McpStatus::Disabled => "Serveur désactivé. Appuyez sur [Espace] pour l'activer.",
+                    McpStatus::Disabled => {
+                        "Serveur désactivé. Appuyez sur [Espace] pour l'activer."
+                    }
                     McpStatus::Error(e) => e.as_str(),
                 };
                 Paragraph::new(Span::styled(
@@ -611,7 +693,12 @@ impl<'a> Widget for McpModal<'a> {
                 for t in &selected.tools {
                     let desc = t.description.as_deref().unwrap_or("Sans description");
                     tool_lines.push(Line::from(vec![
-                        Span::styled(format!("  • mcp:{}:{}", selected.name, t.name), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("  • mcp:{}:{}", selected.name, t.name),
+                            Style::default()
+                                .fg(Color::LightCyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw(" - "),
                         Span::styled(desc, Style::default().fg(Color::White)),
                     ]));
@@ -629,44 +716,91 @@ impl<'a> Widget for McpModal<'a> {
         // 3. Status or Add Wizard Area
         if let Some(ref name) = self.state.confirm_delete_name {
             Paragraph::new(Line::from(vec![
-                Span::styled("⚠️ Supprimer le serveur MCP '", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                Span::styled(name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("' ? [O]ui / [N]on", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "⚠️ Supprimer le serveur MCP '",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    name,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "' ? [O]ui / [N]on",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
             ]))
             .render(chunks[2], buf);
         } else {
             match &self.state.add_state {
                 AddMcpState::EnteringName { input, cursor } => {
                     let mut spans = vec![
-                        Span::styled(" [Ajout 1/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            " [Ajout 1/3] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw("Nom du serveur : "),
                     ];
                     spans.extend(wizard_input_spans(input, *cursor));
-                    spans.push(Span::styled(" (Entrée pour valider, Echap annuler)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        " (Entrée pour valider, Echap annuler)",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                     Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
-                AddMcpState::EnteringCommand { name, input, cursor } => {
+                AddMcpState::EnteringCommand {
+                    name,
+                    input,
+                    cursor,
+                } => {
                     let mut spans = vec![
-                        Span::styled(" [Ajout 2/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            " [Ajout 2/3] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw(format!("Commande pour '{}' : ", name)),
                     ];
                     spans.extend(wizard_input_spans(input, *cursor));
-                    spans.push(Span::styled(" (ex: npx, uvx, docker...)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        " (ex: npx, uvx, docker...)",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                     Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
-                AddMcpState::EnteringArgs { command, input, cursor, .. } => {
+                AddMcpState::EnteringArgs {
+                    command,
+                    input,
+                    cursor,
+                    ..
+                } => {
                     let mut spans = vec![
-                        Span::styled(" [Ajout 3/3] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            " [Ajout 3/3] ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw(format!("Arguments pour '{}' : ", command)),
                     ];
                     spans.extend(wizard_input_spans(input, *cursor));
-                    spans.push(Span::styled(" (ex: -y @modelcontextprotocol/server-filesystem /tmp)", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        " (ex: -y @modelcontextprotocol/server-filesystem /tmp)",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                     Paragraph::new(Line::from(spans)).render(chunks[2], buf);
                 }
                 AddMcpState::None => {
                     if let Some((_, ref msg)) = self.state.status_message {
-                        Paragraph::new(Span::styled(format!(" ℹ️ {}", msg), Style::default().fg(Color::LightGreen)))
-                            .render(chunks[2], buf);
+                        Paragraph::new(Span::styled(
+                            format!(" ℹ️ {}", msg),
+                            Style::default().fg(Color::LightGreen),
+                        ))
+                        .render(chunks[2], buf);
                     }
                 }
             }

@@ -68,7 +68,15 @@ fn test_i18n_catalog_completeness() {
         let fr_text = Language::Fr.t(key);
         let en_text = Language::En.t(key);
 
-        assert!(!fr_text.is_empty(), "French translation missing for {:?}", key);
-        assert!(!en_text.is_empty(), "English translation missing for {:?}", key);
+        assert!(
+            !fr_text.is_empty(),
+            "French translation missing for {:?}",
+            key
+        );
+        assert!(
+            !en_text.is_empty(),
+            "English translation missing for {:?}",
+            key
+        );
     }
 }

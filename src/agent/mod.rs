@@ -34,7 +34,10 @@ impl AgentEngine {
         Self::new_with_event_tx(config, None)
     }
 
-    pub fn new_with_event_tx(config: Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>) -> Self {
+    pub fn new_with_event_tx(
+        config: Config,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>,
+    ) -> Self {
         let provider = Arc::new(create_provider(&config));
         let mcp_manager = Arc::new(McpManager::load_from_config(&config, event_tx));
         Self {
@@ -50,7 +53,11 @@ impl AgentEngine {
         &self.config
     }
 
-    pub fn reload_config(&mut self, config: Config, event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>) {
+    pub fn reload_config(
+        &mut self,
+        config: Config,
+        event_tx: Option<tokio::sync::mpsc::UnboundedSender<AppEvent>>,
+    ) {
         self.provider = Arc::new(create_provider(&config));
         let mcp_clone = self.mcp_manager.clone();
         let cfg_clone = config.clone();

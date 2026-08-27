@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use spiritty::{
     agent::mcp::{
         manager::{McpManager, McpServerStatus, McpStatus},
@@ -8,7 +9,6 @@ use spiritty::{
     session::Session,
     ui::components::{AddMcpState, McpModalAction, McpModalState},
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
 #[test]
@@ -22,7 +22,11 @@ fn test_mcp_tool_call_parsing() {
 
     let tool_call = parse_tool_call(raw_text).expect("Should parse MCP tool call");
     match tool_call {
-        ToolInvocation::McpCall { server, tool, arguments } => {
+        ToolInvocation::McpCall {
+            server,
+            tool,
+            arguments,
+        } => {
             assert_eq!(server, "filesystem");
             assert_eq!(tool, "read_file");
             assert_eq!(arguments["path"], "/etc/hosts");
@@ -34,13 +38,11 @@ fn test_mcp_tool_call_parsing() {
 #[test]
 fn test_mcp_tool_call_result_formatting() {
     let res = McpToolCallResult {
-        content: vec![
-            McpContent {
-                content_type: "text".to_string(),
-                text: Some("127.0.0.1 localhost".to_string()),
-                data: None,
-            },
-        ],
+        content: vec![McpContent {
+            content_type: "text".to_string(),
+            text: Some("127.0.0.1 localhost".to_string()),
+            data: None,
+        }],
         is_error: false,
     };
 
@@ -83,7 +85,11 @@ fn test_session_cost_estimation_and_token_metrics() {
     // DeepSeek pricing: $0.14 / 1M prompt ($0.0014), $0.28 / 1M completion ($0.00056) in peak ($0.00196),
     // or 50% discount ($0.00098) in off-peak.
     let cost = session.estimated_cost_usd();
-    assert!((cost - 0.00196).abs() < 1e-5 || (cost - 0.00098).abs() < 1e-5, "Cost was {}", cost);
+    assert!(
+        (cost - 0.00196).abs() < 1e-5 || (cost - 0.00098).abs() < 1e-5,
+        "Cost was {}",
+        cost
+    );
 
     // Ollama / LM Studio (local) should cost $0.00
     let mut local_session = Session::new("Ollama", "qwen2.5:7b");
@@ -94,32 +100,34 @@ fn test_session_cost_estimation_and_token_metrics() {
 
 #[test]
 fn test_mcp_modal_wizard_and_crud() {
-    let statuses = vec![
-        McpServerStatus {
-            name: "filesystem".to_string(),
-            command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string(), "/tmp".to_string()],
-            enabled: true,
-            status: McpStatus::Connected(3),
-            tools: vec![
-                McpToolDefinition {
-                    name: "read_file".to_string(),
-                    description: Some("Read file contents".to_string()),
-                    input_schema: None,
-                },
-                McpToolDefinition {
-                    name: "write_file".to_string(),
-                    description: Some("Write file contents".to_string()),
-                    input_schema: None,
-                },
-                McpToolDefinition {
-                    name: "list_dir".to_string(),
-                    description: Some("List directory contents".to_string()),
-                    input_schema: None,
-                },
-            ],
-        },
-    ];
+    let statuses = vec![McpServerStatus {
+        name: "filesystem".to_string(),
+        command: "npx".to_string(),
+        args: vec![
+            "-y".to_string(),
+            "@modelcontextprotocol/server-filesystem".to_string(),
+            "/tmp".to_string(),
+        ],
+        enabled: true,
+        status: McpStatus::Connected(3),
+        tools: vec![
+            McpToolDefinition {
+                name: "read_file".to_string(),
+                description: Some("Read file contents".to_string()),
+                input_schema: None,
+            },
+            McpToolDefinition {
+                name: "write_file".to_string(),
+                description: Some("Write file contents".to_string()),
+                input_schema: None,
+            },
+            McpToolDefinition {
+                name: "list_dir".to_string(),
+                description: Some("List directory contents".to_string()),
+                input_schema: None,
+            },
+        ],
+    }];
 
     let mut modal_state = McpModalState::new(statuses);
     let mut config = Config::default();
@@ -127,44 +135,87 @@ fn test_mcp_modal_wizard_and_crud() {
         "filesystem".to_string(),
         McpServerConfig {
             command: "npx".to_string(),
-            args: vec!["-y".to_string(), "@modelcontextprotocol/server-filesystem".to_string(), "/tmp".to_string()],
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-filesystem".to_string(),
+                "/tmp".to_string(),
+            ],
             env: HashMap::new(),
             enabled: true,
         },
     );
 
     // 1. Space toggles enabled state
-    let action = modal_state.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &mut config);
+    let action = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        &mut config,
+    );
     assert_eq!(action, Some(McpModalAction::ServersChanged));
     assert!(!config.mcp_servers.get("filesystem").unwrap().enabled);
 
     // 2. Press 'a' starts add wizard
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut config);
-    assert!(matches!(modal_state.add_state, AddMcpState::EnteringName { .. }));
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        &mut config,
+    );
+    assert!(matches!(
+        modal_state.add_state,
+        AddMcpState::EnteringName { .. }
+    ));
 
     // Type server name 'docker'
     for c in "docker".chars() {
-        let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), &mut config);
+        let _ = modal_state.handle_key(
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            &mut config,
+        );
     }
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
-    assert!(matches!(modal_state.add_state, AddMcpState::EnteringCommand { .. }));
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
+    assert!(matches!(
+        modal_state.add_state,
+        AddMcpState::EnteringCommand { .. }
+    ));
 
     // Type command 'docker-mcp'
     for c in "docker-mcp".chars() {
-        let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), &mut config);
+        let _ = modal_state.handle_key(
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            &mut config,
+        );
     }
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
-    assert!(matches!(modal_state.add_state, AddMcpState::EnteringArgs { .. }));
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
+    assert!(matches!(
+        modal_state.add_state,
+        AddMcpState::EnteringArgs { .. }
+    ));
 
     // Type args '--all' and validate
     for c in "--all".chars() {
-        let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), &mut config);
+        let _ = modal_state.handle_key(
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            &mut config,
+        );
     }
-    let action = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
+    let action = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
     assert_eq!(action, Some(McpModalAction::ServersChanged));
     assert!(config.mcp_servers.contains_key("docker"));
-    assert_eq!(config.mcp_servers.get("docker").unwrap().command, "docker-mcp");
-    assert_eq!(config.mcp_servers.get("docker").unwrap().args, vec!["--all"]);
+    assert_eq!(
+        config.mcp_servers.get("docker").unwrap().command,
+        "docker-mcp"
+    );
+    assert_eq!(
+        config.mcp_servers.get("docker").unwrap().args,
+        vec!["--all"]
+    );
 }
 
 #[test]
@@ -173,7 +224,10 @@ fn test_mcp_modal_paste() {
     let mut config = Config::default();
 
     // Start add wizard
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), &mut config);
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        &mut config,
+    );
 
     // Paste name
     modal_state.handle_paste("fetch-service".to_string());
@@ -182,7 +236,10 @@ fn test_mcp_modal_paste() {
     } else {
         panic!("Expected EnteringName state");
     }
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
 
     // Paste command
     modal_state.handle_paste("npx".to_string());
@@ -191,7 +248,10 @@ fn test_mcp_modal_paste() {
     } else {
         panic!("Expected EnteringCommand state");
     }
-    let _ = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
+    let _ = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
 
     // Paste args
     modal_state.handle_paste("-y @modelcontextprotocol/server-fetch".to_string());
@@ -200,19 +260,29 @@ fn test_mcp_modal_paste() {
     } else {
         panic!("Expected EnteringArgs state");
     }
-    let action = modal_state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut config);
+    let action = modal_state.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut config,
+    );
     assert_eq!(action, Some(McpModalAction::ServersChanged));
 
-    let srv = config.mcp_servers.get("fetch-service").expect("Server must be saved in config");
+    let srv = config
+        .mcp_servers
+        .get("fetch-service")
+        .expect("Server must be saved in config");
     assert_eq!(srv.command, "npx");
     assert_eq!(srv.args, vec!["-y", "@modelcontextprotocol/server-fetch"]);
 
     // Verify modal state has the new server immediately
-    assert!(modal_state.servers.iter().any(|s| s.name == "fetch-service"));
+    assert!(modal_state
+        .servers
+        .iter()
+        .any(|s| s.name == "fetch-service"));
 
     // Verify sync_with_config retains the new server
     modal_state.sync_with_config(&config);
-    assert!(modal_state.servers.iter().any(|s| s.name == "fetch-service"));
+    assert!(modal_state
+        .servers
+        .iter()
+        .any(|s| s.name == "fetch-service"));
 }
-
-

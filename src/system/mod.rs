@@ -37,16 +37,24 @@ impl SystemContext {
         if let Ok(content) = fs::read_to_string("/etc/os-release") {
             for line in content.lines() {
                 if line.starts_with("PRETTY_NAME=") {
-                    distro = line.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string();
+                    distro = line
+                        .trim_start_matches("PRETTY_NAME=")
+                        .trim_matches('"')
+                        .to_string();
                     break;
                 } else if line.starts_with("NAME=") && distro == "Linux" {
-                    distro = line.trim_start_matches("NAME=").trim_matches('"').to_string();
+                    distro = line
+                        .trim_start_matches("NAME=")
+                        .trim_matches('"')
+                        .to_string();
                 }
             }
         }
 
         // 2. Detect package managers in PATH
-        for pm in &["pacman", "paru", "yay", "apt", "dnf", "zypper", "brew", "flatpak", "snap", "nix"] {
+        for pm in &[
+            "pacman", "paru", "yay", "apt", "dnf", "zypper", "brew", "flatpak", "snap", "nix",
+        ] {
             if which(pm) {
                 package_managers.push(pm.to_string());
             }
@@ -83,7 +91,9 @@ impl SystemContext {
             terminal_emulator,
             package_managers,
             desktop_env,
-            active_session: ActiveSession::Local { foreground_process: None },
+            active_session: ActiveSession::Local {
+                foreground_process: None,
+            },
             active_remote_profile: None,
             current_dir: initial_dir,
             git_branch: initial_branch,
@@ -139,8 +149,12 @@ fn which(binary: &str) -> bool {
 fn detect_terminal_emulator(shell: &str) -> String {
     // 1. Check Ghostty
     if env::var("GHOSTTY_BIN_DIR").is_ok()
-        || env::var("TERMINAL").map(|t| t.to_lowercase().contains("ghostty")).unwrap_or(false)
-        || env::var("TERM_PROGRAM").map(|t| t.to_lowercase().contains("ghostty")).unwrap_or(false)
+        || env::var("TERMINAL")
+            .map(|t| t.to_lowercase().contains("ghostty"))
+            .unwrap_or(false)
+        || env::var("TERM_PROGRAM")
+            .map(|t| t.to_lowercase().contains("ghostty"))
+            .unwrap_or(false)
     {
         if let Ok(out) = Command::new("ghostty").arg("--version").output() {
             let out_str = String::from_utf8_lossy(&out.stdout);
@@ -181,11 +195,15 @@ fn detect_terminal_emulator(shell: &str) -> String {
     }
 
     // 4. Check Foot
-    if env::var("FOOT_SERVER_PID").is_ok() || env::var("TERM").map(|t| t == "foot").unwrap_or(false) {
+    if env::var("FOOT_SERVER_PID").is_ok() || env::var("TERM").map(|t| t == "foot").unwrap_or(false)
+    {
         if let Ok(out) = Command::new("foot").arg("--version").output() {
             let out_str = String::from_utf8_lossy(&out.stdout);
             if let Some(first_line) = out_str.lines().next() {
-                let ver = first_line.trim_start_matches("foot version:").trim_start_matches("foot").trim();
+                let ver = first_line
+                    .trim_start_matches("foot version:")
+                    .trim_start_matches("foot")
+                    .trim();
                 return format!("Foot v{}", ver);
             }
         }
@@ -195,7 +213,9 @@ fn detect_terminal_emulator(shell: &str) -> String {
     // 5. Check WezTerm
     if env::var("WEZTERM_EXECUTABLE").is_ok()
         || env::var("WEZTERM_PANE").is_ok()
-        || env::var("TERM_PROGRAM").map(|t| t == "WezTerm").unwrap_or(false)
+        || env::var("TERM_PROGRAM")
+            .map(|t| t == "WezTerm")
+            .unwrap_or(false)
     {
         if let Ok(ver) = env::var("WEZTERM_VERSION") {
             return format!("WezTerm v{}", ver);
@@ -217,7 +237,12 @@ fn detect_terminal_emulator(shell: &str) -> String {
         let out_str = String::from_utf8_lossy(&out.stdout);
         if let Some(first_line) = out_str.lines().next() {
             for word in first_line.split_whitespace() {
-                if word.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if word
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     let clean = word.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
                     if !clean.is_empty() {
                         return format!("{} v{}", capitalize(shell_name), clean);

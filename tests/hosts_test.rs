@@ -125,7 +125,9 @@ fn test_hosts_store_persistence() {
         last_seen: "2026-08-20T21:00:00Z".to_string(),
     };
 
-    store.profiles.insert(profile.target.clone(), profile.clone());
+    store
+        .profiles
+        .insert(profile.target.clone(), profile.clone());
     let json = serde_json::to_string_pretty(&store).expect("serialize");
     std::fs::write(&file_path, json).expect("write");
 
@@ -180,14 +182,21 @@ fn test_detect_git_branch_and_compact_path() {
     // Test compact path
     if let Ok(home) = std::env::var("HOME") {
         assert_eq!(format_compact_path(&home), "~");
-        assert_eq!(format_compact_path(&format!("{}/Projets/Spiritty", home)), "~/Projets/Spiritty");
+        assert_eq!(
+            format_compact_path(&format!("{}/Projets/Spiritty", home)),
+            "~/Projets/Spiritty"
+        );
     }
 
     // Test git branch detection in a temporary directory
     let dir = tempdir().unwrap();
     let git_dir = dir.path().join(".git");
     fs::create_dir_all(&git_dir).unwrap();
-    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feat/awesome-feature\n").unwrap();
+    fs::write(
+        git_dir.join("HEAD"),
+        "ref: refs/heads/feat/awesome-feature\n",
+    )
+    .unwrap();
 
     let branch = detect_git_branch(dir.path().to_str().unwrap());
     assert_eq!(branch, Some("feat/awesome-feature".to_string()));

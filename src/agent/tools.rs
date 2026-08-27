@@ -1,8 +1,8 @@
+use crate::config::WebSearchConfig;
+use anyhow::Result;
 use std::env;
 use std::time::Duration;
-use anyhow::Result;
 use tokio::time::timeout;
-use crate::config::WebSearchConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolInvocation {
@@ -45,11 +45,17 @@ pub async fn execute_shell_command(cmd: &str) -> String {
                 if output.status.success() {
                     "(Commande exécutée avec succès sans sortie texte / code 0)".to_string()
                 } else {
-                    format!("(Commande terminée avec code d'erreur {:?})", output.status.code())
+                    format!(
+                        "(Commande terminée avec code d'erreur {:?})",
+                        output.status.code()
+                    )
                 }
             } else if result.len() > 3000 {
                 let cut = result.floor_char_boundary(3000);
-                format!("{}\n... [Sortie tronquée à 3000 caractères]", &result[..cut])
+                format!(
+                    "{}\n... [Sortie tronquée à 3000 caractères]",
+                    &result[..cut]
+                )
             } else {
                 result
             }
@@ -57,9 +63,7 @@ pub async fn execute_shell_command(cmd: &str) -> String {
         Ok(Err(err)) => {
             format!("Erreur lors de l'exécution : {}", err)
         }
-        Err(_) => {
-            "Erreur : La commande a dépassé le délai d'attente (timeout de 15s).".to_string()
-        }
+        Err(_) => "Erreur : La commande a dépassé le délai d'attente (timeout de 15s).".to_string(),
     }
 }
 
@@ -74,19 +78,34 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         if parts.len() >= 2 {
             let server = parts[0].to_string();
             let tool = parts[1].to_string();
-            let body_start = if first_line_end < after.len() { &after[first_line_end..] } else { "" };
+            let body_start = if first_line_end < after.len() {
+                &after[first_line_end..]
+            } else {
+                ""
+            };
             let json_str = if let Some(end) = body_start.find("```") {
                 &body_start[..end]
             } else {
                 body_start
-            }.trim();
-            let arguments = serde_json::from_str::<serde_json::Value>(json_str).unwrap_or_else(|_| serde_json::json!({}));
-            return Some(ToolInvocation::McpCall { server, tool, arguments });
+            }
+            .trim();
+            let arguments = serde_json::from_str::<serde_json::Value>(json_str)
+                .unwrap_or_else(|_| serde_json::json!({}));
+            return Some(ToolInvocation::McpCall {
+                server,
+                tool,
+                arguments,
+            });
         }
     }
 
     // 2. Check for Web Search with ```
-    for prefix in &["```tool:web_search", "```tool:search", "```tool:web", "```tool:google"] {
+    for prefix in &[
+        "```tool:web_search",
+        "```tool:search",
+        "```tool:web",
+        "```tool:google",
+    ] {
         if let Some(start) = text.find(prefix) {
             let after = &text[start + prefix.len()..];
             let code_start = after.strip_prefix('\n').unwrap_or(after);
@@ -114,7 +133,12 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
             };
 
             if !raw_block.is_empty() {
-                return Some(ToolInvocation::RunCommand(raw_block.to_string()));
+                // Same cleanup as markdown proposals: drop interpreter framing (`bash`,
+                // shebangs) and dangling `exit` so the command runs as intended in the PTY.
+                let cleaned = crate::app::sanitize_proposed_command(raw_block);
+                if !cleaned.is_empty() {
+                    return Some(ToolInvocation::RunCommand(cleaned));
+                }
             }
         }
     }
@@ -176,7 +200,12 @@ fn parse_json_tool_value(val: &serde_json::Value) -> Option<ToolInvocation> {
     let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let args = val.get("arguments").or_else(|| val.get("parameters"));
 
-    if name.contains("command") || name == "bash" || name == "sh" || name == "execute_command" || name == "run_command" {
+    if name.contains("command")
+        || name == "bash"
+        || name == "sh"
+        || name == "execute_command"
+        || name == "run_command"
+    {
         let cmd = if let Some(a) = args {
             if let Some(s) = a.as_str() {
                 s.to_string()
@@ -188,7 +217,10 @@ fn parse_json_tool_value(val: &serde_json::Value) -> Option<ToolInvocation> {
                     .to_string()
             }
         } else {
-            val.get("command").and_then(|c| c.as_str()).unwrap_or("").to_string()
+            val.get("command")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string()
         };
 
         if !cmd.trim().is_empty() {
@@ -206,7 +238,10 @@ fn parse_json_tool_value(val: &serde_json::Value) -> Option<ToolInvocation> {
                     .to_string()
             }
         } else {
-            val.get("query").and_then(|q| q.as_str()).unwrap_or("").to_string()
+            val.get("query")
+                .and_then(|q| q.as_str())
+                .unwrap_or("")
+                .to_string()
         };
 
         if !query.trim().is_empty() {
@@ -216,8 +251,6 @@ fn parse_json_tool_value(val: &serde_json::Value) -> Option<ToolInvocation> {
 
     None
 }
-
-
 
 /// Executes an internet web search asynchronously across multiple sources
 pub async fn execute_web_search(query: &str, config: &WebSearchConfig) -> String {
@@ -288,7 +321,10 @@ pub async fn execute_web_search(query: &str, config: &WebSearchConfig) -> String
     }
 
     if sections.is_empty() {
-        format!("Aucun résultat web direct trouvé pour \"{}\".", trimmed_query)
+        format!(
+            "Aucun résultat web direct trouvé pour \"{}\".",
+            trimmed_query
+        )
     } else {
         sections.join("\n\n")
     }
@@ -298,7 +334,12 @@ async fn search_duckduckgo_api(client: &reqwest::Client, query: &str) -> Result<
     let url = "https://api.duckduckgo.com/";
     let resp = client
         .get(url)
-        .query(&[("q", query), ("format", "json"), ("no_html", "1"), ("skip_disambig", "1")])
+        .query(&[
+            ("q", query),
+            ("format", "json"),
+            ("no_html", "1"),
+            ("skip_disambig", "1"),
+        ])
         .send()
         .await?;
 
@@ -307,10 +348,19 @@ async fn search_duckduckgo_api(client: &reqwest::Client, query: &str) -> Result<
 
     if let Some(heading) = json.get("Heading").and_then(|v| v.as_str()) {
         if !heading.is_empty() {
-            let abstract_text = json.get("AbstractText").and_then(|v| v.as_str()).unwrap_or("");
-            let abstract_url = json.get("AbstractURL").and_then(|v| v.as_str()).unwrap_or("");
+            let abstract_text = json
+                .get("AbstractText")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let abstract_url = json
+                .get("AbstractURL")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !abstract_text.is_empty() {
-                out.push(format!("### DuckDuckGo : {}\n{}\nSource: {}", heading, abstract_text, abstract_url));
+                out.push(format!(
+                    "### DuckDuckGo : {}\n{}\nSource: {}",
+                    heading, abstract_text, abstract_url
+                ));
             }
         }
     }
@@ -324,7 +374,10 @@ async fn search_duckduckgo_api(client: &reqwest::Client, query: &str) -> Result<
             }
         }
         if !topics.is_empty() && out.is_empty() {
-            out.push(format!("### DuckDuckGo Sujets Associés :\n{}", topics.join("\n")));
+            out.push(format!(
+                "### DuckDuckGo Sujets Associés :\n{}",
+                topics.join("\n")
+            ));
         }
     }
 
@@ -348,13 +401,22 @@ async fn search_wikipedia(client: &reqwest::Client, query: &str) -> Result<Strin
     let json: serde_json::Value = resp.json().await?;
     let mut articles = Vec::new();
 
-    if let Some(search_list) = json.get("query").and_then(|q| q.get("search")).and_then(|s| s.as_array()) {
+    if let Some(search_list) = json
+        .get("query")
+        .and_then(|q| q.get("search"))
+        .and_then(|s| s.as_array())
+    {
         for item in search_list.iter().take(3) {
             if let Some(title) = item.get("title").and_then(|v| v.as_str()) {
                 let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
-                let clean_snippet = snippet.replace("<span class=\"searchmatch\">", "").replace("</span>", "");
+                let clean_snippet = snippet
+                    .replace("<span class=\"searchmatch\">", "")
+                    .replace("</span>", "");
                 let page_url = format!("https://en.wikipedia.org/wiki/{}", title.replace(' ', "_"));
-                articles.push(format!("- **{}** : {}\n  URL: {}", title, clean_snippet, page_url));
+                articles.push(format!(
+                    "- **{}** : {}\n  URL: {}",
+                    title, clean_snippet, page_url
+                ));
             }
         }
     }
@@ -383,13 +445,25 @@ async fn search_archwiki(client: &reqwest::Client, query: &str) -> Result<String
     let json: serde_json::Value = resp.json().await?;
     let mut articles = Vec::new();
 
-    if let Some(search_list) = json.get("query").and_then(|q| q.get("search")).and_then(|s| s.as_array()) {
+    if let Some(search_list) = json
+        .get("query")
+        .and_then(|q| q.get("search"))
+        .and_then(|s| s.as_array())
+    {
         for item in search_list.iter().take(3) {
             if let Some(title) = item.get("title").and_then(|v| v.as_str()) {
                 let snippet = item.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
-                let clean_snippet = snippet.replace("<span class=\"searchmatch\">", "").replace("</span>", "");
-                let page_url = format!("https://wiki.archlinux.org/title/{}", title.replace(' ', "_"));
-                articles.push(format!("- **{}** : {}\n  URL: {}", title, clean_snippet, page_url));
+                let clean_snippet = snippet
+                    .replace("<span class=\"searchmatch\">", "")
+                    .replace("</span>", "");
+                let page_url = format!(
+                    "https://wiki.archlinux.org/title/{}",
+                    title.replace(' ', "_")
+                );
+                articles.push(format!(
+                    "- **{}** : {}\n  URL: {}",
+                    title, clean_snippet, page_url
+                ));
             }
         }
     }
@@ -414,10 +488,17 @@ async fn search_brave(client: &reqwest::Client, query: &str, api_key: &str) -> R
     let json: serde_json::Value = resp.json().await?;
     let mut results = Vec::new();
 
-    if let Some(web_results) = json.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array()) {
+    if let Some(web_results) = json
+        .get("web")
+        .and_then(|w| w.get("results"))
+        .and_then(|r| r.as_array())
+    {
         for item in web_results.iter().take(4) {
             if let Some(title) = item.get("title").and_then(|v| v.as_str()) {
-                let desc = item.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let desc = item
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let link = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 results.push(format!("- **{}** : {}\n  URL: {}", title, desc, link));
             }

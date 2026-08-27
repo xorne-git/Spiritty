@@ -21,11 +21,7 @@ pub struct PtyProcess {
 }
 
 impl PtyProcess {
-    pub fn spawn(
-        rows: u16,
-        cols: u16,
-        output_tx: UnboundedSender<Vec<u8>>,
-    ) -> Result<Self> {
+    pub fn spawn(rows: u16, cols: u16, output_tx: UnboundedSender<Vec<u8>>) -> Result<Self> {
         let pty_system = native_pty_system();
         let size = PtySize {
             rows: rows.max(1),
@@ -62,7 +58,10 @@ __spiritty_done() {
 PROMPT_COMMAND="__spiritty_done${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 "#;
             let _ = std::fs::write(&rc_path, rc_content);
-            cmd.args(["--rcfile", rc_path.to_str().unwrap_or("/tmp/spiritty/bash_init.sh")]);
+            cmd.args([
+                "--rcfile",
+                rc_path.to_str().unwrap_or("/tmp/spiritty/bash_init.sh"),
+            ]);
         } else if shell.contains("zsh") {
             let zsh_dir = temp_dir.join("zsh");
             let _ = std::fs::create_dir_all(&zsh_dir);

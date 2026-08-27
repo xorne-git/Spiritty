@@ -22,7 +22,10 @@ fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
         Span::styled("", Style::default().fg(color)),
         Span::styled(
             key.to_string(),
-            Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("", Style::default().fg(color)),
     ]
@@ -71,7 +74,11 @@ impl<'a> ChatPanel<'a> {
             area.top(),
             &title_text,
             Style::default()
-                .fg(if is_focused { palette.accent_primary } else { palette.border_unfocused })
+                .fg(if is_focused {
+                    palette.accent_primary
+                } else {
+                    palette.border_unfocused
+                })
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -111,47 +118,87 @@ impl<'a> ChatPanel<'a> {
             match msg.role {
                 MessageRole::System => {
                     for l in msg.content.lines() {
-                        lines.push(Line::from(vec![
-                            Span::styled(l.to_string(), Style::default().fg(palette.text_dim)),
-                        ]));
+                        lines.push(Line::from(vec![Span::styled(
+                            l.to_string(),
+                            Style::default().fg(palette.text_dim),
+                        )]));
                     }
                     push_blank_line(&mut lines);
                 }
                 MessageRole::User => {
-                    if msg.content.starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '") {
+                    if msg
+                        .content
+                        .starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '")
+                    {
                         let cmd_name = extract_tool_cmd_name(&msg.content);
                         lines.push(Line::from(vec![
                             Span::styled("💻 ", Style::default().fg(palette.warning)),
-                            Span::styled(cmd_name.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                            Span::styled(
+                                cmd_name.to_string(),
+                                Style::default()
+                                    .fg(palette.warning)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                             Span::raw(" "),
-                            Span::styled("✓ Exécution silencieuse", Style::default().fg(palette.success)),
+                            Span::styled(
+                                "✓ Exécution silencieuse",
+                                Style::default().fg(palette.success),
+                            ),
                         ]));
-                    } else if msg.content.starts_with("[L'utilisateur a refusé l'exécution") {
+                    } else if msg
+                        .content
+                        .starts_with("[L'utilisateur a refusé l'exécution")
+                    {
                         lines.push(Line::from(vec![
                             Span::styled("⚠️ ", Style::default().fg(palette.warning)),
                             Span::styled(
-                                if lang == Language::Fr { "Exécution refusée par l'utilisateur" } else { "Execution declined by user" },
-                                Style::default().fg(palette.text_dim).add_modifier(Modifier::ITALIC),
+                                if lang == Language::Fr {
+                                    "Exécution refusée par l'utilisateur"
+                                } else {
+                                    "Execution declined by user"
+                                },
+                                Style::default()
+                                    .fg(palette.text_dim)
+                                    .add_modifier(Modifier::ITALIC),
                             ),
                         ]));
                     } else if msg.content.starts_with("💻 ") {
-                        let cmd_text = msg.content.strip_prefix("💻 ").unwrap_or(&msg.content).trim();
+                        let cmd_text = msg
+                            .content
+                            .strip_prefix("💻 ")
+                            .unwrap_or(&msg.content)
+                            .trim();
                         let clean_cmd = cmd_text.trim_matches('`');
                         for (l_idx, line) in clean_cmd.lines().enumerate() {
                             if l_idx == 0 {
                                 lines.push(Line::from(vec![
                                     Span::styled("💻 ", Style::default().fg(palette.warning)),
-                                    Span::styled(line.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                                    Span::styled(
+                                        line.to_string(),
+                                        Style::default()
+                                            .fg(palette.warning)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
                                 ]));
                             } else {
                                 lines.push(Line::from(vec![
                                     Span::raw("   "),
-                                    Span::styled(line.to_string(), Style::default().fg(palette.warning).add_modifier(Modifier::BOLD)),
+                                    Span::styled(
+                                        line.to_string(),
+                                        Style::default()
+                                            .fg(palette.warning)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
                                 ]));
                             }
                         }
                     } else {
-                        render_user_message_block(&msg.content, &mut lines, messages_area.width, &palette);
+                        render_user_message_block(
+                            &msg.content,
+                            &mut lines,
+                            messages_area.width,
+                            &palette,
+                        );
                     }
                     push_blank_line(&mut lines);
                 }
@@ -170,11 +217,18 @@ impl<'a> ChatPanel<'a> {
                         "👻 ".to_string()
                     };
 
-                    let has_valid_thought = parsed.thought.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+                    let has_valid_thought = parsed
+                        .thought
+                        .as_ref()
+                        .map(|t| !t.trim().is_empty())
+                        .unwrap_or(false);
 
                     if has_valid_thought {
                         let thought = parsed.thought.as_ref().unwrap();
-                        let thought_label = if self.app.agent.is_generating && is_last && self.app.pending_tool_approval.is_none() {
+                        let thought_label = if self.app.agent.is_generating
+                            && is_last
+                            && self.app.pending_tool_approval.is_none()
+                        {
                             if lang == Language::Fr {
                                 format!("{} 💭 Réflexion :", spinner_char)
                             } else {
@@ -187,9 +241,12 @@ impl<'a> ChatPanel<'a> {
                                 "💭 Thinking:".to_string()
                             }
                         };
-                        lines.push(Line::from(vec![
-                            Span::styled(thought_label, Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD | Modifier::ITALIC)),
-                        ]));
+                        lines.push(Line::from(vec![Span::styled(
+                            thought_label,
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+                        )]));
                         for l in thought.lines() {
                             let trimmed = l.trim();
                             if trimmed.starts_with("```") {
@@ -198,21 +255,42 @@ impl<'a> ChatPanel<'a> {
                             if l.is_empty() {
                                 lines.push(Line::from(""));
                             } else {
-                                lines.push(Line::from(vec![
-                                    Span::styled(format!("  {}", l), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-                                ]));
+                                lines.push(Line::from(vec![Span::styled(
+                                    format!("  {}", l),
+                                    Style::default()
+                                        .fg(Color::DarkGray)
+                                        .add_modifier(Modifier::ITALIC),
+                                )]));
                             }
                         }
                         push_blank_line(&mut lines);
                         if !parsed.response.is_empty() {
-                            render_markdown_blocks(&parsed.response, lang, &mut lines, Some(&ghost_prefix), &mut card_counter);
+                            render_markdown_blocks(
+                                &parsed.response,
+                                lang,
+                                &mut lines,
+                                Some(&ghost_prefix),
+                                &mut card_counter,
+                            );
                         }
                     } else if !parsed.response.is_empty() {
-                        render_markdown_blocks(&parsed.response, lang, &mut lines, Some(&ghost_prefix), &mut card_counter);
-                    } else if self.app.agent.is_generating && is_last && self.app.pending_tool_approval.is_none() {
-                        lines.push(Line::from(vec![
-                            Span::styled(ghost_prefix, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                        ]));
+                        render_markdown_blocks(
+                            &parsed.response,
+                            lang,
+                            &mut lines,
+                            Some(&ghost_prefix),
+                            &mut card_counter,
+                        );
+                    } else if self.app.agent.is_generating
+                        && is_last
+                        && self.app.pending_tool_approval.is_none()
+                    {
+                        lines.push(Line::from(vec![Span::styled(
+                            ghost_prefix,
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )]));
                     }
                     push_blank_line(&mut lines);
                 }
@@ -221,21 +299,37 @@ impl<'a> ChatPanel<'a> {
 
         // 4.1. If there is a pending tool execution approval, render the Permission Request Card
         if let Some(ref pending) = self.app.pending_tool_approval {
-            let is_sudo = pending.command.contains("sudo") || pending.command.contains("root");
-            let is_danger = pending.command.contains("rm -rf") || pending.command.contains("dd ") || pending.command.contains("mkfs");
+            // The badge comes from the single source of truth (`safety::classify_command`):
+            // ad-hoc substring heuristics used to label `kill -9` / `chmod` / systemctl
+            // restarts as a green "Safe" exactly when the user had to consent.
+            let (badge_text, badge_color) =
+                match crate::agent::safety::classify_command(&pending.command) {
+                    crate::agent::safety::CommandRisk::Safe => ("Safe", Color::Green),
+                    crate::agent::safety::CommandRisk::Standard => ("Standard", Color::Yellow),
+                    // Elevated-but-benign (sudo cat / ls / certbot certificates…): violet so it
+                    // never masquerades as green-Safe nor as red-destructive.
+                    crate::agent::safety::CommandRisk::Sudo => ("Sudo", Color::LightMagenta),
+                    crate::agent::safety::CommandRisk::Risky => (
+                        if lang == Language::Fr {
+                            "Risqué"
+                        } else {
+                            "Risky"
+                        },
+                        Color::Red,
+                    ),
+                };
 
-            let (badge_text, badge_color) = if is_danger {
-                (if lang == Language::Fr { "Risqué" } else { "Risky" }, Color::Red)
-            } else if is_sudo {
-                ("Sudo", Color::Yellow)
+            let req_title = if lang == Language::Fr {
+                "⚡ DEMANDE D'AUTORISATION "
             } else {
-                ("Safe", Color::Green)
+                "⚡ PERMISSION REQUEST "
             };
-
-            let req_title = if lang == Language::Fr { "⚡ DEMANDE D'AUTORISATION " } else { "⚡ PERMISSION REQUEST " };
-            let mut title_spans = vec![
-                Span::styled(req_title, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            ];
+            let mut title_spans = vec![Span::styled(
+                req_title,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )];
             title_spans.extend(key_pill(badge_text, badge_color));
 
             push_blank_line(&mut lines);
@@ -245,23 +339,47 @@ impl<'a> ChatPanel<'a> {
                 if l.is_empty() {
                     lines.push(Line::from(""));
                 } else {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("  {}", l), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    ]));
+                    lines.push(Line::from(vec![Span::styled(
+                        format!("  {}", l),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )]));
                 }
             }
 
             let mut footer_spans = vec![Span::raw("  ")];
-            footer_spans.extend(key_pill("↵ Enter", Color::Green));
-            footer_spans.push(Span::styled(if lang == Language::Fr { " Autoriser   " } else { " Approve   " }, Style::default().fg(Color::White)));
+            // Deliberately NOT "↵ Enter Autoriser": an accidental bare Enter must never
+            // execute the pending command — approval now requires typing a confirmation word.
+            footer_spans.extend(key_pill(
+                if lang == Language::Fr {
+                    "oui/ok + ↵"
+                } else {
+                    "yes/ok + ↵"
+                },
+                Color::Green,
+            ));
+            footer_spans.push(Span::styled(
+                if lang == Language::Fr {
+                    " Autoriser   "
+                } else {
+                    " Approve   "
+                },
+                Style::default().fg(Color::White),
+            ));
             footer_spans.extend(key_pill("Esc", Color::Red));
-            footer_spans.push(Span::styled(if lang == Language::Fr { " Refuser" } else { " Decline" }, Style::default().fg(Color::White)));
+            footer_spans.push(Span::styled(
+                if lang == Language::Fr {
+                    " Refuser"
+                } else {
+                    " Decline"
+                },
+                Style::default().fg(Color::White),
+            ));
 
             lines.push(Line::from(footer_spans));
             push_blank_line(&mut lines);
         }
-
-
 
         let content_visual_lines = compute_wrapped_lines_count(&lines, messages_area.width);
 
@@ -281,12 +399,19 @@ impl<'a> ChatPanel<'a> {
             let (badge_text, badge_style) = if scroll_from_bottom > 0 {
                 (
                     format!(" ▲ -{} / {} l. ", scroll_from_bottom, content_visual_lines),
-                    Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .bg(Color::Cyan)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD),
                 )
             } else {
                 (
                     format!(" 📜 {} l. ", content_visual_lines),
-                    Style::default().fg(if is_focused { Color::Cyan } else { Color::DarkGray }),
+                    Style::default().fg(if is_focused {
+                        Color::Cyan
+                    } else {
+                        Color::DarkGray
+                    }),
                 )
             };
 
@@ -312,23 +437,47 @@ impl<'a> ChatPanel<'a> {
                     " (0 résultat) ".to_string()
                 }
             } else {
-                format!(" ({}/{}) ", self.app.chat_search_match_idx + 1, matches.len())
+                format!(
+                    " ({}/{}) ",
+                    self.app.chat_search_match_idx + 1,
+                    matches.len()
+                )
             };
 
             let search_line = Line::from(vec![
                 Span::styled(" 🔍 ", Style::default().fg(Color::Yellow)),
-                Span::styled(&self.app.chat_search_query, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &self.app.chat_search_query,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled("▌", Style::default().fg(Color::Yellow)),
-                Span::styled(match_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled(" [Enter: Suiv | Shift+Enter: Préc | Esc: Fermer] ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    match_text,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " [Enter: Suiv | Shift+Enter: Préc | Esc: Fermer] ",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]);
 
-            buf.set_line(area.left() + 1, prompt_sep_y, &search_line, area.width.saturating_sub(2));
+            buf.set_line(
+                area.left() + 1,
+                prompt_sep_y,
+                &search_line,
+                area.width.saturating_sub(2),
+            );
         }
 
         // 6. Render Vertical Accent Bar (using left half block ▌)
         let bar_style = if is_focused {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
@@ -347,7 +496,9 @@ impl<'a> ChatPanel<'a> {
                     Line::from(vec![
                         Span::styled(
                             format!("{} ", get_spinner_char(self.app.spinner_frame)),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             if lang == Language::Fr {
@@ -365,7 +516,9 @@ impl<'a> ChatPanel<'a> {
                     Line::from(vec![
                         Span::styled(
                             format!("{} ", get_spinner_char(self.app.spinner_frame)),
-                            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::LightRed)
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             "[Esc]",
@@ -375,7 +528,11 @@ impl<'a> ChatPanel<'a> {
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
-                            if lang == Language::Fr { " Arrêter" } else { " Stop" },
+                            if lang == Language::Fr {
+                                " Arrêter"
+                            } else {
+                                " Stop"
+                            },
                             Style::default().fg(Color::LightRed),
                         ),
                     ]),
@@ -385,7 +542,9 @@ impl<'a> ChatPanel<'a> {
                 (
                     Line::from(vec![Span::styled(
                         lang.t(I18nKey::ChatInputPlaceholder),
-                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::ITALIC),
                     )]),
                     Alignment::Left,
                 )
@@ -492,9 +651,17 @@ fn render_markdown_blocks(
 }
 
 /// Renders user messages with vertical accent bar ▌ on every line and themed background
-fn render_user_message_block(content: &str, lines: &mut Vec<Line<'static>>, width: u16, palette: &crate::ui::ThemePalette) {
+fn render_user_message_block(
+    content: &str,
+    lines: &mut Vec<Line<'static>>,
+    width: u16,
+    palette: &crate::ui::ThemePalette,
+) {
     let user_bg = palette.selection_bg;
-    let bar_style = Style::default().fg(palette.accent_primary).bg(user_bg).add_modifier(Modifier::BOLD);
+    let bar_style = Style::default()
+        .fg(palette.accent_primary)
+        .bg(user_bg)
+        .add_modifier(Modifier::BOLD);
     let text_style = Style::default().fg(palette.text_primary).bg(user_bg);
 
     let target_width = width as usize;
@@ -599,18 +766,19 @@ fn wrap_wide_word(word: &str, max_w: usize) -> Vec<String> {
 }
 
 /// Renders a sequence of markdown lines with automatic grouping of markdown tables
-fn render_text_lines(
-    text: &str,
-    lines: &mut Vec<Line<'static>>,
-    mut leading_prefix: Option<&str>,
-) {
+fn render_text_lines(text: &str, lines: &mut Vec<Line<'static>>, mut leading_prefix: Option<&str>) {
     let mut current_table_lines: Vec<&str> = Vec::new();
 
     for line in text.lines() {
         let trimmed = line.trim();
 
         // Check if line looks like a table row (starts and contains pipe '|')
-        if (trimmed.starts_with('|') || trimmed.starts_with("├─") || trimmed.starts_with("┌─") || trimmed.starts_with("└─")) && trimmed.contains('|') {
+        if (trimmed.starts_with('|')
+            || trimmed.starts_with("├─")
+            || trimmed.starts_with("┌─")
+            || trimmed.starts_with("└─"))
+            && trimmed.contains('|')
+        {
             current_table_lines.push(line);
             continue;
         }
@@ -627,17 +795,25 @@ fn render_text_lines(
         }
 
         // Section separator: --- or ***
-        if (trimmed.starts_with("---") || trimmed.starts_with("***")) && trimmed.chars().all(|c| c == '-' || c == '*' || c == ' ') {
-            lines.push(Line::from(vec![
-                Span::styled("  ──────────────────────────────────────────", Style::default().fg(Color::DarkGray)),
-            ]));
+        if (trimmed.starts_with("---") || trimmed.starts_with("***"))
+            && trimmed.chars().all(|c| c == '-' || c == '*' || c == ' ')
+        {
+            lines.push(Line::from(vec![Span::styled(
+                "  ──────────────────────────────────────────",
+                Style::default().fg(Color::DarkGray),
+            )]));
             push_blank_line(lines);
             continue;
         }
 
         // Regular line
         let p_span = leading_prefix.take().map(|p| {
-            Span::styled(p.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            Span::styled(
+                p.to_string(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         });
         render_markdown_line(line, p_span, lines);
     }
@@ -658,7 +834,10 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
             continue;
         }
         let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
-        if inner.chars().all(|c| c == '-' || c == '|' || c == ':' || c == ' ') {
+        if inner
+            .chars()
+            .all(|c| c == '-' || c == '|' || c == ':' || c == ' ')
+        {
             has_separator = true;
             continue;
         }
@@ -701,7 +880,9 @@ fn render_table_block(raw_table_lines: &[&str], lines: &mut Vec<Line<'static>>) 
             let pad_right = w.saturating_sub(cell_w);
 
             let cell_style = if is_header {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
             };
@@ -817,7 +998,9 @@ fn parse_inline_spans(mut text: &str, base_style: Style) -> Vec<Span<'static>> {
                     let content = &after_delim[..end_idx];
                     spans.push(Span::styled(
                         content.to_string(),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     ));
                     text = &after_delim[end_idx + 1..];
                     continue;
@@ -834,7 +1017,10 @@ fn parse_inline_spans(mut text: &str, base_style: Style) -> Vec<Span<'static>> {
                 }
             }
 
-            spans.push(Span::styled(text[start_idx..start_idx + delim_type.len()].to_string(), base_style));
+            spans.push(Span::styled(
+                text[start_idx..start_idx + delim_type.len()].to_string(),
+                base_style,
+            ));
             text = after_delim;
         } else {
             spans.push(Span::styled(text.to_string(), base_style));
@@ -855,58 +1041,106 @@ fn render_markdown_line(
     let base_style = Style::default().fg(Color::White);
 
     // Strips ######, #####, ####, ###, ##, # and renders formatted heading without literal markdown hashes
-    if let Some(rest) = trimmed.strip_prefix("###### ").or_else(|| trimmed.strip_prefix("######")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("###### ")
+        .or_else(|| trimmed.strip_prefix("######"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::ITALIC)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::ITALIC),
+        ));
         lines.push(Line::from(spans));
         return;
-    } else if let Some(rest) = trimmed.strip_prefix("##### ").or_else(|| trimmed.strip_prefix("#####")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("##### ")
+        .or_else(|| trimmed.strip_prefix("#####"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD | Modifier::ITALIC)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        ));
         lines.push(Line::from(spans));
         return;
-    } else if let Some(rest) = trimmed.strip_prefix("#### ").or_else(|| trimmed.strip_prefix("####")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("#### ")
+        .or_else(|| trimmed.strip_prefix("####"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
         lines.push(Line::from(spans));
         return;
-    } else if let Some(rest) = trimmed.strip_prefix("### ").or_else(|| trimmed.strip_prefix("###")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("### ")
+        .or_else(|| trimmed.strip_prefix("###"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         lines.push(Line::from(spans));
         return;
-    } else if let Some(rest) = trimmed.strip_prefix("## ").or_else(|| trimmed.strip_prefix("##")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("## ")
+        .or_else(|| trimmed.strip_prefix("##"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        ));
         lines.push(Line::from(spans));
         return;
-    } else if let Some(rest) = trimmed.strip_prefix("# ").or_else(|| trimmed.strip_prefix("#")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("# ")
+        .or_else(|| trimmed.strip_prefix("#"))
+    {
         push_blank_line(lines);
         let mut spans = Vec::new();
         if let Some(p) = leading_prefix {
             spans.push(p);
         }
-        spans.extend(parse_inline_spans(rest.trim_start(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
+        spans.extend(parse_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        ));
         lines.push(Line::from(spans));
         return;
     } else if let Some(rest) = trimmed.strip_prefix("💻 ") {
@@ -916,7 +1150,12 @@ fn render_markdown_line(
         }
         spans.push(Span::styled("💻 ", Style::default().fg(Color::Yellow)));
         let clean_cmd = rest.trim().trim_matches('`');
-        spans.push(Span::styled(clean_cmd.to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            clean_cmd.to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
         lines.push(Line::from(spans));
         return;
     } else if let Some(rest) = trimmed.strip_prefix("🌐 ") {
@@ -926,7 +1165,12 @@ fn render_markdown_line(
         }
         spans.push(Span::styled("🌐 ", Style::default().fg(Color::Cyan)));
         let clean_text = rest.trim();
-        spans.push(Span::styled(clean_text.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            clean_text.to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         lines.push(Line::from(spans));
         return;
     }
@@ -937,10 +1181,20 @@ fn render_markdown_line(
     }
 
     if let Some(rest) = trimmed.strip_prefix("- ") {
-        spans.push(Span::styled("• ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            "• ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         spans.extend(parse_inline_spans(rest, base_style));
     } else if let Some(rest) = trimmed.strip_prefix("* ") {
-        spans.push(Span::styled("• ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            "• ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
         spans.extend(parse_inline_spans(rest, base_style));
     } else {
         let is_numbered = trimmed.len() >= 3
@@ -951,11 +1205,23 @@ fn render_markdown_line(
         if is_numbered {
             let num_prefix = &trimmed[..3];
             let rest = &trimmed[3..];
-            spans.push(Span::styled(num_prefix.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(
+                num_prefix.to_string(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
             spans.extend(parse_inline_spans(rest, base_style));
-        } else if trimmed.starts_with('|') && trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c == ' ') {
+        } else if trimmed.starts_with('|')
+            && trimmed
+                .chars()
+                .all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+        {
             // Markdown table separator row
-            spans.push(Span::styled(raw_line.to_string(), Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                raw_line.to_string(),
+                Style::default().fg(Color::DarkGray),
+            ));
         } else {
             spans.extend(parse_inline_spans(raw_line, base_style));
         }
@@ -975,9 +1241,10 @@ fn render_tool_output_box(output: &str, lines: &mut Vec<Line<'static>>) {
         if l.is_empty() {
             lines.push(Line::from(""));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", l),
+                Style::default().fg(Color::LightCyan),
+            )]));
         }
     }
     push_blank_line(lines);
@@ -996,25 +1263,35 @@ fn render_code_snippet_box(code: &str, tag: &str, lines: &mut Vec<Line<'static>>
 
     push_blank_line(lines);
     if !is_generic_text {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", tag), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!("  {}", tag),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )]));
     }
 
     for l in code.lines() {
         if l.is_empty() {
             lines.push(Line::from(""));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}", l), Style::default().fg(Color::LightCyan)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", l),
+                Style::default().fg(Color::LightCyan),
+            )]));
         }
     }
     push_blank_line(lines);
 }
 
 /// Renders a command proposal with sleek key pills (consistent with Help/Config modals)
-fn render_command_card(card_idx: usize, cmd: &str, _tag: &str, lang: Language, lines: &mut Vec<Line<'static>>) {
+fn render_command_card(
+    card_idx: usize,
+    cmd: &str,
+    _tag: &str,
+    lang: Language,
+    lines: &mut Vec<Line<'static>>,
+) {
     if cmd.is_empty() {
         return;
     }
@@ -1023,15 +1300,24 @@ fn render_command_card(card_idx: usize, cmd: &str, _tag: &str, lang: Language, l
     let (badge_text, badge_color) = match risk {
         crate::agent::safety::CommandRisk::Safe => ("Safe", Color::Green),
         crate::agent::safety::CommandRisk::Standard => ("Standard", Color::Yellow),
+        // Violet for elevated-but-benign, consistent with the permission card badge.
+        crate::agent::safety::CommandRisk::Sudo => ("Sudo", Color::LightMagenta),
         crate::agent::safety::CommandRisk::Risky => (
-            if lang == Language::Fr { "Risqué" } else { "Risky" },
+            if lang == Language::Fr {
+                "Risqué"
+            } else {
+                "Risky"
+            },
             Color::Red,
         ),
     };
 
-    let mut title_spans = vec![
-        Span::styled(format!("⚡ COMMANDE #{} ", card_idx), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-    ];
+    let mut title_spans = vec![Span::styled(
+        format!("⚡ COMMANDE #{} ", card_idx),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )];
     title_spans.extend(key_pill(badge_text, badge_color));
 
     push_blank_line(lines);
@@ -1041,16 +1327,23 @@ fn render_command_card(card_idx: usize, cmd: &str, _tag: &str, lang: Language, l
         if l.is_empty() {
             lines.push(Line::from(""));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {}", l), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {}", l),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]));
         }
     }
 
     let mut footer_spans = vec![Span::raw("  ")];
     footer_spans.extend(key_combo_pills("Alt", &card_idx.to_string(), Color::Cyan));
     footer_spans.push(Span::styled(
-        if lang == Language::Fr { " Exécuter" } else { " Run" },
+        if lang == Language::Fr {
+            " Exécuter"
+        } else {
+            " Run"
+        },
         Style::default().fg(Color::White),
     ));
 
@@ -1086,7 +1379,11 @@ fn extract_thought_block(text: &str) -> ParsedThought {
                 } else {
                     clean_response(&format!("{}\n\n{}", before.trim(), after_end))
                 };
-                let thought_opt = if thought.is_empty() { None } else { Some(thought) };
+                let thought_opt = if thought.is_empty() {
+                    None
+                } else {
+                    Some(thought)
+                };
                 return ParsedThought {
                     thought: thought_opt,
                     is_completed: true,
@@ -1095,7 +1392,11 @@ fn extract_thought_block(text: &str) -> ParsedThought {
             } else {
                 // Still streaming inside thought block
                 let thought = after_start.trim().to_string();
-                let thought_opt = if thought.is_empty() { None } else { Some(thought) };
+                let thought_opt = if thought.is_empty() {
+                    None
+                } else {
+                    Some(thought)
+                };
                 return ParsedThought {
                     thought: thought_opt,
                     is_completed: false,
@@ -1248,7 +1549,8 @@ fn extract_tool_cmd_name(content: &str) -> &str {
 /// Pushes a single blank line only if the previous line is not already blank
 fn push_blank_line(lines: &mut Vec<Line<'static>>) {
     if let Some(last) = lines.last() {
-        let is_empty = last.spans.is_empty() || last.spans.iter().all(|s| s.content.trim().is_empty());
+        let is_empty =
+            last.spans.is_empty() || last.spans.iter().all(|s| s.content.trim().is_empty());
         if !is_empty {
             lines.push(Line::from(""));
         }
@@ -1302,7 +1604,10 @@ fn compute_prompt_cursor_and_lines(
             let word_w = str_visual_width(word_trimmed);
             let trailing_spaces = word.len() - word_trimmed.len();
 
-            if !cursor_found && cursor_byte_pos >= byte_offset && cursor_byte_pos <= byte_offset + word_bytes {
+            if !cursor_found
+                && cursor_byte_pos >= byte_offset
+                && cursor_byte_pos <= byte_offset + word_bytes
+            {
                 let inside_offset = (cursor_byte_pos - byte_offset).min(word.len());
                 // Clamp to a char boundary so a mid-multibyte cursor can never panic.
                 let inside_offset = word.floor_char_boundary(inside_offset);

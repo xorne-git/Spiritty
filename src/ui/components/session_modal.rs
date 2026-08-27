@@ -58,7 +58,11 @@ impl SessionModalState {
         // Confirmation mode for deletion
         if let Some(id) = self.confirm_delete_id.clone() {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('o') | KeyCode::Char('O') | KeyCode::Enter => {
+                KeyCode::Char('y')
+                | KeyCode::Char('Y')
+                | KeyCode::Char('o')
+                | KeyCode::Char('O')
+                | KeyCode::Enter => {
                     let _ = SessionStorage::delete(&id);
                     self.confirm_delete_id = None;
                     self.refresh();
@@ -94,9 +98,10 @@ impl SessionModalState {
                 }
                 None
             }
-            KeyCode::Enter => {
-                self.sessions.get(self.selected_index).map(|sess| SessionModalAction::Load(sess.id.clone()))
-            }
+            KeyCode::Enter => self
+                .sessions
+                .get(self.selected_index)
+                .map(|sess| SessionModalAction::Load(sess.id.clone())),
             KeyCode::Char('n') | KeyCode::Char('N') => Some(SessionModalAction::NewSession),
             KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
                 if let Some(sess) = self.sessions.get(self.selected_index) {
@@ -121,7 +126,9 @@ impl SessionModalState {
         let block = Block::default()
             .title(Span::styled(
                 lang.t(I18nKey::SessionModalTitle),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ))
             .borders(Borders::ALL)
             .border_set(symbols::border::ROUNDED)
@@ -148,21 +155,24 @@ impl SessionModalState {
         let footer_area = chunks[2];
 
         // 1. Render Count Header
-        let count_text = format!(
-            "Total : {} session(s) enregistrée(s)",
-            self.sessions.len()
-        );
-        let header_line = Line::from(vec![
-            Span::styled(count_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-        ]);
+        let count_text = format!("Total : {} session(s) enregistrée(s)", self.sessions.len());
+        let header_line = Line::from(vec![Span::styled(
+            count_text,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        )]);
         Paragraph::new(header_line).render(header_area, buf);
 
         // 2. Render Sessions Table
         if self.sessions.is_empty() {
             let empty_text = lang.t(I18nKey::SessionEmptyList);
-            let p = Paragraph::new(Line::from(vec![
-                Span::styled(empty_text, Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)),
-            ]));
+            let p = Paragraph::new(Line::from(vec![Span::styled(
+                empty_text,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )]));
             p.render(list_area, buf);
         } else {
             let visible_rows_count = list_area.height.saturating_sub(1) as usize;
@@ -173,11 +183,36 @@ impl SessionModalState {
             };
 
             let table_headers = Row::new(vec![
-                Span::styled(lang.t(I18nKey::SessionHeaderTitle), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled(lang.t(I18nKey::SessionHeaderModel), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled(lang.t(I18nKey::SessionHeaderMessages), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled(lang.t(I18nKey::SessionHeaderTokens), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
-                Span::styled(lang.t(I18nKey::SessionHeaderDate), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    lang.t(I18nKey::SessionHeaderTitle),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    lang.t(I18nKey::SessionHeaderModel),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    lang.t(I18nKey::SessionHeaderMessages),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    lang.t(I18nKey::SessionHeaderTokens),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    lang.t(I18nKey::SessionHeaderDate),
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ])
             .bottom_margin(0);
 
@@ -193,7 +228,12 @@ impl SessionModalState {
 
                     let mut title_spans = Vec::new();
                     if is_selected {
-                        title_spans.push(Span::styled("❯ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+                        title_spans.push(Span::styled(
+                            "❯ ",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ));
                     } else {
                         title_spans.push(Span::raw("  "));
                     }
@@ -201,7 +241,9 @@ impl SessionModalState {
                     title_spans.push(Span::styled(
                         sess.title.clone(),
                         if is_selected {
-                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::White)
                         },
@@ -211,7 +253,9 @@ impl SessionModalState {
                         title_spans.push(Span::raw(" "));
                         title_spans.push(Span::styled(
                             lang.t(I18nKey::SessionTagActive),
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
                         ));
                     }
 
@@ -223,10 +267,22 @@ impl SessionModalState {
 
                     Row::new(vec![
                         Line::from(title_spans),
-                        Line::from(Span::styled(sess.model.clone(), Style::default().fg(Color::Cyan))),
-                        Line::from(Span::styled(format!("{}", sess.message_count), Style::default().fg(Color::Gray))),
-                        Line::from(Span::styled(format_tokens(sess.total_tokens), Style::default().fg(Color::Yellow))),
-                        Line::from(Span::styled(sess.updated_at.clone(), Style::default().fg(Color::DarkGray))),
+                        Line::from(Span::styled(
+                            sess.model.clone(),
+                            Style::default().fg(Color::Cyan),
+                        )),
+                        Line::from(Span::styled(
+                            format!("{}", sess.message_count),
+                            Style::default().fg(Color::Gray),
+                        )),
+                        Line::from(Span::styled(
+                            format_tokens(sess.total_tokens),
+                            Style::default().fg(Color::Yellow),
+                        )),
+                        Line::from(Span::styled(
+                            sess.updated_at.clone(),
+                            Style::default().fg(Color::DarkGray),
+                        )),
                     ])
                     .style(row_style)
                 })
@@ -257,16 +313,28 @@ impl SessionModalState {
         } else {
             let mut footer_spans = Vec::new();
             footer_spans.extend(key_pill("↵", Color::Cyan));
-            footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionLoad)), Style::default().fg(Color::White)));
+            footer_spans.push(Span::styled(
+                format!(" {}   ", lang.t(I18nKey::SessionActionLoad)),
+                Style::default().fg(Color::White),
+            ));
 
             footer_spans.extend(key_pill("N", Color::Green));
-            footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionNew)), Style::default().fg(Color::White)));
+            footer_spans.push(Span::styled(
+                format!(" {}   ", lang.t(I18nKey::SessionActionNew)),
+                Style::default().fg(Color::White),
+            ));
 
             footer_spans.extend(key_pill("D", Color::Red));
-            footer_spans.push(Span::styled(format!(" {}   ", lang.t(I18nKey::SessionActionDelete)), Style::default().fg(Color::White)));
+            footer_spans.push(Span::styled(
+                format!(" {}   ", lang.t(I18nKey::SessionActionDelete)),
+                Style::default().fg(Color::White),
+            ));
 
             footer_spans.extend(key_pill("Esc", Color::DarkGray));
-            footer_spans.push(Span::styled(format!(" {}", lang.t(I18nKey::SessionActionClose)), Style::default().fg(Color::White)));
+            footer_spans.push(Span::styled(
+                format!(" {}", lang.t(I18nKey::SessionActionClose)),
+                Style::default().fg(Color::White),
+            ));
 
             Paragraph::new(Line::from(footer_spans)).render(footer_area, buf);
         }
@@ -278,7 +346,10 @@ fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
         Span::styled("", Style::default().fg(color)),
         Span::styled(
             key.to_string(),
-            Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("", Style::default().fg(color)),
     ]

@@ -87,7 +87,13 @@ pub struct ConfigModalState {
 fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
     vec![
         Span::styled("", Style::default().fg(color)),
-        Span::styled(key, Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            key,
+            Style::default()
+                .bg(color)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("", Style::default().fg(color)),
     ]
 }
@@ -118,7 +124,10 @@ fn render_editable_text<'a>(
         if is_focused {
             return vec![Span::styled("█", Style::default().fg(Color::Cyan))];
         } else {
-            return vec![Span::styled(placeholder, Style::default().fg(Color::DarkGray))];
+            return vec![Span::styled(
+                placeholder,
+                Style::default().fg(Color::DarkGray),
+            )];
         }
     }
 
@@ -290,7 +299,11 @@ impl ConfigModalState {
             Some(self.api_key_input.trim().to_string())
         };
 
-        let models = self.models_per_provider.get(&key).cloned().unwrap_or_default();
+        let models = self
+            .models_per_provider
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
         let existing_ctx = config.providers.get(&key).and_then(|p| p.context_window);
         let updated_provider = ProviderConfig {
             model: self.model_input.trim().to_string(),
@@ -310,13 +323,27 @@ impl ConfigModalState {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent, config: &mut Config) -> ConfigModalAction {
-        let is_save_shortcut = (matches!(key.code, KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r'))
-            && (key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)))
-            || (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')))
+        let is_save_shortcut = (matches!(
+            key.code,
+            KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r')
+        ) && (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::SHIFT)
+            || key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)))
+            || (key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')))
             || key.code == KeyCode::F(2);
 
-        let is_paste = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-            || key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT))
+        let is_paste = (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            || key.modifiers.contains(
+                crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+            ))
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'));
 
         if is_paste {
@@ -328,11 +355,22 @@ impl ConfigModalState {
 
         let prov_key = self.selected_provider.key_str().to_string();
 
-        let is_update_pricing = (key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')))
+        let is_update_pricing = (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')))
             || key.code == KeyCode::F(5)
-            || (matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')) && self.active_field != ConfigField::BaseUrl && self.active_field != ConfigField::ApiKey);
+            || (matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U'))
+                && self.active_field != ConfigField::BaseUrl
+                && self.active_field != ConfigField::ApiKey);
 
-        if is_update_pricing && !self.is_dropdown_open && !matches!(self.dropdown_action, DropdownAction::Adding(..) | DropdownAction::Editing(..)) {
+        if is_update_pricing
+            && !self.is_dropdown_open
+            && !matches!(
+                self.dropdown_action,
+                DropdownAction::Adding(..) | DropdownAction::Editing(..)
+            )
+        {
             self.pricing_status = Some((
                 std::time::Instant::now(),
                 if config.get_language() == crate::i18n::Language::Fr {
@@ -345,7 +383,12 @@ impl ConfigModalState {
             return ConfigModalAction::UpdatePricing;
         }
 
-        if is_save_shortcut && !matches!(self.dropdown_action, DropdownAction::Adding(..) | DropdownAction::Editing(..)) {
+        if is_save_shortcut
+            && !matches!(
+                self.dropdown_action,
+                DropdownAction::Adding(..) | DropdownAction::Editing(..)
+            )
+        {
             if self.is_dropdown_open {
                 if let Some(models) = self.models_per_provider.get(&prov_key) {
                     if let Some(selected) = models.get(self.dropdown_selected_idx) {
@@ -367,7 +410,8 @@ impl ConfigModalState {
                             if !models.contains(&new_model) {
                                 models.push(new_model.clone());
                             }
-                            self.dropdown_selected_idx = models.iter().position(|m| *m == new_model).unwrap_or(0);
+                            self.dropdown_selected_idx =
+                                models.iter().position(|m| *m == new_model).unwrap_or(0);
                             self.model_input = new_model;
                         }
                         self.dropdown_action = DropdownAction::None;
@@ -478,7 +522,11 @@ impl ConfigModalState {
                         return ConfigModalAction::None;
                     }
                     KeyCode::Down => {
-                        let count = self.models_per_provider.get(&prov_key).map(|v| v.len()).unwrap_or(0);
+                        let count = self
+                            .models_per_provider
+                            .get(&prov_key)
+                            .map(|v| v.len())
+                            .unwrap_or(0);
                         if count > 0 && self.dropdown_selected_idx + 1 < count {
                             self.dropdown_selected_idx += 1;
                         }
@@ -498,7 +546,8 @@ impl ConfigModalState {
                         return ConfigModalAction::None;
                     }
                     KeyCode::Char('e') | KeyCode::F(2) => {
-                        let current_name = self.models_per_provider
+                        let current_name = self
+                            .models_per_provider
                             .get(&prov_key)
                             .and_then(|v| v.get(self.dropdown_selected_idx))
                             .cloned()
@@ -512,7 +561,11 @@ impl ConfigModalState {
                         let models = self.models_per_provider.entry(prov_key).or_default();
                         if models.len() > 1 && idx < models.len() {
                             models.remove(idx);
-                            let new_idx = if idx >= models.len() { models.len() - 1 } else { idx };
+                            let new_idx = if idx >= models.len() {
+                                models.len() - 1
+                            } else {
+                                idx
+                            };
                             self.dropdown_selected_idx = new_idx;
                             if let Some(new_sel) = models.get(new_idx) {
                                 self.model_input = new_sel.clone();
@@ -540,8 +593,15 @@ impl ConfigModalState {
             KeyCode::Left => match self.active_field {
                 ConfigField::Provider => {
                     let all = ProviderType::all();
-                    let current_idx = all.iter().position(|p| *p == self.selected_provider).unwrap_or(0);
-                    let prev_idx = if current_idx == 0 { all.len() - 1 } else { current_idx - 1 };
+                    let current_idx = all
+                        .iter()
+                        .position(|p| *p == self.selected_provider)
+                        .unwrap_or(0);
+                    let prev_idx = if current_idx == 0 {
+                        all.len() - 1
+                    } else {
+                        current_idx - 1
+                    };
                     self.set_provider(all[prev_idx], config);
                 }
                 ConfigField::AutoApprove => {
@@ -550,14 +610,22 @@ impl ConfigModalState {
                 ConfigField::Theme => {
                     let all = ThemeId::all();
                     let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
-                    let prev_idx = if current_idx == 0 { all.len() - 1 } else { current_idx - 1 };
+                    let prev_idx = if current_idx == 0 {
+                        all.len() - 1
+                    } else {
+                        current_idx - 1
+                    };
                     self.theme = all[prev_idx];
                 }
                 ConfigField::Model => {
                     if let Some(models) = self.models_per_provider.get(&prov_key) {
                         let len = models.len();
                         if len > 0 {
-                            let new_idx = if self.dropdown_selected_idx == 0 { len - 1 } else { self.dropdown_selected_idx - 1 };
+                            let new_idx = if self.dropdown_selected_idx == 0 {
+                                len - 1
+                            } else {
+                                self.dropdown_selected_idx - 1
+                            };
                             self.dropdown_selected_idx = new_idx;
                             self.model_input = models[new_idx].clone();
                         }
@@ -574,7 +642,10 @@ impl ConfigModalState {
             KeyCode::Right => match self.active_field {
                 ConfigField::Provider => {
                     let all = ProviderType::all();
-                    let current_idx = all.iter().position(|p| *p == self.selected_provider).unwrap_or(0);
+                    let current_idx = all
+                        .iter()
+                        .position(|p| *p == self.selected_provider)
+                        .unwrap_or(0);
                     let next_idx = (current_idx + 1) % all.len();
                     self.set_provider(all[next_idx], config);
                 }
@@ -657,17 +728,19 @@ impl ConfigModalState {
                 }
                 _ => {}
             },
-            KeyCode::Char(c) if !c.is_control() && c != '\n' && c != '\r' => match self.active_field {
-                ConfigField::BaseUrl => {
-                    insert_char_at(&mut self.base_url_input, self.url_cursor, c);
-                    self.url_cursor += 1;
+            KeyCode::Char(c) if !c.is_control() && c != '\n' && c != '\r' => {
+                match self.active_field {
+                    ConfigField::BaseUrl => {
+                        insert_char_at(&mut self.base_url_input, self.url_cursor, c);
+                        self.url_cursor += 1;
+                    }
+                    ConfigField::ApiKey => {
+                        insert_char_at(&mut self.api_key_input, self.api_key_cursor, c);
+                        self.api_key_cursor += 1;
+                    }
+                    _ => {}
                 }
-                ConfigField::ApiKey => {
-                    insert_char_at(&mut self.api_key_input, self.api_key_cursor, c);
-                    self.api_key_cursor += 1;
-                }
-                _ => {}
-            },
+            }
             KeyCode::Backspace => match self.active_field {
                 ConfigField::BaseUrl if self.url_cursor > 0 => {
                     remove_char_at(&mut self.base_url_input, self.url_cursor - 1);
@@ -710,7 +783,9 @@ impl ConfigModalState {
             .padding(Padding::new(3, 3, 1, 1))
             .title(Span::styled(
                 lang.t(I18nKey::ConfigModalTitle),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let inner_area = block.inner(modal_area);
@@ -727,14 +802,31 @@ impl ConfigModalState {
         let mut lines = Vec::new();
 
         // 1. Provider Field with fixed width (Anthropic Claude = 16 chars max)
-        let prov_color = if f_provider { Color::Yellow } else { Color::Cyan };
-        let mut l1 = vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldProvider), Style::default().fg(if f_provider { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
-        ];
+        let prov_color = if f_provider {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
+        let mut l1 = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldProvider),
+            Style::default()
+                .fg(if f_provider {
+                    Color::Cyan
+                } else {
+                    Color::White
+                })
+                .add_modifier(Modifier::BOLD),
+        )];
         l1.extend(key_pill("←", prov_color));
         l1.push(Span::styled(
             format!(" {:^16} ", self.selected_provider.display_name()),
-            Style::default().fg(if f_provider { Color::Yellow } else { Color::White }).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(if f_provider {
+                    Color::Yellow
+                } else {
+                    Color::White
+                })
+                .add_modifier(Modifier::BOLD),
         ));
         l1.extend(key_pill("→", prov_color));
         lines.push(Line::from(l1));
@@ -748,14 +840,27 @@ impl ConfigModalState {
             crate::config::AutoApproveLevel::Off => Color::DarkGray,
         };
         let auto_arrow_color = if f_auto { Color::Yellow } else { Color::Cyan };
-        let mut l_auto = vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldAutoApprove), Style::default().fg(if f_auto { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
-        ];
+        let mut l_auto = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldAutoApprove),
+            Style::default()
+                .fg(if f_auto { Color::Cyan } else { Color::White })
+                .add_modifier(Modifier::BOLD),
+        )];
         l_auto.extend(key_pill("←", auto_arrow_color));
-        let auto_desc = format!(" {} ({}) ", self.auto_approve.display_name(), self.auto_approve.description(lang));
+        let auto_desc = format!(
+            " {} ({}) ",
+            self.auto_approve.display_name(),
+            self.auto_approve.description(lang)
+        );
         l_auto.push(Span::styled(
             format!("{:^32}", auto_desc),
-            Style::default().fg(if f_auto { Color::Yellow } else { auto_badge_color }).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(if f_auto {
+                    Color::Yellow
+                } else {
+                    auto_badge_color
+                })
+                .add_modifier(Modifier::BOLD),
         ));
         l_auto.extend(key_pill("→", auto_arrow_color));
         lines.push(Line::from(l_auto));
@@ -763,14 +868,19 @@ impl ConfigModalState {
 
         // 3. Theme Selector Field
         let theme_arrow_color = if f_theme { Color::Yellow } else { Color::Cyan };
-        let mut l_theme = vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldTheme), Style::default().fg(if f_theme { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
-        ];
+        let mut l_theme = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldTheme),
+            Style::default()
+                .fg(if f_theme { Color::Cyan } else { Color::White })
+                .add_modifier(Modifier::BOLD),
+        )];
         l_theme.extend(key_pill("←", theme_arrow_color));
         let theme_name = format!(" {} ", self.theme.display_name());
         l_theme.push(Span::styled(
             format!("{:^32}", theme_name),
-            Style::default().fg(if f_theme { Color::Yellow } else { Color::Cyan }).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(if f_theme { Color::Yellow } else { Color::Cyan })
+                .add_modifier(Modifier::BOLD),
         ));
         l_theme.extend(key_pill("→", theme_arrow_color));
         lines.push(Line::from(l_theme));
@@ -779,45 +889,86 @@ impl ConfigModalState {
         // 3. Model Selection (with Dropdown trigger)
         let placeholder_model = lang.t(I18nKey::ConfigPlaceholderSelectModel);
         lines.push(Line::from(vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldModel), Style::default().fg(if f_model { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("{} ▾", if self.model_input.is_empty() { placeholder_model } else { &self.model_input }),
-                Style::default().fg(if f_model { Color::Yellow } else { Color::White }).add_modifier(if f_model { Modifier::BOLD } else { Modifier::empty() }),
+                lang.t(I18nKey::ConfigFieldModel),
+                Style::default()
+                    .fg(if f_model { Color::Cyan } else { Color::White })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "{} ▾",
+                    if self.model_input.is_empty() {
+                        placeholder_model
+                    } else {
+                        &self.model_input
+                    }
+                ),
+                Style::default()
+                    .fg(if f_model { Color::Yellow } else { Color::White })
+                    .add_modifier(if f_model {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             ),
         ]));
         lines.push(Line::from(""));
 
         // 4. Server URL (Editable with cursor & arrow navigation)
-        let mut l3 = vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldApiUrl), Style::default().fg(if f_url { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
-        ];
-        l3.extend(render_editable_text(&self.base_url_input, self.url_cursor, f_url, lang.t(I18nKey::ConfigPlaceholderDefaultUrl)));
+        let mut l3 = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldApiUrl),
+            Style::default()
+                .fg(if f_url { Color::Cyan } else { Color::White })
+                .add_modifier(Modifier::BOLD),
+        )];
+        l3.extend(render_editable_text(
+            &self.base_url_input,
+            self.url_cursor,
+            f_url,
+            lang.t(I18nKey::ConfigPlaceholderDefaultUrl),
+        ));
         lines.push(Line::from(l3));
         lines.push(Line::from(""));
 
         // 5. Clé d'API (Editable with cursor & arrow navigation)
-        let mut l4 = vec![
-            Span::styled(lang.t(I18nKey::ConfigFieldApiKey), Style::default().fg(if f_key { Color::Cyan } else { Color::White }).add_modifier(Modifier::BOLD)),
-        ];
-        l4.extend(render_editable_text(&self.api_key_input, self.api_key_cursor, f_key, lang.t(I18nKey::ConfigPlaceholderNoKeyRequired)));
+        let mut l4 = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldApiKey),
+            Style::default()
+                .fg(if f_key { Color::Cyan } else { Color::White })
+                .add_modifier(Modifier::BOLD),
+        )];
+        l4.extend(render_editable_text(
+            &self.api_key_input,
+            self.api_key_cursor,
+            f_key,
+            lang.t(I18nKey::ConfigPlaceholderNoKeyRequired),
+        ));
         lines.push(Line::from(l4));
         lines.push(Line::from(""));
 
         // 5. Save Button with square corners, Cyan background, and Yellow rollover
         let save_style = if f_save {
-            Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD)
         };
 
-        let mut save_spans = vec![
-            Span::styled(lang.t(I18nKey::ConfigButtonSave), save_style),
-        ];
+        let mut save_spans = vec![Span::styled(lang.t(I18nKey::ConfigButtonSave), save_style)];
 
         if let Some((time, ref status_text, color)) = self.pricing_status {
             if time.elapsed().as_secs() < 8 {
                 save_spans.push(Span::raw("   "));
-                save_spans.push(Span::styled(status_text.clone(), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+                save_spans.push(Span::styled(
+                    status_text.clone(),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ));
             }
         }
 
@@ -830,11 +981,21 @@ impl ConfigModalState {
         let sep_y = modal_area.bottom().saturating_sub(5);
         let border_style = Style::default().fg(Color::Cyan);
         if sep_y > modal_area.top() && sep_y < modal_area.bottom().saturating_sub(1) {
-            buf.set_string(modal_area.left(), sep_y, symbols::line::NORMAL.vertical_right, border_style);
+            buf.set_string(
+                modal_area.left(),
+                sep_y,
+                symbols::line::NORMAL.vertical_right,
+                border_style,
+            );
             for x in (modal_area.left() + 1)..(modal_area.right().saturating_sub(1)) {
                 buf.set_string(x, sep_y, symbols::line::NORMAL.horizontal, border_style);
             }
-            buf.set_string(modal_area.right().saturating_sub(1), sep_y, symbols::line::NORMAL.vertical_left, border_style);
+            buf.set_string(
+                modal_area.right().saturating_sub(1),
+                sep_y,
+                symbols::line::NORMAL.vertical_left,
+                border_style,
+            );
         }
 
         // Footer Guide below separator line (Vertically & Horizontally Centered with 1 row padding top and bottom)
@@ -844,15 +1005,24 @@ impl ConfigModalState {
         footer.extend(key_pill("↑", Color::Cyan));
         footer.push(Span::raw(" "));
         footer.extend(key_pill("↓", Color::Cyan));
-        footer.push(Span::raw(format!(" {}    ", lang.t(I18nKey::ConfigNavNavigate))));
+        footer.push(Span::raw(format!(
+            " {}    ",
+            lang.t(I18nKey::ConfigNavNavigate)
+        )));
 
         footer.extend(key_pill("Ctrl", Color::Yellow));
         footer.push(Span::styled("+", Style::default().fg(Color::Yellow)));
         footer.extend(key_pill("S", Color::Yellow));
-        footer.push(Span::raw(format!(" {}    ", lang.t(I18nKey::ConfigButtonSave))));
+        footer.push(Span::raw(format!(
+            " {}    ",
+            lang.t(I18nKey::ConfigButtonSave)
+        )));
 
         footer.extend(key_pill("U", Color::Rgb(140, 100, 240)));
-        footer.push(Span::raw(format!(" {}    ", lang.t(I18nKey::ConfigActionUpdatePricing))));
+        footer.push(Span::raw(format!(
+            " {}    ",
+            lang.t(I18nKey::ConfigActionUpdatePricing)
+        )));
 
         footer.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
         footer.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigNavClose))));
@@ -875,7 +1045,11 @@ impl ConfigModalState {
     fn render_dropdown(&self, parent_area: Rect, buf: &mut Buffer, lang: Language) {
         let dd_width = (parent_area.width.saturating_sub(8)).clamp(50, 78);
         let prov_key = self.selected_provider.key_str();
-        let models = self.models_per_provider.get(prov_key).map(|v| v.as_slice()).unwrap_or(&[]);
+        let models = self
+            .models_per_provider
+            .get(prov_key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         let list_len = models.len() as u16;
         let content_lines = list_len + 2;
         let dd_height = (content_lines + 2).min(parent_area.height.saturating_sub(2));
@@ -893,7 +1067,9 @@ impl ConfigModalState {
             .padding(Padding::horizontal(1))
             .title(Span::styled(
                 lang.t(I18nKey::ConfigDropdownTitle),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
 
         let inner = block.inner(dd_area);
@@ -905,7 +1081,9 @@ impl ConfigModalState {
             DropdownAction::Adding(input, cursor) => {
                 lines.push(Line::from(Span::styled(
                     lang.t(I18nKey::ConfigDropdownAddTitle),
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 let mut l = vec![Span::styled("❯ ", Style::default().fg(Color::Green))];
                 l.extend(render_editable_text(input, *cursor, true, ""));
@@ -913,15 +1091,23 @@ impl ConfigModalState {
                 lines.push(Line::from(""));
                 let mut f_add = Vec::new();
                 f_add.extend(key_pill("Enter", Color::Green));
-                f_add.push(Span::raw(format!(" {}   ", lang.t(I18nKey::ConfigDropdownConfirm))));
+                f_add.push(Span::raw(format!(
+                    " {}   ",
+                    lang.t(I18nKey::ConfigDropdownConfirm)
+                )));
                 f_add.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
-                f_add.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigDropdownCancel))));
+                f_add.push(Span::raw(format!(
+                    " {}",
+                    lang.t(I18nKey::ConfigDropdownCancel)
+                )));
                 lines.push(Line::from(f_add));
             }
             DropdownAction::Editing(input, cursor) => {
                 lines.push(Line::from(Span::styled(
                     lang.t(I18nKey::ConfigDropdownEditTitle),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 let mut l = vec![Span::styled("❯ ", Style::default().fg(Color::Cyan))];
                 l.extend(render_editable_text(input, *cursor, true, ""));
@@ -929,9 +1115,15 @@ impl ConfigModalState {
                 lines.push(Line::from(""));
                 let mut f_edit = Vec::new();
                 f_edit.extend(key_pill("Enter", Color::Cyan));
-                f_edit.push(Span::raw(format!(" {}   ", lang.t(I18nKey::ConfigDropdownConfirm))));
+                f_edit.push(Span::raw(format!(
+                    " {}   ",
+                    lang.t(I18nKey::ConfigDropdownConfirm)
+                )));
                 f_edit.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
-                f_edit.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigDropdownCancel))));
+                f_edit.push(Span::raw(format!(
+                    " {}",
+                    lang.t(I18nKey::ConfigDropdownCancel)
+                )));
                 lines.push(Line::from(f_edit));
             }
             DropdownAction::None => {
@@ -952,29 +1144,41 @@ impl ConfigModalState {
                     let prefix = if is_sel { "▶ " } else { "  " };
                     let tag = if is_active { tag_active } else { "" };
 
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{}{}{}", prefix, m, tag),
-                            if is_sel {
-                                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
-                            } else if is_active {
-                                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(Color::White)
-                            },
-                        ),
-                    ]));
+                    lines.push(Line::from(vec![Span::styled(
+                        format!("{}{}{}", prefix, m, tag),
+                        if is_sel {
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else if is_active {
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::White)
+                        },
+                    )]));
                 }
 
                 // Rounded Capsule Badges footer
                 lines.push(Line::from(""));
                 let mut dd_foot = Vec::new();
                 dd_foot.extend(key_pill("A", Color::Yellow));
-                dd_foot.push(Span::raw(format!(" {}  ", lang.t(I18nKey::ConfigDropdownActionAdd))));
+                dd_foot.push(Span::raw(format!(
+                    " {}  ",
+                    lang.t(I18nKey::ConfigDropdownActionAdd)
+                )));
                 dd_foot.extend(key_pill("E", Color::Yellow));
-                dd_foot.push(Span::raw(format!(" {}  ", lang.t(I18nKey::ConfigDropdownActionEdit))));
+                dd_foot.push(Span::raw(format!(
+                    " {}  ",
+                    lang.t(I18nKey::ConfigDropdownActionEdit)
+                )));
                 dd_foot.extend(key_pill("D", Color::Red));
-                dd_foot.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigDropdownActionDelete))));
+                dd_foot.push(Span::raw(format!(
+                    " {}",
+                    lang.t(I18nKey::ConfigDropdownActionDelete)
+                )));
                 lines.push(Line::from(dd_foot));
             }
         }

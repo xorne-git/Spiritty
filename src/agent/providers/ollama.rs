@@ -8,11 +8,11 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use super::LlmProvider;
 use crate::{
     app::{ChatMessage, MessageRole},
     event::AppEvent,
 };
-use super::LlmProvider;
 
 pub struct OllamaProvider {
     base_url: String,
@@ -114,7 +114,10 @@ impl LlmProvider for OllamaProvider {
                 anyhow::bail!(err_msg);
             }
             Err(_) => {
-                let err_msg = format!("Délai d'attente dépassé (timeout 12s) pour joindre Ollama sur {}.", url);
+                let err_msg = format!(
+                    "Délai d'attente dépassé (timeout 12s) pour joindre Ollama sur {}.",
+                    url
+                );
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                 anyhow::bail!(err_msg);
             }
@@ -142,7 +145,9 @@ impl LlmProvider for OllamaProvider {
                 Ok(Some(res)) => res,
                 Ok(None) => break,
                 Err(_) => {
-                    let err_msg = "Délai d'inactivité de 25s dépassé sur le flux Ollama (timeout SSE).".to_string();
+                    let err_msg =
+                        "Délai d'inactivité de 25s dépassé sur le flux Ollama (timeout SSE)."
+                            .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }
@@ -182,7 +187,9 @@ impl LlmProvider for OllamaProvider {
                                     let prompt_cnt = chunk.prompt_eval_count.unwrap_or(0);
                                     let speed = chunk.eval_duration.and_then(|dur_ns| {
                                         if dur_ns > 0 {
-                                            Some(eval_cnt as f64 / (dur_ns as f64 / 1_000_000_000.0))
+                                            Some(
+                                                eval_cnt as f64 / (dur_ns as f64 / 1_000_000_000.0),
+                                            )
                                         } else {
                                             None
                                         }

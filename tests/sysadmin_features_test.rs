@@ -12,26 +12,41 @@ async fn test_bookmarks_store_crud_and_sorting() {
 
     let mut store = HostsStore::load_from_path(hosts_path);
     // Add bookmark 1
-    store.add_bookmark("root@vps-web.prod:22".to_string(), Some("Web Prod".to_string())).unwrap();
+    store
+        .add_bookmark(
+            "root@vps-web.prod:22".to_string(),
+            Some("Web Prod".to_string()),
+        )
+        .unwrap();
     // Add bookmark 2
-    store.add_bookmark("debian@db.internal".to_string(), Some("Database".to_string())).unwrap();
+    store
+        .add_bookmark(
+            "debian@db.internal".to_string(),
+            Some("Database".to_string()),
+        )
+        .unwrap();
 
     // Cache a profile for vps-web
-    store.upsert(HostProfile {
-        target: "root@vps-web.prod:22".to_string(),
-        hostname: Some("vps-web".to_string()),
-        os_name: "Linux".to_string(),
-        distro: "Debian GNU/Linux 12 (bookworm)".to_string(),
-        kernel: "6.1.0-18-amd64".to_string(),
-        user: "root".to_string(),
-        package_managers: vec!["apt".to_string()],
-        init_system: "systemd".to_string(),
-        last_seen: "2026-08-24T00:00:00Z".to_string(),
-    }).unwrap();
+    store
+        .upsert(HostProfile {
+            target: "root@vps-web.prod:22".to_string(),
+            hostname: Some("vps-web".to_string()),
+            os_name: "Linux".to_string(),
+            distro: "Debian GNU/Linux 12 (bookworm)".to_string(),
+            kernel: "6.1.0-18-amd64".to_string(),
+            user: "root".to_string(),
+            package_managers: vec!["apt".to_string()],
+            init_system: "systemd".to_string(),
+            last_seen: "2026-08-24T00:00:00Z".to_string(),
+        })
+        .unwrap();
 
     let entries = store.list_all_entries();
     assert_eq!(entries.len(), 2);
-    let web_entry = entries.iter().find(|e| e.target == "root@vps-web.prod:22").unwrap();
+    let web_entry = entries
+        .iter()
+        .find(|e| e.target == "root@vps-web.prod:22")
+        .unwrap();
     assert_eq!(web_entry.alias.as_deref(), Some("Web Prod"));
     assert!(web_entry.is_favorite);
     assert!(web_entry.profile.is_some());
@@ -72,7 +87,9 @@ async fn test_markdown_export_generation() {
         command_proposal: None,
     });
 
-    let export_path = app.export_current_session_markdown().expect("Markdown export failed");
+    let export_path = app
+        .export_current_session_markdown()
+        .expect("Markdown export failed");
     assert!(std::path::Path::new(&export_path).exists());
 
     let content = std::fs::read_to_string(&export_path).unwrap();
@@ -125,7 +142,9 @@ async fn test_proactive_diagnosis_trigger() {
 
     app.proactive_error_diagnosis = Some(ProactiveDiagnosis {
         command: "systemctl start apache2".to_string(),
-        error_message: "Job for apache2.service failed because the control process exited with error code.".to_string(),
+        error_message:
+            "Job for apache2.service failed because the control process exited with error code."
+                .to_string(),
     });
 
     app.trigger_proactive_diagnosis();
@@ -133,9 +152,13 @@ async fn test_proactive_diagnosis_trigger() {
     // Verify diagnosis prompt was injected into messages
     assert_eq!(app.messages.len(), 2);
     assert_eq!(app.messages[0].role, MessageRole::User);
-    assert!(app.messages[0].content.contains("La commande suivante a échoué"));
+    assert!(app.messages[0]
+        .content
+        .contains("La commande suivante a échoué"));
     assert!(app.messages[0].content.contains("systemctl start apache2"));
-    assert!(app.messages[0].content.contains("Job for apache2.service failed"));
+    assert!(app.messages[0]
+        .content
+        .contains("Job for apache2.service failed"));
 
     assert_eq!(app.messages[1].role, MessageRole::Assistant);
     assert!(app.proactive_error_diagnosis.is_none());
@@ -177,13 +200,19 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
     app.on_agent_pty_tool_execute("ls /forbidden".to_string(), res_tx, false);
     app.on_pty_output(b"ls: cannot open directory '/forbidden': Permission denied\n");
-    assert!(app.proactive_error_diagnosis.is_none(), "Agent tools should NOT trigger proactive error toast");
+    assert!(
+        app.proactive_error_diagnosis.is_none(),
+        "Agent tools should NOT trigger proactive error toast"
+    );
 
     // 2. When user types a manual command in shell and gets an error, proactive error diagnosis triggers
     app.active_pty_tool = None;
     app.last_user_terminal_command = Some("mkdir -p /opt/app".to_string());
     app.on_pty_output(b"mkdir: cannot create directory '/opt/app': Permission denied\n");
-    assert!(app.proactive_error_diagnosis.is_some(), "Manual user command errors SHOULD trigger proactive diagnosis");
+    assert!(
+        app.proactive_error_diagnosis.is_some(),
+        "Manual user command errors SHOULD trigger proactive diagnosis"
+    );
     let diag = app.proactive_error_diagnosis.unwrap();
     assert_eq!(diag.command, "mkdir -p /opt/app");
     assert!(diag.error_message.contains("Permission denied"));
@@ -205,13 +234,21 @@ async fn test_focus_preservation_on_chat_submit_and_execution() {
     let enter_key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
     app.handle_key(enter_key);
 
-    assert_eq!(app.focus, Focus::Chat, "Focus should remain Chat after submitting prompt");
+    assert_eq!(
+        app.focus,
+        Focus::Chat,
+        "Focus should remain Chat after submitting prompt"
+    );
 
     // 2. When executing a normal non-sudo command, focus remains where user set it
     app.focus = Focus::Chat;
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
     app.on_agent_pty_tool_execute("uptime".to_string(), res_tx, false);
-    assert_eq!(app.focus, Focus::Chat, "Focus should remain Chat during non-sudo PTY tool execution");
+    assert_eq!(
+        app.focus,
+        Focus::Chat,
+        "Focus should remain Chat during non-sudo PTY tool execution"
+    );
 }
 
 #[tokio::test]
@@ -222,8 +259,12 @@ async fn test_sudo_password_detection_and_focus_switch() {
     assert!(is_waiting_for_password("[sudo] password for xorne: "));
     assert!(is_waiting_for_password("[sudo] Mot de passe de user : "));
     assert!(is_waiting_for_password("Password: "));
-    assert!(is_waiting_for_password("Enter passphrase for key '/home/xorne/.ssh/id_ed25519': "));
-    assert!(!is_waiting_for_password("systemctl restart nginx\nSuccess\n[xorne@machine ~]$ "));
+    assert!(is_waiting_for_password(
+        "Enter passphrase for key '/home/xorne/.ssh/id_ed25519': "
+    ));
+    assert!(!is_waiting_for_password(
+        "systemctl restart nginx\nSuccess\n[xorne@machine ~]$ "
+    ));
 
     // 2. When a sudo command is executed, focus automatically switches to Terminal for password entry
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
@@ -233,7 +274,11 @@ async fn test_sudo_password_detection_and_focus_switch() {
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
     app.on_agent_pty_tool_execute("sudo systemctl restart nginx".to_string(), res_tx, false);
 
-    assert_eq!(app.focus, Focus::Terminal, "Focus should switch to Terminal for sudo commands");
+    assert_eq!(
+        app.focus,
+        Focus::Terminal,
+        "Focus should switch to Terminal for sudo commands"
+    );
 }
 
 #[tokio::test]
@@ -244,8 +289,12 @@ async fn test_active_ssh_bookmarking_shortcut() {
     let dir = tempfile::tempdir().unwrap();
     let mut hosts_store = HostsStore::load_from_path(dir.path().join("hosts.json"));
 
-    let mut state = BookmarksModalState::new(&hosts_store, Some("admin@192.168.1.200:2222".to_string()));
-    assert_eq!(state.active_ssh_target.as_deref(), Some("admin@192.168.1.200:2222"));
+    let mut state =
+        BookmarksModalState::new(&hosts_store, Some("admin@192.168.1.200:2222".to_string()));
+    assert_eq!(
+        state.active_ssh_target.as_deref(),
+        Some("admin@192.168.1.200:2222")
+    );
     assert!(!state.is_target_bookmarked("admin@192.168.1.200:2222"));
 
     // Press 'S' to bookmark current active SSH session
@@ -271,7 +320,11 @@ async fn test_active_ssh_bookmarking_shortcut() {
     assert_eq!(state.add_state, AddHostState::None);
     assert!(state.is_target_bookmarked("admin@192.168.1.200:2222"));
 
-    let entry = state.entries.iter().find(|e| e.target == "admin@192.168.1.200:2222").unwrap();
+    let entry = state
+        .entries
+        .iter()
+        .find(|e| e.target == "admin@192.168.1.200:2222")
+        .unwrap();
     assert_eq!(entry.alias.as_deref(), Some("Server Backup"));
 }
 
@@ -323,7 +376,10 @@ fn test_cli_argument_parsing() {
 
     // 3. Positional prompt
     let opts = CliOptions::parse_from_args(vec!["spiritty", "analyse", "les", "logs", "nginx"]);
-    assert_eq!(opts.initial_prompt.as_deref(), Some("analyse les logs nginx"));
+    assert_eq!(
+        opts.initial_prompt.as_deref(),
+        Some("analyse les logs nginx")
+    );
 
     // 4. Combined options (-c -m model --yolo --ssh root@serv)
     let opts = CliOptions::parse_from_args(vec![
@@ -373,7 +429,9 @@ SPIRITTY_PROBE_END
     hosts_store.upsert(profile).unwrap();
 
     // Check that get("xorne.net") finds the profile
-    let found = hosts_store.get("xorne.net").expect("Should find profile by domain");
+    let found = hosts_store
+        .get("xorne.net")
+        .expect("Should find profile by domain");
     assert_eq!(found.distro, "Debian GNU/Linux 12 (bookworm)");
     assert_eq!(found.user, "xorne");
 
@@ -407,7 +465,10 @@ new-server
 /bin/systemctl
 SPIRITTY_PROBE_END
 "#;
-    app.on_remote_host_probed("debian@new-server.internal".to_string(), new_probe.to_string());
+    app.on_remote_host_probed(
+        "debian@new-server.internal".to_string(),
+        new_probe.to_string(),
+    );
     assert!(app.system_context.active_remote_profile.is_some());
     let active_prof = app.system_context.active_remote_profile.unwrap();
     assert_eq!(active_prof.distro, "Ubuntu 24.04 LTS");
