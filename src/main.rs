@@ -13,7 +13,7 @@ use spiritty::{
 };
 use std::{
     io::{self, stdout},
-    panic,
+    panic, thread,
     time::Duration,
 };
 
@@ -39,6 +39,12 @@ async fn main() -> Result<()> {
 
     // Setup panic hook to always restore terminal state on panic
     setup_panic_hook();
+
+    // Restore the terminal and exit cleanly on external termination signals too: an
+    // externally killed TUI (SIGTERM from `kill`, SIGHUP from a closed window) used to
+    // leave the tty in raw mode with no cursor and stale screen content — the user then
+    // needed a manual `reset`. SIGKILL cannot be caught (only a manual `reset` helps).
+    setup_termination_signal_hook();
 
     // Initialize raw terminal, bracketed paste, mouse capture and alternate screen
     enable_raw_mode()?;
@@ -237,4 +243,41 @@ fn setup_panic_hook() {
         );
         original_hook(panic_info);
     }));
+}
+
+/// Spawns a thread that watches SIGTERM / SIGINT / SIGHUP, restores the terminal the
+/// same way the panic hook does, and exits with the conventional `128 + signal` status.
+/// This runs even when the main loop is wedged (a stalled blocking call is exactly the
+/// situation where a user kills the process), so an externally killed Spiritty no longer
+/// leaves the terminal in raw mode.
+fn setup_termination_signal_hook() {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+
+    let mut signals = match signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM]) {
+        Ok(signals) => signals,
+        // Signal registration is best-effort: without it the previous behavior applies.
+        Err(_) => return,
+    };
+    thread::spawn(move || {
+        // A single signal is handled: after restoring the terminal the process exits
+        // with the conventional `128 + signal` status.
+        if let Some(sig) = signals.forever().next() {
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                DisableBracketedPaste,
+                DisableMouseCapture,
+                SetCursorStyle::DefaultUserShape
+            );
+            let _ = execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+            let _ = execute!(io::stdout(), crossterm::cursor::Show);
+            let code = match sig {
+                SIGINT => 130,
+                SIGHUP => 129,
+                _ => 143,
+            };
+            std::process::exit(code);
+        }
+    });
 }

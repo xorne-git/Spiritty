@@ -148,6 +148,81 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         return Some(tool);
     }
 
+    // 5. GLM/Z.ai hybrid DSML scaffolding emitted as plain text, e.g.
+    //    `<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="exec_command">…`
+    //    (fullwidth pipes U+FF5C). Normalized then parsed as HTML-style tags.
+    let normalized = normalize_model_tool_markup(text);
+    if let Some(tool) = parse_html_style_tool_call(&normalized) {
+        return Some(tool);
+    }
+
+    None
+}
+
+/// Normalizes the hybrid DSML tool scaffolding some GLM/Z.ai models emit as plain
+/// text (fullwidth pipes U+FF5C) into clean XML tags so the HTML-style extractor
+/// can read it: `<｜｜DSML｜｜invoke …>` becomes `<invoke …>`.
+fn normalize_model_tool_markup(text: &str) -> String {
+    let t = text.replace('\u{ff5c}', "|");
+    let t = t.replace("||DSML||", "");
+    let t = t.replace("|DSML|", "");
+    // Stray markers around tags (e.g. `<|tool_calls>` leftovers).
+    t.replace("<|", "<").replace("|>", ">")
+}
+
+/// Extracts HTML-style tool invocations: `<invoke name="…">` with
+/// `<parameter name="command" string="true">…</parameter>` children
+/// (GLM DSML scaffolding, Hermes/Mistral style). Returns the first
+/// invocation that maps to a known tool; tolerates truncated streams.
+fn parse_html_style_tool_call(text: &str) -> Option<ToolInvocation> {
+    let mut search_from = 0usize;
+    while let Some(rel) = text[search_from..].find("<invoke") {
+        let start = search_from + rel;
+        let after_tag = &text[start..];
+
+        let name = after_tag
+            .find("name=\"")
+            .and_then(|p| {
+                let rest = &after_tag[p + "name=\"".len()..];
+                rest.find('"').map(|e| rest[..e].to_string())
+            })
+            .unwrap_or_default();
+
+        let block_end = after_tag
+            .find("</invoke>")
+            .map_or(text.len(), |p| start + p);
+        let block = &text[start..block_end];
+
+        let param_value = |param: &str| -> Option<String> {
+            let open_tag = format!("<parameter name=\"{param}\"");
+            let p = block.find(&open_tag)?;
+            let after = &block[p..];
+            let gt = after.find('>')?;
+            let rest = &after[gt + 1..];
+            let end = rest.find("</parameter>")?;
+            let value = rest[..end].trim().to_string();
+            (!value.is_empty()).then_some(value)
+        };
+
+        let tool = if name.contains("command")
+            || name == "bash"
+            || name == "sh"
+            || name == "execute_command"
+            || name == "run_command"
+        {
+            param_value("command").map(ToolInvocation::RunCommand)
+        } else if name.contains("search") || name.contains("web") {
+            param_value("query")
+                .or_else(|| param_value("search_query"))
+                .map(ToolInvocation::WebSearch)
+        } else {
+            None
+        };
+        if tool.is_some() {
+            return tool;
+        }
+        search_from = start + "<invoke".len();
+    }
     None
 }
 
@@ -567,5 +642,66 @@ async fn search_tavily(client: &reqwest::Client, query: &str, api_key: &str) -> 
         Ok(String::new())
     } else {
         Ok(format!("### Tavily Search :\n{}", results.join("\n")))
+    }
+}
+
+#[cfg(test)]
+mod tool_parse_tests {
+    use super::{parse_tool_call, ToolInvocation};
+
+    /// Exact hybrid scaffolding captured from a live GLM/Z.ai session: fullwidth
+    /// pipes U+FF5C, `<｜｜DSML｜｜…>` markers, HTML-style invoke/parameter children.
+    #[test]
+    fn parses_glm_dsml_hybrid_tool_call() {
+        let text = "D'abord la r\u{e9}sa en base :\n\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"command\" string=\"true\">cd /var/www && echo ok</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand(
+                "cd /var/www && echo ok".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_truncated_stream_tool_call() {
+        // Stream cut mid-block: no closing tags at all.
+        let text = "Je v\u{e9}rifie.\n\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"command\" string=\"true\">uptime</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("uptime".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_single_pipe_dsml_variant() {
+        let text = "<\u{ff5c}DSML\u{ff5c}invoke name=\"exec_command\"><\u{ff5c}DSML\u{ff5c}parameter name=\"command\" string=\"true\">ls -la</\u{ff5c}DSML\u{ff5c}parameter></\u{ff5c}DSML\u{ff5c}invoke>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("ls -la".to_string()))
+        );
+    }
+
+    #[test]
+    fn clean_xml_tool_call_also_parses() {
+        let text = "<tool_calls>\n<invoke name=\"exec_command\">\n<parameter name=\"command\" string=\"true\">df -h</parameter>\n</invoke>\n</tool_calls>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("df -h".to_string()))
+        );
+    }
+
+    #[test]
+    fn web_search_tool_call_parses() {
+        let text = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"web_search\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"query\" string=\"true\">rust ratatui</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::WebSearch("rust ratatui".to_string()))
+        );
+    }
+
+    #[test]
+    fn prose_without_tool_call_stays_none() {
+        let text = "Voici mon analyse du probl\u{e8}me, rien \u{e0} ex\u{e9}cuter.";
+        assert_eq!(parse_tool_call(text), None);
     }
 }

@@ -150,6 +150,37 @@ impl HostsStore {
             .any(|b| b.target == target && b.is_favorite)
     }
 
+    /// Reverse-maps a remote HOSTNAME (e.g. `prod`, what a shell prompt shows) to
+    /// the most recent known connection PROFILE (e.g. target `ducasse-seine.com`).
+    /// Prompt remnants only reveal `user@hostname`, which is usually NOT directly
+    /// connectable; the store knows which address actually reaches that machine.
+    pub fn find_by_remote_hostname(&self, hostname: &str) -> Option<&HostProfile> {
+        self.profiles
+            .values()
+            .filter(|p| p.hostname.as_deref() == Some(hostname))
+            .max_by(|a, b| a.last_seen.cmp(&b.last_seen))
+    }
+
+    /// Turns a stored `last_ssh_target` into a connectable ssh argument:
+    /// 1. an exact known profile target wins as-is;
+    /// 2. otherwise `user@hostname` is resolved through the store — keeping the
+    ///    stored user when it differs from the profile's (e.g. `root@prod`
+    ///    → `root@ducasse-seine.com`), or the profile's canonical target;
+    /// 3. otherwise the stored value is returned untouched (best effort).
+    pub fn resolve_connectable_target(&self, stored: &str) -> String {
+        if self.profiles.contains_key(stored) {
+            return stored.to_string();
+        }
+        let (user, hostname) = stored.split_once('@').unwrap_or(("", stored));
+        if let Some(profile) = self.find_by_remote_hostname(hostname) {
+            if user.is_empty() || user == profile.user {
+                return profile.target.clone();
+            }
+            return format!("{}@{}", user, profile.target);
+        }
+        stored.to_string()
+    }
+
     pub fn get_alias(&self, target: &str) -> Option<&str> {
         self.bookmarks
             .iter()
@@ -513,5 +544,126 @@ SPIRITTY_PROBE_END
         assert_eq!(profile.user, "xorne");
         assert_eq!(profile.package_managers, vec!["apt"]);
         assert_eq!(profile.init_system, "systemd");
+    }
+}
+
+#[cfg(test)]
+mod resolve_target_tests {
+    use super::{HostProfile, HostsStore};
+
+    fn profile(target: &str, hostname: &str, user: &str) -> HostProfile {
+        HostProfile {
+            target: target.to_string(),
+            hostname: Some(hostname.to_string()),
+            os_name: "Linux".to_string(),
+            distro: "Debian".to_string(),
+            kernel: "4.9".to_string(),
+            user: user.to_string(),
+            package_managers: vec!["apt".to_string()],
+            init_system: "systemd".to_string(),
+            last_seen: "2026-08-26T11:33:07+00:00".to_string(),
+        }
+    }
+
+    fn store_with(entries: Vec<(&str, &str, &str, &str)>) -> HostsStore {
+        let mut store = HostsStore::default();
+        for (i, (target, hostname, user, seen)) in entries.into_iter().enumerate() {
+            let mut p = profile(target, hostname, user);
+            p.last_seen = format!("{}{:02}", seen, i);
+            store.profiles.insert(target.to_string(), p);
+        }
+        store
+    }
+
+    #[test]
+    fn resolves_inferred_hostname_to_real_target() {
+        // Real-world case: the prompt shows `xorne@prod`, the store knows that
+        // `prod` is reached via `ducasse-seine.com`.
+        let store = store_with(vec![
+            ("ib.xorne.net", "ib2", "xorne", "2026-08-24T12:25:30+00:0"),
+            (
+                "ducasse-seine.com",
+                "prod",
+                "xorne",
+                "2026-08-26T11:33:07+00:0",
+            ),
+        ]);
+        assert_eq!(
+            store.resolve_connectable_target("xorne@prod"),
+            "ducasse-seine.com"
+        );
+    }
+
+    #[test]
+    fn keeps_stored_user_when_it_differs_from_profile() {
+        let store = store_with(vec![(
+            "ducasse-seine.com",
+            "prod",
+            "xorne",
+            "2026-08-26T11:33:07+00:00",
+        )]);
+        assert_eq!(
+            store.resolve_connectable_target("root@prod"),
+            "root@ducasse-seine.com"
+        );
+    }
+
+    #[test]
+    fn exact_profile_target_wins_as_is() {
+        let store = store_with(vec![(
+            "ducasse-seine.com",
+            "prod",
+            "xorne",
+            "2026-08-26T11:33:07+00:00",
+        )]);
+        assert_eq!(
+            store.resolve_connectable_target("ducasse-seine.com"),
+            "ducasse-seine.com"
+        );
+    }
+
+    #[test]
+    fn unknown_target_returned_untouched() {
+        let store = store_with(vec![]);
+        assert_eq!(
+            store.resolve_connectable_target("xorne@somewhere-else.net"),
+            "xorne@somewhere-else.net"
+        );
+    }
+
+    #[test]
+    fn most_recent_profile_wins_on_hostname_collision() {
+        let store = store_with(vec![
+            (
+                "old.example.com",
+                "prod",
+                "xorne",
+                "2026-08-01T10:00:00+00:0",
+            ),
+            (
+                "ducasse-seine.com",
+                "prod",
+                "xorne",
+                "2026-08-26T11:33:07+00:0",
+            ),
+        ]);
+        assert_eq!(
+            store.resolve_connectable_target("xorne@prod"),
+            "ducasse-seine.com"
+        );
+    }
+
+    #[test]
+    fn bare_hostname_gets_profile_target_without_user() {
+        let store = store_with(vec![(
+            "ducasse-seine.com",
+            "prod",
+            "xorne",
+            "2026-08-26T11:33:07+00:00",
+        )]);
+        assert_eq!(
+            store.resolve_connectable_target("prod"),
+            "ducasse-seine.com"
+        );
     }
 }

@@ -889,3 +889,165 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Render-cache streaming regressions (chat panel, two-pass draw)
+// ---------------------------------------------------------------------------
+
+fn panel_text(buf: &ratatui::buffer::Buffer) -> String {
+    let mut s = String::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            s.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+        }
+        s.push('\n');
+    }
+    s
+}
+
+#[tokio::test]
+async fn test_streaming_tail_is_rendered_live() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use spiritty::app::{App, ChatMessage, MessageRole};
+    use spiritty::ui::chat_panel::ChatPanel;
+
+    // Regression: while `is_generating`, the tail assistant message must reach
+    // the widget — a cache-missed tail used to vanish (blank scrolling rows).
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "Hello".to_string(),
+        command_proposal: None,
+    });
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Réponse partielle en cours de streaming XYZQ".to_string(),
+        command_proposal: None,
+    });
+    app.agent.is_generating = true;
+    app.spinner_frame = 3;
+
+    let mut buf = Buffer::empty(Rect::new(0, 0, 100, 50));
+    ChatPanel::new(&app).render_panel(Rect::new(0, 0, 100, 50), &mut buf);
+    let text = panel_text(&buf);
+
+    assert!(
+        text.contains("Réponse partielle en cours de streaming XYZQ"),
+        "streaming tail must be visible while generating; got:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn test_deep_thinking_wording_when_silent_stream() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use spiritty::app::{App, ChatMessage, MessageRole};
+    use spiritty::ui::chat_panel::ChatPanel;
+
+    // Long silent thinking phase: loader + explicit wording, not a bare ghost.
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        command_proposal: None,
+    });
+    app.agent.is_generating = true;
+    app.spinner_frame = 5;
+
+    let mut buf = Buffer::empty(Rect::new(0, 0, 100, 50));
+    ChatPanel::new(&app).render_panel(Rect::new(0, 0, 100, 50), &mut buf);
+    let text = panel_text(&buf);
+
+    let expected_fr = "Réflexion profonde";
+    let expected_en = "Deep thinking";
+    assert!(
+        text.contains(expected_fr) || text.contains(expected_en),
+        "silent stream must show deep-thinking wording; got:\n{text}"
+    );
+    assert!(
+        text.contains("👻"),
+        "ghost marker must accompany the thinking wording; got:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_frame_stability_between_spins() {
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use spiritty::app::{App, ChatMessage, MessageRole};
+    use spiritty::ui::chat_panel::ChatPanel;
+
+    // Two consecutive frames with different spinner frames must keep identical
+    // message rows (only the loader glyph may differ) — cache/pass coherence.
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Corps stable pendant le streaming.".to_string(),
+        command_proposal: None,
+    });
+    app.agent.is_generating = true;
+
+    let mut render_at = |spinner_frame: usize| -> String {
+        app.spinner_frame = spinner_frame;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 50));
+        ChatPanel::new(&app).render_panel(Rect::new(0, 0, 100, 50), &mut buf);
+        panel_text(&buf)
+    };
+
+    let a = render_at(0);
+    let b = render_at(2);
+    // The loader glyph legitimately rotates; message rows must not shift or drop.
+    let normalize = |s: &str| {
+        ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+            .iter()
+            .fold(s.to_string(), |acc, g| acc.replace(g, "#"))
+    };
+    assert_eq!(
+        normalize(&a),
+        normalize(&b),
+        "spinner tick must not shift or drop message rows"
+    );
+}
+
+#[tokio::test]
+async fn test_f10_fast_track_approves_pending_command() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::{App, Focus, PendingToolApproval};
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+
+    // 1. F10 does nothing when nothing is pending (must not panic).
+    app.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
+
+    // 2. F10 approves from the CHAT pane.
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "sudo cat /etc/fail2ban/jail.local".to_string(),
+        approval_tx: Some(tx),
+    });
+    app.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
+    assert!(
+        app.pending_tool_approval.is_none(),
+        "pending must be consumed"
+    );
+    assert!(rx.await.expect("approval sent"), "F10 must approve");
+
+    // 3. F10 approves from the TERMINAL pane too.
+    let (tx2, rx2) = tokio::sync::oneshot::channel::<bool>();
+    app.focus = Focus::Terminal;
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "systemctl status fail2ban".to_string(),
+        approval_tx: Some(tx2),
+    });
+    app.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
+    assert!(app.pending_tool_approval.is_none());
+    assert!(rx2.await.expect("approval sent"));
+}

@@ -68,6 +68,10 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpFooterPromptSuffix => " to close",
 
         // Sessions Modal
+        I18nKey::SshReconnectTitle => " 🔗 SSH Reconnect ",
+        I18nKey::SshReconnectBody => "This session was connected to:",
+        I18nKey::SshReconnectConfirm => "⏎ Reconnect",
+        I18nKey::SshReconnectLater => "Esc Later",
         I18nKey::SessionModalTitle => " 🗂️ Session Manager ",
         I18nKey::SessionHeaderTitle => "Topic / Title",
         I18nKey::SessionHeaderModel => "Model",

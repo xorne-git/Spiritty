@@ -131,6 +131,11 @@ pub enum I18nKey {
 
     // Sessions Modal
     SessionModalTitle,
+    // SSH reconnect modal
+    SshReconnectTitle,
+    SshReconnectBody,
+    SshReconnectConfirm,
+    SshReconnectLater,
     SessionHeaderTitle,
     SessionHeaderModel,
     SessionHeaderMessages,

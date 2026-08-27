@@ -121,6 +121,51 @@ impl<'a> TerminalPanel<'a> {
                         palette.border_unfocused
                     })
                     .add_modifier(Modifier::BOLD);
+
+                // Resumed-SSH hint: the session was continued with `-c` and it WAS
+                // remote, but the PTY is currently local (user must reconnect). The
+                // live-SSH case already shows the 🌐 title above, so no hint there.
+                let lang = self.app.config.get_language();
+                let resumed_word = if lang == Language::Fr {
+                    "reprise"
+                } else {
+                    "resumed"
+                };
+                // Graded hint variants, widest first — the hint (transient, tells
+                // the user to reconnect) ranks ABOVE the cwd/branch info, and the
+                // fit is measured in TERMINAL CELLS (byte length lies for emojis).
+                let target_opt = self.app.current_session.last_ssh_target.clone();
+                // Display rule: the hint appears ONLY when this session has a known
+                // SSH history (resumed with -c). A None/empty target = never remote
+                // (or brand-new session) => NO hint at all. The live-SSH case shows
+                // the 🌐 title instead, so no hint there either.
+                let hints: Vec<String> = match target_opt.as_deref() {
+                    Some(t) if !t.is_empty() => vec![
+                        format!(" · 🔗 SSH {} ({})", t, resumed_word),
+                        format!(" · 🔗 {} ({})", t, resumed_word),
+                        format!(" · 🔗 SSH ({})", resumed_word),
+                        // Last-resort tier without the emoji: 3 cells saved, matters
+                        // on narrow splits where even the compact hint would overflow.
+                        format!(" · SSH ({})", resumed_word),
+                    ],
+                    _ => Vec::new(),
+                };
+                let cell_w = |s: &str| unicode_width::UnicodeWidthStr::width(s);
+                let base_part = text.split(" [").next().unwrap_or(&text).to_string();
+                let base_cell_w = cell_w(&base_part);
+                let text = hints
+                    .iter()
+                    .find(|h| cell_w(&text) + cell_w(h) <= max_available)
+                    .map(|h| format!("{}{}", text, h))
+                    .or_else(|| {
+                        // Drop the cwd part and retry with the widest hint that fits.
+                        hints
+                            .iter()
+                            .find(|h| base_cell_w + cell_w(h) <= max_available)
+                            .map(|h| format!("{}{}", base_part, h))
+                    })
+                    .unwrap_or(text);
+
                 (text, style)
             }
         };

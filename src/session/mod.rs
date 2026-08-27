@@ -23,6 +23,12 @@ pub struct Session {
     pub messages: Vec<ChatMessage>,
     #[serde(default)]
     pub prompt_history: Vec<String>,
+    /// Last SSH target seen while this session was active (sticky). Set
+    /// automatically whenever a save happens while an SSH session is detected, and
+    /// reused to display a "SSH resumed" hint when continuing the session with `-c`
+    /// before the user reconnects to the remote host.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub last_ssh_target: Option<String>,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -53,6 +59,23 @@ impl Session {
             compacted_summary: None,
             messages: Vec::new(),
             prompt_history: Vec::new(),
+            last_ssh_target: None,
+        }
+    }
+
+    /// Best-effort detection of a SSH context from the conversation history — used
+    /// when resuming a session saved by an older build without `last_ssh_target`.
+    /// Scans the most recent messages for an explicit `ssh …` command or a remote
+    /// prompt remnant (`user@host:~$`), newest first.
+    pub fn infer_last_ssh_target(&mut self) {
+        if self.last_ssh_target.is_some() {
+            return;
+        }
+        for m in self.messages.iter().rev().take(80) {
+            if let Some(target) = extract_ssh_target(&m.content) {
+                self.last_ssh_target = Some(target);
+                return;
+            }
         }
     }
 
@@ -235,4 +258,165 @@ fn clean_summary_snippet(text: &str, max_chars: usize) -> String {
         }
     }
     format!("{}...", truncated)
+}
+
+/// Extracts a SSH target from one message's content, or `None`.
+///
+/// Two conservative signals (no fuzzy guessing):
+/// 1. an executed/proposed command message (`💻 \``ssh …```) — the first non-flag
+///    token after `ssh` is the target (alias, `host`, or `user@host`);
+/// 2. a remote prompt remnant ANYWHERE in the content — classic `user@host:~$`,
+///    `user@host:/path$`, or the bracketed zsh style `[user@host:/path] main(3) ±`.
+///    The colon must be followed by an absolute path (`/`, `~`) to avoid matching
+///    git remotes (`git@host:user/repo.git`) or e-mail addresses.
+fn extract_ssh_target(content: &str) -> Option<String> {
+    if content.starts_with("💻 `") {
+        if let Some(pos) = content.find("ssh ") {
+            let rest = &content[pos + 4..];
+            for tok in rest.split_whitespace() {
+                let tok = tok.trim_matches(|c| c == '`' || c == '"' || c == '\'');
+                if tok.is_empty() || tok.starts_with('-') || tok.contains('/') {
+                    continue;
+                }
+                return Some(tok.to_string());
+            }
+        }
+    }
+
+    for line in content.lines() {
+        for tok in line.split_whitespace() {
+            if !tok.contains('@') || tok.contains("://") {
+                continue;
+            }
+            let tok = tok.trim_start_matches('[').trim_end_matches(']');
+            let (user, rest) = tok.split_once('@')?;
+            if user.is_empty() {
+                continue;
+            }
+            match rest.split_once(':') {
+                // `user@host:/abs/path` or `user@host:~` — prompt-style colon path.
+                Some((host, path))
+                    if !host.is_empty()
+                        && !host.contains('/')
+                        && (path.starts_with('/') || path.starts_with('~')) =>
+                {
+                    return Some(format!("{user}@{host}"));
+                }
+                // Colon-less prompt tail `user@host$` / `user@host#` (no TLD dot).
+                None if rest.ends_with('$') || rest.ends_with('#') => {
+                    let host = rest.trim_end_matches(['$', '#']);
+                    if !host.is_empty() && !host.contains('.') {
+                        return Some(format!("{user}@{host}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod ssh_hint_tests {
+    use super::{extract_ssh_target, Session};
+    use crate::app::{ChatMessage, MessageRole};
+
+    fn msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: MessageRole::User,
+            content: content.to_string(),
+            command_proposal: None,
+        }
+    }
+
+    #[test]
+    fn serde_backward_compatible_without_ssh_field() {
+        // A session JSON written by an older build has no last_ssh_target key.
+        let legacy = r#"{"id":"s","title":"t","created_at":"c","updated_at":"u","provider":"p","model":"m","total_tokens":0,"messages":[],"prompt_history":[]}"#;
+        let s: Session = serde_json::from_str(legacy).unwrap();
+        assert!(s.last_ssh_target.is_none());
+    }
+
+    #[test]
+    fn infers_target_from_ssh_command_message() {
+        let mut s = Session::new("p", "m");
+        s.messages.push(msg("💻 `ssh xorne@203.0.113.7 hostname`"));
+        s.infer_last_ssh_target();
+        assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@203.0.113.7"));
+    }
+
+    #[test]
+    fn infers_target_from_remote_prompt_remnant() {
+        let mut s = Session::new("p", "m");
+        s.messages.push(msg(
+            "[RÉSULTAT]: total 12\ndrwxr-xr-x 2 xorne xorne\nxorne@vps-prod:~$ ",
+        ));
+        s.infer_last_ssh_target();
+        assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@vps-prod"));
+    }
+
+    #[test]
+    fn local_only_history_infers_nothing() {
+        let mut s = Session::new("p", "m");
+        s.messages.push(msg("💻 `ls -la`"));
+        s.messages.push(msg("regarde le dossier src/ stp"));
+        s.infer_last_ssh_target();
+        assert!(s.last_ssh_target.is_none());
+    }
+
+    #[test]
+    fn prose_mentioning_ssh_does_not_match() {
+        assert_eq!(
+            extract_ssh_target("je me connecte en ssh sur le serveur"),
+            None
+        );
+    }
+
+    #[test]
+    fn infers_target_from_bracketed_zsh_prompt_mid_content() {
+        // Real-world case: zsh bracketed prompt `[user@host:/path] main(3) ±` in the
+        // MIDDLE of a command-result message (last line is the analysis instruction).
+        let mut s = Session::new("p", "m");
+        s.messages.push(msg(
+            "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'cat > /home/xorne/recap.txt <<'EOF' …']: ⏎ total 12\n[xorne@prod:/var/www/xorne/resa-prod] main(3) ± ls -la /home/xorne/recap_site_reservations.txt\n-rw-rw-r-- 1 xorne staff 1726\n[Analysez ce résultat et expliquez la situation à l'utilisateur]",
+        ));
+        s.infer_last_ssh_target();
+        assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@prod"));
+    }
+
+    #[test]
+    fn git_remote_and_emails_do_not_match() {
+        assert_eq!(
+            extract_ssh_target("push origin git@github.com:user/repo.git"),
+            None
+        );
+        assert_eq!(extract_ssh_target("écris à contact@moondogs.fr stp"), None);
+        assert_eq!(
+            extract_ssh_target("clone depuis https://token@host.com/user/repo.git"),
+            None
+        );
+    }
+
+    #[test]
+    fn colonless_prompt_tail_matches() {
+        assert_eq!(
+            extract_ssh_target("ls -la\nxorne@prod$ "),
+            Some("xorne@prod".to_string())
+        );
+        assert_eq!(
+            extract_ssh_target("xorne@vps# "),
+            Some("xorne@vps".to_string())
+        );
+        // A TLD-looking token without a colon path stays ignored (e-mail safety).
+        assert_eq!(extract_ssh_target("xorne@prod.com$ "), None);
+    }
+
+    #[test]
+    fn newest_message_wins() {
+        let mut s = Session::new("p", "m");
+        s.messages.push(msg("💻 `ssh old-host pwd`"));
+        s.messages.push(msg("💻 `ssh new-host pwd`"));
+        s.infer_last_ssh_target();
+        assert_eq!(s.last_ssh_target.as_deref(), Some("new-host"));
+    }
 }

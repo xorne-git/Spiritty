@@ -95,6 +95,55 @@ struct ChunkChoice {
 #[derive(Deserialize)]
 struct ChunkDelta {
     content: Option<String>,
+    /// DeepSeek/GLM/Z.ai-style streamed reasoning (the visible "thinking"): arrives in
+    /// this SEPARATE field, NOT in `content`. Captured and re-wrapped in a
+    /// `<think>…</think>` block so the chat panel's reasoning parser can display it.
+    #[serde(default)]
+    reasoning_content: Option<String>,
+}
+
+/// Streaming state machine that folds `reasoning_content` deltas into the plain
+/// content stream as a `<think>…</think>` block (which the UI already parses):
+/// opens `<think>` on the first reasoning chunk, closes it just before the first
+/// real content chunk, and drops any stray reasoning that arrives after the answer
+/// started (interleaving would otherwise leak raw tags into the visible response).
+#[derive(Default)]
+pub(crate) struct ReasoningBracket {
+    in_reasoning: bool,
+    closed: bool,
+    /// True once visible answer content has been emitted: reasoning arriving after
+    /// this point is dropped rather than wrapped (no raw tags in the response).
+    content_started: bool,
+}
+
+impl ReasoningBracket {
+    /// Returns the text to append to the visible content stream for this delta.
+    pub(crate) fn on_delta(&mut self, reasoning: Option<&str>, content: Option<&str>) -> String {
+        let mut out = String::new();
+        if !self.closed {
+            if let Some(rc) = reasoning.filter(|r| !r.is_empty()) {
+                if !self.in_reasoning && !self.content_started {
+                    out.push_str("<think>");
+                    self.in_reasoning = true;
+                }
+                if self.in_reasoning {
+                    out.push_str(rc);
+                }
+            }
+            if let Some(c) = content.filter(|c| !c.is_empty()) {
+                if self.in_reasoning {
+                    out.push_str("</think>");
+                    self.in_reasoning = false;
+                }
+                self.closed = true;
+                self.content_started = true;
+                out.push_str(c);
+            }
+        } else if let Some(c) = content.filter(|c| !c.is_empty()) {
+            out.push_str(c);
+        }
+        out
+    }
 }
 
 #[async_trait]
@@ -200,6 +249,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
         let mut event_stream = response.bytes_stream().eventsource();
 
+        // Folds reasoning_content deltas into a <think>…</think> block in the stream.
+        let mut reasoning_bracket = ReasoningBracket::default();
+
         loop {
             let next_res = tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -227,10 +279,12 @@ impl LlmProvider for OpenAiCompatibleProvider {
                             }
 
                             for choice in chunk.choices {
-                                if let Some(content) = choice.delta.content {
-                                    if !content.is_empty() {
-                                        let _ = event_tx.send(AppEvent::AgentChunk(content));
-                                    }
+                                let emitted = reasoning_bracket.on_delta(
+                                    choice.delta.reasoning_content.as_deref(),
+                                    choice.delta.content.as_deref(),
+                                );
+                                if !emitted.is_empty() {
+                                    let _ = event_tx.send(AppEvent::AgentChunk(emitted));
                                 }
                                 if let Some(ref reason) = choice.finish_reason {
                                     if reason == "length" {
@@ -266,5 +320,40 @@ impl LlmProvider for OpenAiCompatibleProvider {
 
         let _ = event_tx.send(AppEvent::AgentDone);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reasoning_bracket_tests {
+    use super::ReasoningBracket;
+
+    #[test]
+    fn wraps_reasoning_then_content_in_think_block() {
+        let mut b = ReasoningBracket::default();
+        assert_eq!(
+            b.on_delta(Some("Je réfléchis"), None),
+            "<think>Je réfléchis"
+        );
+        assert_eq!(b.on_delta(Some(" profondément."), None), " profondément.");
+        assert_eq!(b.on_delta(None, Some("Voici la")), "</think>Voici la");
+        assert_eq!(b.on_delta(None, Some(" réponse.")), " réponse.");
+    }
+
+    #[test]
+    fn same_delta_reasoning_and_content() {
+        let mut b = ReasoningBracket::default();
+        assert_eq!(
+            b.on_delta(Some("pense"), Some("réponds")),
+            "<think>pense</think>réponds"
+        );
+    }
+
+    #[test]
+    fn empty_reasoning_chunks_open_nothing_and_stray_reasoning_dropped() {
+        let mut b = ReasoningBracket::default();
+        assert_eq!(b.on_delta(Some(""), None), "");
+        assert_eq!(b.on_delta(None, Some("direct")), "direct");
+        assert_eq!(b.on_delta(Some("stray after answer"), Some("")), "");
+        assert_eq!(b.on_delta(None, Some("suite")), "suite");
     }
 }

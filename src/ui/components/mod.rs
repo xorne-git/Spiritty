@@ -4,6 +4,7 @@ pub mod export_modal;
 pub mod help_modal;
 pub mod mcp_modal;
 pub mod session_modal;
+pub mod ssh_reconnect_modal;
 
 pub use bookmarks_modal::{
     AddHostState, BookmarksModal, BookmarksModalAction, BookmarksModalState,
@@ -13,3 +14,4 @@ pub use export_modal::{ExportModal, ExportModalAction, ExportModalState};
 pub use help_modal::HelpModal;
 pub use mcp_modal::{AddMcpState, McpModal, McpModalAction, McpModalState};
 pub use session_modal::{SessionModalAction, SessionModalState};
+pub use ssh_reconnect_modal::SshReconnectModal;

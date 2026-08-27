@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread,
 };
@@ -15,7 +15,9 @@ use super::vt::VtScreen;
 
 pub struct PtyProcess {
     master: Box<dyn MasterPty + Send>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Sender to the dedicated writer thread: PTY input (keystrokes, tool injections,
+    /// terminal-query replies) is enqueued here and flushed off-thread. See `spawn`.
+    input_tx: std::sync::mpsc::Sender<Vec<u8>>,
     /// PID of the spawned shell, kept for `/proc/<pid>` inspection (SSH detection, CWD…).
     /// The `Child` handle itself lives in a dedicated reaper thread that emits the exit
     /// notification once `wait()` completes (see `spawn`), so no zombie is ever left.
@@ -23,6 +25,11 @@ pub struct PtyProcess {
     screen: VtScreen,
     current_size: PtySize,
     shell: String,
+    /// DECCKM (application cursor keys) state advertised by the child: full-screen
+    /// apps like `vim` enable it via `smkx` (`ESC [ ? 1 h`) and then expect arrow
+    /// keys as SS3 (`ESC O A`), not CSI (`ESC [ A`). Tracked on the OUTPUT stream
+    /// by [`update_app_cursor_mode`], consulted by the key encoder.
+    app_cursor_mode: Arc<AtomicBool>,
 }
 
 impl PtyProcess {
@@ -105,7 +112,24 @@ precmd_functions+=(__spiritty_done)
             .master
             .take_writer()
             .context("Failed to get master PTY writer")?;
-        let writer = Arc::new(Mutex::new(writer));
+
+        // Dedicated writer thread: a master write BLOCKS while the downstream stops
+        // consuming (stalled SSH pipe, full remote tty input buffer, wedged remote
+        // shell) — and every keystroke or agent tool injection used to be written from
+        // the UI event loop, so one stalled write froze the entire application. Input
+        // is now enqueued (never blocks the caller) and flushed by this thread; FIFO
+        // order is preserved because there is a single consumer.
+        let (input_tx, input_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            let mut writer = writer;
+            while let Ok(data) = input_rx.recv() {
+                if writer.write_all(&data).is_err() || writer.flush().is_err() {
+                    // Master closed: the reader thread owns exit notification; stop
+                    // consuming and let the channel disconnect.
+                    break;
+                }
+            }
+        });
 
         // Reader for reading shell output from master PTY
         let mut reader = pair
@@ -115,12 +139,16 @@ precmd_functions+=(__spiritty_done)
 
         let screen = VtScreen::new(rows.max(1), cols.max(1));
         let screen_clone = screen.clone();
-        let writer_clone = Arc::clone(&writer);
+        let input_tx_reader = input_tx.clone();
 
         // Single-shot exit signaling shared between the reader (EOF side) and the reaper
         // (wait side): whichever observes the shell termination first notifies the app,
         // exactly once.
         let exited = Arc::new(AtomicBool::new(false));
+
+        // DECCKM tracking shared between the reader thread (writer side of the flag)
+        // and the key encoder on the UI thread (reader side).
+        let app_cursor_mode = Arc::new(AtomicBool::new(false));
 
         // Dedicated reaper thread: reaps the child as soon as it terminates (no zombie)
         // and emits the PTY-exit notification. Without this, `exit` typed inside the
@@ -141,6 +169,7 @@ precmd_functions+=(__spiritty_done)
         {
             let exited_reader = Arc::clone(&exited);
             let exit_tx_reader = exit_tx;
+            let app_cursor_reader = Arc::clone(&app_cursor_mode);
             thread::spawn(move || {
                 let mut buf = [0u8; 4096];
                 loop {
@@ -153,9 +182,10 @@ precmd_functions+=(__spiritty_done)
                             let data = buf[..n].to_vec();
 
                             // Respond immediately to terminal capability inquiries (DA1, DA2, DSR, CPR, OSC)
-                            respond_to_terminal_queries(&data, &writer_clone, &screen_clone);
+                            respond_to_terminal_queries(&data, &input_tx_reader, &screen_clone);
 
                             screen_clone.process(&data);
+                            update_app_cursor_mode(&data, &app_cursor_reader);
                             if output_tx.send(data).is_err() {
                                 // Receiver dropped, stop thread
                                 break;
@@ -175,16 +205,23 @@ precmd_functions+=(__spiritty_done)
 
         Ok(Self {
             master: pair.master,
-            writer,
+            input_tx,
             child_pid,
             screen,
             current_size: size,
             shell,
+            app_cursor_mode,
         })
     }
 
     pub fn shell(&self) -> &str {
         &self.shell
+    }
+
+    /// Whether the child currently expects SS3 (application) cursor keys —
+    /// see [`PtyProcess::app_cursor_mode`] field docs.
+    pub fn app_cursor_mode(&self) -> bool {
+        self.app_cursor_mode.load(Ordering::SeqCst)
     }
 
     pub fn shell_name(&self) -> &str {
@@ -219,11 +256,13 @@ precmd_functions+=(__spiritty_done)
         self.screen.scroll_info()
     }
 
+    /// Enqueues bytes for injection into the PTY master and returns immediately. The
+    /// actual write happens on the dedicated writer thread (see `spawn`): a master write
+    /// blocks while the downstream stops consuming, and it must never block the UI
+    /// thread. A `send` only fails if the writer thread is gone (PTY dead) — the reader
+    /// thread then delivers `PtyExit` and the caller already treats the PTY as lost.
     pub fn write_all(&self, data: &[u8]) -> Result<()> {
-        if let Ok(mut writer) = self.writer.lock() {
-            writer.write_all(data)?;
-            writer.flush()?;
-        }
+        let _ = self.input_tx.send(data.to_vec());
         Ok(())
     }
 
@@ -253,61 +292,115 @@ precmd_functions+=(__spiritty_done)
 
 /// Automatically replies to ANSI/VT terminal capability inquiries from shells
 /// like fish, zsh, starship, neovim, etc.
+/// Scans a chunk of child OUTPUT for DECSET/DECRST of DECCKM — `ESC [ ? 1 h`
+/// enables application cursor keys (what `vim` does via `smkx` on startup),
+/// `ESC [ ? 1 l` disables it (`rmkx`). While enabled, arrows must be sent as
+/// SS3 (`ESC O A`) for the application to recognize them.
+///
+/// Note: a sequence split exactly across two read chunks is missed until the
+/// next one; acceptable in practice since `smkx` is emitted in a single burst
+/// at startup, before any keystroke can matter.
+fn update_app_cursor_mode(data: &[u8], state: &AtomicBool) {
+    let mut i = 0usize;
+    while i < data.len() {
+        let Some(pos) = data[i..].iter().position(|&b| b == 0x1B) else {
+            break;
+        };
+        let abs = i + pos;
+        let rest = &data[abs..];
+        if rest.len() >= 4 && rest[1] == b'[' && rest[2] == b'?' {
+            let mut j = 3;
+            while j < rest.len() && (rest[j].is_ascii_digit() || rest[j] == b';') {
+                j += 1;
+            }
+            if j < rest.len() && matches!(rest[j], b'h' | b'l') && j > 3 {
+                let params = std::str::from_utf8(&rest[3..j]).unwrap_or("");
+                if params.split(';').any(|p| p == "1") {
+                    state.store(rest[j] == b'h', Ordering::SeqCst);
+                }
+                i = abs + j + 1;
+                continue;
+            }
+        }
+        i = abs + 1;
+    }
+}
+
 fn respond_to_terminal_queries(
     data: &[u8],
-    writer: &Arc<Mutex<Box<dyn Write + Send>>>,
+    input_tx: &std::sync::mpsc::Sender<Vec<u8>>,
     screen: &VtScreen,
 ) {
     // 1. Primary Device Attributes (DA1): ESC [ c or ESC [ 0 c
     if data.windows(3).any(|w| w == b"\x1b[c") || data.windows(4).any(|w| w == b"\x1b[0c") {
-        if let Ok(mut w) = writer.lock() {
-            // Reply: VT220 with 132 columns, printer, etc. (\x1b[?62;c)
-            let _ = w.write_all(b"\x1b[?62;1;2;6;7;8;9c");
-            let _ = w.flush();
-        }
+        // Reply: VT220 with 132 columns, printer, etc. (\x1b[?62;c)
+        let _ = input_tx.send(b"\x1b[?62;1;2;6;7;8;9c".to_vec());
     }
 
     // 2. Secondary Device Attributes (DA2): ESC [ > c or ESC [ > 0 c
     if data.windows(4).any(|w| w == b"\x1b[>c") || data.windows(5).any(|w| w == b"\x1b[>0c") {
-        if let Ok(mut w) = writer.lock() {
-            // Reply: VT220, version 10, ROM 0
-            let _ = w.write_all(b"\x1b[>0;10;0c");
-            let _ = w.flush();
-        }
+        // Reply: VT220, version 10, ROM 0
+        let _ = input_tx.send(b"\x1b[>0;10;0c".to_vec());
     }
 
     // 3. Device Status Report (DSR): ESC [ 5 n
     if data.windows(4).any(|w| w == b"\x1b[5n") {
-        if let Ok(mut w) = writer.lock() {
-            // Reply: Terminal OK
-            let _ = w.write_all(b"\x1b[0n");
-            let _ = w.flush();
-        }
+        // Reply: Terminal OK
+        let _ = input_tx.send(b"\x1b[0n".to_vec());
     }
 
     // 4. Cursor Position Report (CPR): ESC [ 6 n
     if data.windows(4).any(|w| w == b"\x1b[6n") {
         let (col, row, _) = screen.cursor_position();
         let resp = format!("\x1b[{};{}R", row + 1, col + 1);
-        if let Ok(mut w) = writer.lock() {
-            let _ = w.write_all(resp.as_bytes());
-            let _ = w.flush();
-        }
+        let _ = input_tx.send(resp.into_bytes());
     }
 
     // 5. OSC 11 background color query (ESC ] 11 ; ? ...)
     if data.windows(6).any(|w| w == b"\x1b]11;?") {
-        if let Ok(mut w) = writer.lock() {
-            let _ = w.write_all(b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\");
-            let _ = w.flush();
-        }
+        let _ = input_tx.send(b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\".to_vec());
     }
 
     // 6. OSC 10 foreground color query (ESC ] 10 ; ? ...)
     if data.windows(6).any(|w| w == b"\x1b]10;?") {
-        if let Ok(mut w) = writer.lock() {
-            let _ = w.write_all(b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\");
-            let _ = w.flush();
-        }
+        let _ = input_tx.send(b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\".to_vec());
+    }
+}
+
+#[cfg(test)]
+mod decckm_tests {
+    use super::update_app_cursor_mode;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn state() -> AtomicBool {
+        AtomicBool::new(false)
+    }
+
+    #[test]
+    fn smkx_enables_application_cursor() {
+        let s = state();
+        update_app_cursor_mode(b"\x1b[?1h\x1b=", &s);
+        assert!(s.load(Ordering::SeqCst));
+        update_app_cursor_mode(b"\x1b[?1l", &s);
+        assert!(!s.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn combined_params_with_decckm_are_detected() {
+        let s = state();
+        update_app_cursor_mode(b"\x1b[?1000;1;1006h", &s);
+        assert!(s.load(Ordering::SeqCst));
+        update_app_cursor_mode(b"\x1b[?1006;1l", &s);
+        assert!(!s.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn unrelated_escapes_do_not_toggle() {
+        let s = state();
+        update_app_cursor_mode(b"\x1b[?25l\x1b[2J\x1b[?1049h", &s);
+        assert!(!s.load(Ordering::SeqCst));
+        // Bare ESC / CSI without '?' must not panic or change state.
+        update_app_cursor_mode(b"\x1b[A\x1b", &s);
+        assert!(!s.load(Ordering::SeqCst));
     }
 }

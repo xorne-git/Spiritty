@@ -221,6 +221,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ModalState::Mcp(mcp_state) => {
             crate::ui::components::McpModal::new(mcp_state, lang).render(size, frame.buffer_mut());
         }
+        ModalState::SshReconnect { ref target } => {
+            crate::ui::components::SshReconnectModal::render_modal(
+                size,
+                frame.buffer_mut(),
+                target,
+                lang,
+            );
+        }
         ModalState::None => {
             // Position cursor on the active pane only when no modal is open
             match app.focus {
