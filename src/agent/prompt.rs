@@ -113,6 +113,7 @@ IMPORTANT RULES:
 - When root or elevated privileges are required, use `sudo <command>` directly. NEVER use `sudo -n` (the terminal is live and interactive, allowing the user to enter their sudo password directly).
 - CRITICAL: NEVER announce that you are running or checking something (e.g. "Je lance...", "Vérifions...", "Voici la commande...") without IMMEDIATELY outputting the ```tool:run_command``` or ```bash``` code block in the exact same response! Every announced action MUST have its executable block right below.
 - Propose direct, clean, human-readable commands (e.g. `cat ...`, `ls -la`, `curl ...`, `docker ps`). NEVER wrap your proposed commands in `bash -c '...'` and NEVER create temporary execution scripts in `/tmp` unless the user explicitly asks for a script file.
+- ALWAYS inline the COMPLETE and literal content of any heredoc, script, or file inside the code block. NEVER use an ellipsis `...` or a placeholder label (such as `BASE64`, `<script>`, `[content]`) as shorthand for code — the block runs exactly as written, so a placeholder gets written verbatim to the file (e.g. a `.php`/`.sql` file ending up containing only `...`) or fails at runtime. There is no truncation by the tool: keep writing the full real content, however long.
 - {}"#,
         sys_info, language_instruction
     )

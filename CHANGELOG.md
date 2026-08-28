@@ -15,6 +15,17 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Changé
+
+- **System prompt : interdiction d'abréger les commandes avec `...` ou un placeholder** —
+  ajout d'une règle explicite dans `IMPORTANT RULES` : toujours coller le contenu
+  intégral d'un heredoc/script/fichier dans le bloc de code, jamais `...` /
+  `BASE64` / `[content]` comme raccourci (le bloc est exécuté tel quel — un
+  placeholder est écrit verbatim sur disque ou échoue ; il n'y a pas de
+  troncature côté outil). Corrige le cas où GLM (`glm-5.3-flash`) réduisait ses
+  commandes longues à `...`, puis attribuait à tort la casse à une
+  « troncature client ».
+
 ## v0.5.2 — 2026-08-28
 
 ### Changé
