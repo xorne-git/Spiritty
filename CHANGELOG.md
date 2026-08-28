@@ -15,6 +15,14 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Changé
+
+- **CI release : retrait de la cible `x86_64-apple-darwin`** — les runners macOS
+  Intel hébergés (`macos-13`) sont retirés par GitHub ; le job restait bloqué en
+  file d'attente (0 step, aucun runner assigné) sans jamais produire de binaire.
+  La matrice ne build plus que Linux (`x86_64` + `aarch64`) et macOS Apple
+  Silicon (`aarch64`).
+
 ## v0.5.3 — 2026-08-28
 
 ### Changé
