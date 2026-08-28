@@ -146,6 +146,11 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
   - Boucle d'outils textuels réellement exécutée à nouveau (markup DSML hybride DeepSeek/GLM parsé) ; échos corrompus des redraws SSH reconnus et retirés — plus d'hallucinations « saboteur » nourries par l'écho.
   - Fiabilité : écritures PTY off-thread (plus aucun freeze UI sur SSH calé), capture plafonnée à 1 Mio avec nettoyage paresseux + avis de troncature, restauration terminal sur SIGTERM/SIGINT/SIGHUP.
   - UX : timer « 💭 Deep thinking… » ré-armé à chaque segment de réflexion, plus de double prompt `Alt+N`/`F10` sur une même commande (snippet inerté + Alt+N bloqué pendant un consentement ou une capture).
+- [x] **Hardening v0.5.1 — Reconnexion SSH au rechargement in-app :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
+  - La modale de reconnexion SSH était posée par `load_session` mais **refermée immédiatement** par le handler de la liste des sessions (`modal = None` après l'action `Load`) : elle ne survivait que sur le chemin `-c` (démarrage). La liste ne se ferme désormais plus si l'offre `SshReconnect` vient d'être posée. Validé E2E sur une vraie session SSH rechargée in-app.
+- [x] **Hardening v0.5.2 — Historique complet persisté, compactage contexte-only (option C) :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
+  - `save_current_session` ne compacte plus : le JSON de session conserve **tous** les échanges et le rechargement restaure la globalité de la conversation (fini le plafond « 1 résumé + 8 tours = 9 messages » hérité du compactage à la sauvegarde dans la liste des sessions).
+  - Compactage déplacé **au moment de la requête** : `agent::send_prompt` applique `compact_chat_messages` (tours anciens → résumé System, 8 plus récents verbatim) — le contexte live reste borné et est comprimé à chaque tour. Les historiques déjà compactés par les versions précédentes ne sont pas reconstituables. Validé E2E dans un HOME isolé (session de 15 messages → rechargement → 15 messages sur disque, aucun résumé persisté).
 - [ ] **Tests de Robustesse :**
   - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).
   - [x] Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP` (restauration complète du terminal + sortie `128+signal`, même UI figée).
