@@ -15,6 +15,20 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.1 — 2026-08-28
+
+### Corrigé
+
+- 🔴 **La modale de reconnexion SSH n'apparaissait pas au rechargement in-app**
+  (rapport « quand je charge [la session SSH] je n'ai pas la modal qui me propose
+  de me log en ssh ») : `load_session` posait bien l'offre `SshReconnect`, mais le
+  handler de la liste des sessions la **refermait immédiatement** (`modal = None`
+  après l'action `Load`) — l'offre ne survivait que sur le chemin `-c`
+  (démarrage), où rien ne la refermait ensuite. La liste se ferme désormais
+  **sauf si** l'offre de reconnexion vient d'être posée. Validé de bout en bout
+  sur une vraie session SSH rechargée in-app (modale « ⏎ Se reconnecter /
+  Esc Plus tard » affichée, titre `· 🔗 SSH (reprise)` restauré).
+
 ## v0.5.0 — 2026-08-28
 
 ### Ajouté

@@ -642,6 +642,17 @@ impl App {
         let _ = self.config.save();
     }
 
+    /// Closes the sessions list modal after a load — UNLESS `load_session` raised the
+    /// SSH-reconnect offer (a remote session resumed on a local PTY): that modal MUST
+    /// survive the list closing, otherwise the in-app reload path silently swallowed
+    /// the reconnect offer (it only ever showed on `-c` startup, where nothing closed
+    /// it afterwards).
+    fn close_sessions_modal_after_load(&mut self) {
+        if !matches!(self.modal, ModalState::SshReconnect { .. }) {
+            self.modal = ModalState::None;
+        }
+    }
+
     /// After resuming a session that WAS remote while the PTY is still local, offer
     /// a one-keystroke reconnection to the recorded SSH host. Never interrupts a
     /// running PTY capture, and never shows when already connected (the live 🌐
@@ -1456,7 +1467,7 @@ impl App {
             match action {
                 SessionModalAction::Load(id) => {
                     self.load_session(&id);
-                    self.modal = ModalState::None;
+                    self.close_sessions_modal_after_load();
                 }
                 SessionModalAction::NewSession => {
                     self.new_session();
@@ -4444,6 +4455,31 @@ mod tests {
         let cmd = "echo hi";
         let raw = "some very long first line of real output mentioning echo and hi many times over and over";
         assert_eq!(clean_pty_output(raw, cmd), raw);
+    }
+
+    #[tokio::test]
+    async fn in_app_session_load_keeps_ssh_reconnect_modal() {
+        use crate::ui::components::session_modal::SessionModalState;
+
+        let (event_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(event_tx, 60, 110).unwrap();
+
+        // In-app reload path: load_session raised the SSH-reconnect offer while the
+        // sessions list modal was still active. Closing the list must NOT swallow it
+        // (regression: the offer only ever survived on the `-c` startup path).
+        app.modal = ModalState::SshReconnect {
+            target: "ducasse-seine.com".to_string(),
+        };
+        app.close_sessions_modal_after_load();
+        assert!(
+            matches!(app.modal, ModalState::SshReconnect { .. }),
+            "reconnect offer must survive the sessions list closing"
+        );
+
+        // Plain path: without a pending reconnect offer, the list modal closes.
+        app.modal = ModalState::Sessions(SessionModalState::new(app.current_session.id.clone()));
+        app.close_sessions_modal_after_load();
+        assert!(matches!(app.modal, ModalState::None));
     }
 
     #[tokio::test]
