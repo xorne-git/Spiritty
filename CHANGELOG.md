@@ -23,6 +23,16 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
   La matrice ne build plus que Linux (`x86_64` + `aarch64`) et macOS Apple
   Silicon (`aarch64`).
 
+### Corrigé
+
+- **Footer : affichage du `Ctx` corrigé** — `get_context_used_tokens` estimait
+  l'historique complet de la session (rémanence de l'option C), d'où un
+  « Ctx: 178k / 131k (100%) » absurde (utilisé > fenêtre, clampé à 100%) et quasi
+  identique au compteur de tokens total. Le `Ctx` estime désormais le contexte
+  **compacté réellement envoyé** au modèle (résumé + 8 derniers tours verbatim),
+  cohérent avec la compaction à la requête ; le compteur « tok » reste le total
+  de la session.
+
 ## v0.5.3 — 2026-08-28
 
 ### Changé

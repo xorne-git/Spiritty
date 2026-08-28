@@ -1119,10 +1119,23 @@ impl App {
         ((total_chars as f64) / 3.8).ceil() as usize
     }
 
+    /// Estimates the tokens actually sent to the model for the current conversation.
+    /// The session JSON keeps the full history (option C) while the LLM context is
+    /// compacted at request time (summary + 8 most recent turns verbatim), so we must
+    /// estimate the COMPACTED context — not the whole history. Otherwise the footer
+    /// over-reports "Ctx: 178k / 131k" (full history vs the model window) and clamps
+    /// to 100% even though the model never receives that much.
     pub fn get_context_used_tokens(&self) -> usize {
-        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum::<usize>()
-            + self.chat_input.len()
-            + 1500;
+        let compacted = crate::session::compact_chat_messages(&self.messages);
+        let mut total_chars: usize = self.chat_input.len() + 1500;
+        if let Some(summary) = &compacted.summary {
+            total_chars += summary.len();
+        }
+        total_chars += compacted
+            .messages
+            .iter()
+            .map(|m| m.content.len())
+            .sum::<usize>();
         ((total_chars as f64) / 3.8).ceil() as usize
     }
 
