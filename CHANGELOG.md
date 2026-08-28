@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.4 — 2026-08-28
+
 ### Changé
 
 - **CI release : retrait de la cible `x86_64-apple-darwin`** — les runners macOS
