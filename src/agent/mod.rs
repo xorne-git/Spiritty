@@ -105,7 +105,7 @@ impl AgentEngine {
                 }
                 _ = async {
             // Format history cleanly for the LLM without UI control pills but preserving command blocks
-            let mut conversation: Vec<ChatMessage> = messages
+            let conversation: Vec<ChatMessage> = messages
                 .into_iter()
                 .map(|mut m| {
                     if m.role == MessageRole::Assistant {
@@ -133,6 +133,13 @@ impl AgentEngine {
                 })
                 .filter(|m| !m.content.is_empty() || m.role == MessageRole::Assistant)
                 .collect();
+
+            // v0.5.2: compaction applies ONLY to the LLM context — the live UI
+            // and the persisted session keep the full history. Older turns roll
+            // into a single System summary so long sessions stay within a
+            // bounded context budget regardless of conversation length.
+            let compacted = crate::session::compact_chat_messages(&conversation);
+            let mut conversation = compacted.messages;
 
             let mut tool_steps = 0;
             const MAX_TOOL_STEPS: usize = 6;

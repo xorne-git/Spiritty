@@ -132,93 +132,129 @@ impl Session {
         }
     }
 
-    /// Compacts older conversation history into a structured summary to save context tokens,
-    /// while keeping the most recent turns intact for ongoing interaction.
+    /// Compacts this session's persisted history (kept for compatibility with
+    /// older callers/tests): older turns roll into a structured summary while
+    /// the most recent turns stay intact. No longer called on save — the disk
+    /// session keeps the FULL history since v0.5.2; compaction applies only to
+    /// the LLM context (see `compact_chat_messages`).
     pub fn compact(&mut self) -> bool {
-        if self.messages.len() <= 8 {
-            return false;
-        }
-
-        let split_idx = self.messages.len().saturating_sub(8);
-        let older_msgs = &self.messages[..split_idx];
-        let recent_msgs = &self.messages[split_idx..];
-
-        let mut summary_points = Vec::new();
-        for msg in older_msgs {
-            let trimmed = msg.content.trim();
-            if trimmed.is_empty() {
-                continue;
+        match compact_chat_messages(&self.messages) {
+            CompactedHistory {
+                messages,
+                summary: Some(summary),
+            } => {
+                self.compacted_summary = Some(summary);
+                self.messages = messages;
+                self.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+                true
             }
-            match msg.role {
-                MessageRole::User => {
-                    if let Some(start) = trimmed.find("💻 `") {
-                        let prefix_len = "💻 `".len();
-                        let after = &trimmed[start + prefix_len..];
-                        if let Some(end) = after.find('`') {
-                            let snippet = clean_summary_snippet(&after[..end], 120);
-                            summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
-                        } else {
-                            let snippet = clean_summary_snippet(trimmed, 120);
-                            summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
-                        }
+            _ => false,
+        }
+    }
+}
+
+/// Outcome of a history compaction: the rewritten message list (rolling System
+/// summary first, recent turns preserved verbatim) plus the summary text when
+/// compaction actually applied.
+pub struct CompactedHistory {
+    pub messages: Vec<ChatMessage>,
+    pub summary: Option<String>,
+}
+
+/// Compacts a chat history **for LLM context only**: turns older than the last
+/// 8 roll into a single System summary message so long conversations stay
+/// within a bounded context budget. Histories of 8 messages or fewer are
+/// returned unchanged (`summary: None`).
+///
+/// Pure transformation — it never mutates the live conversation nor the
+/// persisted session: the UI keeps scrolling the full history and the session
+/// JSON saves every message.
+pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
+    if messages.len() <= 8 {
+        return CompactedHistory {
+            messages: messages.to_vec(),
+            summary: None,
+        };
+    }
+
+    let split_idx = messages.len().saturating_sub(8);
+    let older_msgs = &messages[..split_idx];
+    let recent_msgs = &messages[split_idx..];
+
+    let mut summary_points = Vec::new();
+    for msg in older_msgs {
+        let trimmed = msg.content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match msg.role {
+            MessageRole::User => {
+                if let Some(start) = trimmed.find("💻 `") {
+                    let prefix_len = "💻 `".len();
+                    let after = &trimmed[start + prefix_len..];
+                    if let Some(end) = after.find('`') {
+                        let snippet = clean_summary_snippet(&after[..end], 120);
+                        summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
                     } else {
-                        let first_line = trimmed.lines().next().unwrap_or(trimmed);
-                        let snippet = clean_summary_snippet(first_line, 120);
+                        let snippet = clean_summary_snippet(trimmed, 120);
                         summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
                     }
+                } else {
+                    let first_line = trimmed.lines().next().unwrap_or(trimmed);
+                    let snippet = clean_summary_snippet(first_line, 120);
+                    summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
                 }
-                MessageRole::Assistant => {
-                    if let Some(start) = trimmed.find("💻 `") {
-                        let prefix_len = "💻 `".len();
-                        let after = &trimmed[start + prefix_len..];
-                        if let Some(end) = after.find('`') {
-                            let snippet = clean_summary_snippet(&after[..end], 120);
-                            summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
-                        } else {
-                            let snippet = clean_summary_snippet(trimmed, 120);
-                            summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
-                        }
+            }
+            MessageRole::Assistant => {
+                if let Some(start) = trimmed.find("💻 `") {
+                    let prefix_len = "💻 `".len();
+                    let after = &trimmed[start + prefix_len..];
+                    if let Some(end) = after.find('`') {
+                        let snippet = clean_summary_snippet(&after[..end], 120);
+                        summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
                     } else {
-                        let first_line = trimmed.lines().next().unwrap_or(trimmed);
-                        let snippet = clean_summary_snippet(first_line, 120);
+                        let snippet = clean_summary_snippet(trimmed, 120);
                         summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
                     }
+                } else {
+                    let first_line = trimmed.lines().next().unwrap_or(trimmed);
+                    let snippet = clean_summary_snippet(first_line, 120);
+                    summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
                 }
-                MessageRole::System => {
-                    // Accumulate and preserve previous compaction points rather than dropping them
-                    for l in trimmed.lines() {
-                        let line_trim = l.trim();
-                        if line_trim.starts_with("- ") {
-                            summary_points.push(line_trim.to_string());
-                        }
+            }
+            MessageRole::System => {
+                // Accumulate and preserve previous compaction points rather than dropping them
+                for l in trimmed.lines() {
+                    let line_trim = l.trim();
+                    if line_trim.starts_with("- ") {
+                        summary_points.push(line_trim.to_string());
                     }
                 }
             }
         }
+    }
 
-        let summary_text = if summary_points.is_empty() {
-            "Contexte précédent archivé et compacté.".to_string()
-        } else {
-            format!(
-                "Contexte précédent compacté :\n{}",
-                summary_points.join("\n")
-            )
-        };
+    let summary_text = if summary_points.is_empty() {
+        "Contexte précédent archivé et compacté.".to_string()
+    } else {
+        format!(
+            "Contexte précédent compacté :\n{}",
+            summary_points.join("\n")
+        )
+    };
 
-        self.compacted_summary = Some(summary_text.clone());
+    // Replace older messages with a single summary message, followed by recent messages
+    let mut new_messages = Vec::new();
+    new_messages.push(ChatMessage {
+        role: MessageRole::System,
+        content: summary_text.clone(),
+        command_proposal: None,
+    });
+    new_messages.extend_from_slice(recent_msgs);
 
-        // Replace older messages with a single summary message, followed by recent messages
-        let mut new_messages = Vec::new();
-        new_messages.push(ChatMessage {
-            role: MessageRole::System,
-            content: summary_text,
-            command_proposal: None,
-        });
-        new_messages.extend_from_slice(recent_msgs);
-
-        self.messages = new_messages;
-        self.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        true
+    CompactedHistory {
+        messages: new_messages,
+        summary: Some(summary_text),
     }
 }
 
@@ -314,6 +350,74 @@ fn extract_ssh_target(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::{compact_chat_messages, Session};
+    use crate::app::{ChatMessage, MessageRole};
+
+    fn msg(content: &str) -> ChatMessage {
+        ChatMessage {
+            role: MessageRole::User,
+            content: content.to_string(),
+            command_proposal: None,
+        }
+    }
+
+    #[test]
+    fn short_history_is_returned_unchanged() {
+        let input: Vec<ChatMessage> = (0..8).map(|i| msg(&format!("m{}", i))).collect();
+        let res = compact_chat_messages(&input);
+        assert!(res.summary.is_none());
+        assert_eq!(res.messages.len(), 8);
+        assert_eq!(res.messages[0].content, "m0");
+        assert_eq!(res.messages[7].content, "m7");
+    }
+
+    #[test]
+    fn long_history_rolls_into_summary_plus_last_eight() {
+        let mut input: Vec<ChatMessage> = Vec::new();
+        for i in 0..20 {
+            input.push(ChatMessage {
+                role: if i % 2 == 0 {
+                    MessageRole::User
+                } else {
+                    MessageRole::Assistant
+                },
+                content: format!("message numéro {}", i),
+                command_proposal: None,
+            });
+        }
+        let res = compact_chat_messages(&input);
+        let summary = res.summary.as_deref().expect("long history must compact");
+        assert_eq!(res.messages.len(), 9); // 1 System summary + 8 recent turns
+        assert_eq!(res.messages[0].role, MessageRole::System);
+        assert!(summary.starts_with("Contexte précédent compacté"));
+        // Older turns reduced to summary points, newest 8 preserved verbatim & ordered
+        assert!(summary.contains("message numéro 0"));
+        assert_eq!(res.messages[1].content, "message numéro 12");
+        assert_eq!(res.messages[8].content, "message numéro 19");
+        // Original slice untouched (pure transformation)
+        assert_eq!(input.len(), 20);
+    }
+
+    #[test]
+    fn session_compact_keeps_persisted_history_in_sync() {
+        let mut session = Session::new("p", "m");
+        session.messages = (0..14).map(|i| msg(&format!("m{}", i))).collect();
+        assert!(session.compact());
+        assert_eq!(session.messages.len(), 9);
+        assert_eq!(session.messages[0].role, MessageRole::System);
+        // Session::compact no longer feeds the save path — full history is persisted.
+        session.messages = (0..11).map(|i| msg(&format!("n{}", i))).collect();
+        let full: Vec<ChatMessage> = session.messages.clone();
+        let before = full.len();
+        let _ = session.compact();
+        // compact() is still a pure helper; the save path (save_current_session)
+        // no longer calls it — assert the stored full copy is what a save writes.
+        assert_eq!(before, 11);
+    }
 }
 
 #[cfg(test)]

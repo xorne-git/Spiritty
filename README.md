@@ -60,9 +60,9 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 |  Proposed Command:                 |                                    |
 |  `sudo ss -tulpn | grep :80`       |                                    |
 |                                    |                                    |
-|  [Enter: Execute | Tab: Edit]      |                                    |
+|  [Alt+N: Execute Proposal N]       |                                    |
 +------------------------------------+------------------------------------+
-| [Ctrl+Tab: Toggle Focus] [Ctrl+Q: Quit] [Ctrl+N: New Session]           |
+| [Ctrl+Space: Toggle Focus] [Ctrl+Q: Quit] [Ctrl+N: New Session]         |
 +-------------------------------------------------------------------------+
 ```
 
@@ -87,10 +87,11 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
   - Full session persistence stored in `~/.config/spiritty/sessions/`.
   - Interactive session browser modal (`Ctrl + H`) and instant clean session creation (`Ctrl + N`).
   - Restores prompt history (`▲` / `▼`).
-  - Automatic memory compaction of older turns to save token costs while preserving critical context.
+  - Full history is persisted and restored — scrolling back shows the complete conversation even after reloads (no more 9-message cap in the sessions list).
+  - Smart context compaction applies **only to the LLM context**: older turns roll into a structured System summary while the 8 most recent turns are kept verbatim, so token cost stays bounded on long sessions.
 - [x] **Human-in-the-Loop & Command Proposal Cards:**
-  - Automatic command extraction with safety classification badges (🟢 Safe / 🟡 Sudo / 🔴 Risky).
-  - One-key execution via `Alt + 1..9` or `Enter`.
+  - Automatic command extraction with safety classification badges (🟢 Safe / 🟡 Standard / 🟣 Sudo / 🔴 Risky).
+  - One-key execution via `Alt + 1..9`, and `F10` to approve a pending authorization.
   - Live capture and proactive analysis of terminal command output.
 - [x] **Mouse Support & Keyboard Shortcuts:**
   - Click-to-focus (`🖱`), mouse wheel scrolling (`🖱 Scroll / PgUp/PgDn`).
@@ -100,6 +101,7 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
   - Automatic remote server profiling (`hosts.json`) and instant System Prompt switching on SSH connections.
   - 100% silent execution without visual noise or escape sentinels in the terminal.
   - Live, non-blocking shell: type commands freely while the model generates its response.
+  - One-keystroke SSH reconnect modal (`⏎ Reconnect`) when reloading a session that was remote on a local PTY, with the persistent `· 🔗 SSH (reprise)` title hint.
 - [x] **Multiline Prompt Editor:**
   - `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter`, and `Ctrl + J` for easy multiline prompt drafting.
 - [x] **Auto-Approve Policies:**
@@ -146,6 +148,8 @@ spiritty --help
 | `Shift + Enter` / `Ctrl + J` | Insert a newline in the multiline prompt editor |
 | `Ctrl + Space` or `Shift + Tab` | Toggle focus (Chat ↔ Terminal) |
 | `Alt + 1` .. `Alt + 9` | Directly execute command proposal N |
+| `F10` | Approve the pending command authorization (one-keystroke) |
+| `F6` | Toggle focus (alias of `Ctrl + Space`) |
 | `F3` | Cycle Auto-Approve policy (Safe / Sudo / YOLO / Off) |
 | `Ctrl + B` | Quick-Connect SSH servers & bookmarks manager |
 | `Ctrl + E` | Export current session to formatted Markdown report |

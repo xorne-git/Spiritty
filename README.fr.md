@@ -60,9 +60,9 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 |  Proposition de commande :         |                                    |
 |  `sudo ss -tulpn | grep :80`       |                                    |
 |                                    |                                    |
-|  [Enter: Exécuter | Tab: Éditer]   |                                    |
+|  [Alt+N : Exécuter la proposition] |                                    |
 +------------------------------------+------------------------------------+
-| [Ctrl+Tab: Basculer Focus] [Ctrl+Q: Quitter] [Ctrl+N: Nouveau Chat]    |
+| [Ctrl+Espace: Focus] [Ctrl+Q: Quitter] [Ctrl+N: Nouveau Chat]            |
 +-------------------------------------------------------------------------+
 ```
 
@@ -87,10 +87,11 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
   - Sauvegarde et restauration complètes des sessions dans `~/.config/spiritty/sessions/`.
   - Modale interactive de sessions (`Ctrl + H`) et nouvelle session instantanée (`Ctrl + N`).
   - Restauration de l'historique des prompts utilisateur (`▲` / `▼`).
-  - Compactage automatique intelligent de la mémoire à la fermeture et au changement de session.
+  - Historique **complet** persisté et restauré — le défilement remonte l'intégralité des échanges, même après rechargement (fini le plafond à 9 messages dans la liste des sessions).
+  - Compactage intelligent appliqué **uniquement au contexte LLM** : les tours anciens roulent dans un **résumé structuré** (message System) tandis que les 8 plus récents sont conservés verbatim — le coût en tokens reste borné sur les sessions longues.
 - [x] **Validation Humaine (Human-in-the-Loop) & Cartes de Commandes :**
-  - Détection automatique des commandes et badges de sécurité (🟢 Safe / 🟡 Sudo / 🔴 Risky).
-  - Exécution directe au clavier avec `Alt + 1..9` ou `Enter`.
+  - Détection automatique des commandes et badges de sécurité (🟢 Safe / 🟡 Standard / 🟣 Sudo / 🔴 Risky).
+  - Exécution directe au clavier avec `Alt + 1..9`, et `F10` pour autoriser une commande en attente.
   - Analyse proactive et immédiate du résultat retourné par le shell dans l'agent.
 - [x] **Interactions Souris & Raccourcis Clavier :**
   - Bascule de focus au clic (`🖱`), défilement à la molette (`🖱 Molette / PgUp/PgDn`).
@@ -100,6 +101,7 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
   - Profiling multi-serveurs automatique (`hosts.json`) et bascule instantanée du prompt lors des connexions SSH.
   - Exécution 100% silencieuse sans pollution visuelle ni sentinelles dans le terminal.
   - Shell live et non-bloquant : tapez vos commandes librement pendant la génération du modèle.
+  - Modale de reconnexion SSH en un appui (`⏎ Se reconnecter`) au rechargement d'une session qui était distante alors que le PTY est local, avec hint persistant `· 🔗 SSH (reprise)` dans le titre.
 - [x] **Éditeur de Prompt Multi-Lignes :**
   - `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter` et `Ctrl + J` pour rédiger des prompts multi-lignes.
 - [x] **Niveaux d'Approbation (Auto-Approve) :**
@@ -146,6 +148,8 @@ spiritty --help
 | `Shift + Entrée` / `Ctrl + J` | Insérer un retour à la ligne dans l'éditeur de prompt |
 | `Ctrl + Espace` ou `Shift + Tab` | Basculer le focus (Chat ↔ Terminal) |
 | `Alt + 1` .. `Alt + 9` | Exécuter directement la proposition de commande N |
+| `F10` | Autoriser la commande en attente (validation en un appui) |
+| `F6` | Basculer le focus (alias de `Ctrl + Espace`) |
 | `F3` | Changer le mode d'approbation automatique (Safe / Sudo / YOLO / Off) |
 | `Ctrl + B` | Gestionnaire de serveurs SSH & favoris (Quick-Connect) |
 | `Ctrl + E` | Exporter la session active en rapport Markdown |

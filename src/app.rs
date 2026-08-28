@@ -636,8 +636,10 @@ impl App {
             active_provider,
             &active_model,
         );
-        // Automatically compact context & history by default
-        self.current_session.compact();
+        // v0.5.2: the session JSON keeps the FULL history — no compaction on
+        // save. The LLM context is compacted at request time instead (see
+        // agent::send_prompt → compact_chat_messages), so reloading shows the
+        // complete conversation while token cost stays bounded.
         let _ = SessionStorage::save(&self.current_session);
         let _ = self.config.save();
     }

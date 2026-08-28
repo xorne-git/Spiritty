@@ -15,6 +15,38 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Changé
+
+- 🟢 **Historique complet persisté, compactage réduit au contexte LLM** (option C,
+  « quand on remonte dans l'historique on ne voit plus la globalité des échanges ») :
+  `save_current_session` ne compacte plus — le JSON de session conserve **tous**
+  les échanges, et le rechargement restaure la globalité de la conversation (fini
+  le plafond « 1 résumé + 8 tours = 9 messages » hérité du compactage à la
+  sauvegarde). Le compactage déménage **au moment de la requête** :
+  `agent::send_prompt` applique désormais `compact_chat_messages` (extraction de
+  la logique de `Session::compact` en fonction pure dans `session/mod.rs`) — les
+  tours anciens roulent dans un résumé System et les 8 plus récents partent
+  verbatim au fournisseur, donc le budget de contexte reste borné sur les
+  sessions longues, avec un bénéfice immédiat : le contexte live est compacté à
+  chaque tour, pas seulement au rechargement. Les sessions JSON déjà compactées
+  par les versions précédentes restent telles quelles (l'historique perdu avant
+  cette version n'est pas reconstituable). Validé E2E dans un HOME isolé :
+  session de 15 messages → rechargement → re-sauvegarde → 15 messages sur
+  disque, aucun résumé persisté.
+
+### Documentation
+
+- README.md / README.fr.md rafraîchis pour v0.5.x : le compactage est documenté
+  honnêtement (historique complet persisté et restauré — plus de plafond à 9
+  messages dans la liste des sessions —, et compactage limité au seul contexte
+  LLM : résumé structuré + 8 derniers tours verbatim), badges de classification
+  en 4 niveaux (🟢 Safe / 🟡 Standard /
+  🟣 Sudo / 🔴 Risky), modale de reconnexion SSH (`⏎ Se reconnecter`) et hint
+  `· 🔗 SSH (reprise)` ajoutés à la section SSH, raccourcis `F10` (autorisation
+  en un appui) et `F6` (focus) dans la table, et ASCII-art corrigé
+  (`Ctrl+Espace` pour le focus, `Alt+N` pour exécuter — l'ancien
+  « Enter: Execute | Tab: Edit » ne correspondait à aucun binding actuel).
+
 ## v0.5.1 — 2026-08-28
 
 ### Corrigé
