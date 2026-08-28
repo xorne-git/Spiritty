@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.2 — 2026-08-28
+
 ### Changé
 
 - 🟢 **Historique complet persisté, compactage réduit au contexte LLM** (option C,
