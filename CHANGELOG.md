@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.3 — 2026-08-28
+
 ### Changé
 
 - **System prompt : interdiction d'abréger les commandes avec `...` ou un placeholder** —
