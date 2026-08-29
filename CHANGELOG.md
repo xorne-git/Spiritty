@@ -15,8 +15,30 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Modifié
+
+- **System prompt : une seule proposition de commande par réponse** — le §2
+  enseignait littéralement aux models d'émettre un bloc bash **par commande**
+  pour les « multi-step plans » : les models empilaient les étapes successives
+  en cartes Alt+1/Alt+2/Alt+3 à déclencher à l'aveugle. Désormais : une
+  proposition par réponse pour les étapes séquentielles (le résultat revient au
+  model avant l'étape suivante) ; plusieurs cartes uniquement pour des
+  **alternatives** d'une même action (pacman/apt/dnf → Alt+1/2/3) ; chaînage
+  `&&` pour les étapes trivialement atomiques. Synchronisé dans le prompt
+  intégré (`prompt.rs`) et le template par défaut (`config/mod.rs`).
+
 ### Corrigé
 
+- **Appels d'outils émis en tag HTML par Gemini ignorés** — certains models
+  écrivent `<tool:run_command>` (tag XML, fermant omis, ``` isolé) au lieu du
+  bloc fencing ```` ```tool:run_command ```` enseigné : la commande n'était
+  jamais exécutée, le model se penait sur son propre format puis affichait un
+  *exemple* de syntaxe (💻 `commande`) que la politique d'auto-approbation
+  exécutait tel quel (`code 127`). Le parseur reconnaît désormais les tags
+  HTML-style (fermé, avec corps fence, ou tronqué) et n'extrait plus jamais
+  d'appel d'outil depuis les blocs `<think>` (le raisonnement n'est pas une
+  action). Règle system prompt ajoutée : syntaxe de bloc stricte + interdiction
+  des commandes factices/plageholders dans les exemples.
 - **Gemini : HTTP 400 « Requests ending with a model turn are not supported »** —
   chaque requête embarquait le placeholder `Assistant("")` créé par l'UI comme
   cible de streaming : l'historique se terminait donc par un tour `model`, que

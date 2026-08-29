@@ -69,6 +69,12 @@ pub async fn execute_shell_command(cmd: &str) -> String {
 
 /// Checks if text contains an explicit tool execution block ```tool:...``` or explicit XML/JSON function tags
 pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
+    // Reasoning is not action: models stream their private deliberation as
+    // <think>…</think> (folded from reasoning_content), which may contain
+    // command *examples* (```bash blocks, hypothetical syntax). Never parse a
+    // tool call out of it — only the visible answer is actionable.
+    let text = strip_think_blocks(text);
+
     // 1. Check for MCP tool call: ```tool:mcp:<server>:<tool_name>\n{...}\n```
     if let Some(start) = text.find("```tool:mcp:") {
         let after = &text[start + "```tool:mcp:".len()..];
@@ -143,20 +149,72 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         }
     }
 
+    // 3b. HTML-style tool tags some models emit instead of the fenced block —
+    //     observed live from Gemini: `<tool:run_command>\ncmd\n``` ` (opening
+    //     tag, command, then a stray fence, closing tag omitted). The payload
+    //     ends at the closing tag, a stray markdown fence, or end of text; a
+    //     leading fence wrapping the body (```bash … ```) is unwrapped too.
+    for open in &["<tool:run_command>", "<tool:execute_command>"] {
+        if let Some(start) = text.find(open) {
+            let after = &text[start + open.len()..];
+            let end = after
+                .find("</tool:run_command>")
+                .or_else(|| after.find("</tool:execute_command>"))
+                .unwrap_or(after.len());
+            let trimmed = after[..end].trim();
+            let raw = if let Some(rest) = trimmed.strip_prefix("```") {
+                let body = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(0)..];
+                &body[..body.find("```").unwrap_or(body.len())]
+            } else {
+                &trimmed[..trimmed.find("```").unwrap_or(trimmed.len())]
+            };
+            if !raw.trim().is_empty() {
+                let cleaned = crate::app::sanitize_proposed_command(raw.trim());
+                if !cleaned.is_empty() {
+                    return Some(ToolInvocation::RunCommand(cleaned));
+                }
+            }
+        }
+    }
+
     // 4. XML / Function tags and direct JSON (e.g. DeepSeek/Qwen <tool_call> or <|tool_calls|>)
-    if let Some(tool) = parse_json_or_xml_tool_call(text) {
+    if let Some(tool) = parse_json_or_xml_tool_call(&text) {
         return Some(tool);
     }
 
     // 5. GLM/Z.ai hybrid DSML scaffolding emitted as plain text, e.g.
     //    `<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="exec_command">…`
     //    (fullwidth pipes U+FF5C). Normalized then parsed as HTML-style tags.
-    let normalized = normalize_model_tool_markup(text);
+    let normalized = normalize_model_tool_markup(&text);
     if let Some(tool) = parse_html_style_tool_call(&normalized) {
         return Some(tool);
     }
 
     None
+}
+
+/// Removes `<think>…</think>` reasoning regions so their content is never
+/// parsed as an actionable tool call. An unterminated `<think>` (stream cut
+/// mid-reasoning) strips everything to the end — nothing after it was visible
+/// to the user anyway.
+fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+    if !text.contains(OPEN) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + OPEN.len()..];
+        match after_open.find(CLOSE) {
+            Some(end) => rest = &after_open[end + CLOSE.len()..],
+            None => return std::borrow::Cow::Owned(out), // stream cut mid-reasoning
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
 }
 
 /// Normalizes the hybrid DSML tool scaffolding some GLM/Z.ai models emit as plain
@@ -703,5 +761,55 @@ mod tool_parse_tests {
     fn prose_without_tool_call_stays_none() {
         let text = "Voici mon analyse du probl\u{e8}me, rien \u{e0} ex\u{e9}cuter.";
         assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn parses_gemini_html_style_tool_tag_with_stray_fence() {
+        // Exact malformed payload from a live Gemini session: opening HTML-style
+        // tag, command, then a stray markdown fence, closing tag omitted.
+        let text = "Je relance SDDM pour revenir au greeter proprement :\n\n<tool:run_command>\nsudo systemctl restart sddm\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand(
+                "sudo systemctl restart sddm".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_html_style_tag_with_fenced_body() {
+        let text = "<tool:run_command>\n```bash\ndf -h\n```\n";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("df -h".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_closed_html_style_tag() {
+        let text = "<tool:run_command>uptime</tool:run_command>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("uptime".to_string()))
+        );
+    }
+
+    #[test]
+    fn never_parses_tool_call_inside_think_block() {
+        // Reasoning is not action: a ```tool: block or XML call inside the
+        // model's private <think> deliberation must not trigger execution.
+        let text = "<think>Je devrais lancer :\n```tool:run_command\nrm -rf /\n```\nou via <tool_call>{\"name\":\"run_command\",\"arguments\":\"ls\"}</tool_call></think>Voici mon analyse.";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn parses_tool_call_after_closed_think_block() {
+        let text = "<think>La commande est :\n```bash\nsudo reboot\n```\nAllons-y.</think>Je relance le service :\n<tool:run_command>\nsudo systemctl restart nginx\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand(
+                "sudo systemctl restart nginx".to_string()
+            ))
+        );
     }
 }
