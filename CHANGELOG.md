@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.5 — 2026-08-29
+
 ### Modifié
 
 - **System prompt : une seule proposition de commande par réponse** — le §2
