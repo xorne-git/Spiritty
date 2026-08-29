@@ -20,6 +20,44 @@ use providers::{create_provider, LlmProvider};
 use safety::should_auto_approve_command;
 use tools::{execute_web_search, parse_tool_call, ToolInvocation};
 
+/// Prepares the UI message history for the LLM request: strips UI control pills
+/// from assistant messages (command cards, tool banners) and drops every empty
+/// message. The trailing empty `Assistant` placeholder (created by the UI as the
+/// streaming target right before the request) MUST be dropped: sent as-is it ends
+/// the request on a model turn, which the Gemini API rejects with HTTP 400
+/// ("Requests ending with a model turn are not supported"). OpenAI-compatible
+/// APIs merely tolerated it.
+fn prepare_conversation(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    messages
+        .into_iter()
+        .map(|mut m| {
+            if m.role == MessageRole::Assistant {
+                let mut clean_lines = Vec::new();
+                for l in m.content.lines() {
+                    let trimmed = l.trim();
+                    if trimmed.starts_with("💻 `") {
+                        if let Some(start) = trimmed.find("💻 `") {
+                            let after = &trimmed[start + "💻 `".len()..];
+                            if let Some(end) = after.find('`') {
+                                let cmd = &after[..end];
+                                clean_lines.push(format!("```bash\n{}\n```", cmd));
+                            }
+                        }
+                    } else if !trimmed.starts_with("🌐 ")
+                        && !trimmed.starts_with("⚡ Exécu")
+                        && !trimmed.starts_with("⚡ Execu")
+                    {
+                        clean_lines.push(l.to_string());
+                    }
+                }
+                m.content = clean_lines.join("\n").trim().to_string();
+            }
+            m
+        })
+        .filter(|m| !m.content.is_empty())
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct AgentEngine {
     config: Config,
@@ -104,35 +142,7 @@ impl AgentEngine {
                     let _ = event_tx.send(AppEvent::AgentDone);
                 }
                 _ = async {
-            // Format history cleanly for the LLM without UI control pills but preserving command blocks
-            let conversation: Vec<ChatMessage> = messages
-                .into_iter()
-                .map(|mut m| {
-                    if m.role == MessageRole::Assistant {
-                        let mut clean_lines = Vec::new();
-                        for l in m.content.lines() {
-                            let trimmed = l.trim();
-                            if trimmed.starts_with("💻 `") {
-                                if let Some(start) = trimmed.find("💻 `") {
-                                    let after = &trimmed[start + "💻 `".len()..];
-                                    if let Some(end) = after.find('`') {
-                                        let cmd = &after[..end];
-                                        clean_lines.push(format!("```bash\n{}\n```", cmd));
-                                    }
-                                }
-                            } else if !trimmed.starts_with("🌐 ")
-                                && !trimmed.starts_with("⚡ Exécu")
-                                && !trimmed.starts_with("⚡ Execu")
-                            {
-                                clean_lines.push(l.to_string());
-                            }
-                        }
-                        m.content = clean_lines.join("\n").trim().to_string();
-                    }
-                    m
-                })
-                .filter(|m| !m.content.is_empty() || m.role == MessageRole::Assistant)
-                .collect();
+            let conversation = prepare_conversation(messages);
 
             // v0.5.2: compaction applies ONLY to the LLM context — the live UI
             // and the persisted session keep the full history. Older turns roll
@@ -348,5 +358,53 @@ impl AgentEngine {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_conversation;
+    use crate::app::{ChatMessage, MessageRole};
+
+    fn msg(role: MessageRole, content: &str) -> ChatMessage {
+        ChatMessage {
+            role,
+            content: content.to_string(),
+            command_proposal: None,
+        }
+    }
+
+    #[test]
+    fn drops_trailing_empty_assistant_placeholder() {
+        // Regression: the UI pushes an empty Assistant message as streaming target
+        // before every request. Sent as-is it ends the request on a model turn,
+        // which the Gemini API rejects (HTTP 400).
+        let conv = prepare_conversation(vec![
+            msg(MessageRole::User, "quel noyau ?"),
+            msg(MessageRole::Assistant, ""),
+        ]);
+        assert_eq!(conv.len(), 1);
+        assert_eq!(conv.last().unwrap().role, MessageRole::User);
+    }
+
+    #[test]
+    fn drops_empty_user_and_system_messages_but_keeps_content() {
+        let conv = prepare_conversation(vec![
+            msg(MessageRole::User, ""),
+            msg(MessageRole::System, "résumé du contexte"),
+            msg(MessageRole::User, "hello"),
+        ]);
+        assert_eq!(conv.len(), 2);
+        assert_eq!(conv[0].content, "résumé du contexte");
+        assert_eq!(conv[1].content, "hello");
+    }
+
+    #[test]
+    fn converts_command_pills_to_bash_blocks_and_strips_tool_banners() {
+        let assistant = "Voici :\n💻 `uname -r`\n🌐 Recherche web : test\nRésultat final.";
+        let conv = prepare_conversation(vec![msg(MessageRole::Assistant, assistant)]);
+        assert!(conv[0].content.contains("```bash\nuname -r\n```"));
+        assert!(!conv[0].content.contains("🌐 "));
+        assert!(conv[0].content.contains("Résultat final."));
     }
 }

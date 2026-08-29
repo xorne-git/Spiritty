@@ -116,17 +116,33 @@ impl LlmProvider for GeminiProvider {
             None
         };
 
-        let mut contents = Vec::new();
+        let mut contents: Vec<GeminiContent> = Vec::new();
         for msg in messages {
+            if msg.content.is_empty() {
+                // Never send empty turns (the trailing assistant streaming
+                // placeholder is dropped upstream, but stay defensive).
+                continue;
+            }
             let role = match msg.role {
                 MessageRole::User => "user",
                 MessageRole::Assistant => "model",
                 MessageRole::System => "user",
             };
-            contents.push(GeminiContent {
-                role,
-                parts: vec![GeminiPart { text: &msg.content }],
-            });
+            match contents.last_mut() {
+                // Merge consecutive same-role contents (System summaries map to
+                // "user" and tool results arrive as back-to-back user turns):
+                // keeps the request canonical for the Gemini API.
+                Some(last) if last.role == role => {
+                    last.parts.push(GeminiPart { text: "\n" });
+                    last.parts.push(GeminiPart { text: &msg.content });
+                }
+                _ => {
+                    contents.push(GeminiContent {
+                        role,
+                        parts: vec![GeminiPart { text: &msg.content }],
+                    });
+                }
+            }
         }
 
         let request_body = GeminiRequest {

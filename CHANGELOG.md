@@ -17,6 +17,14 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ### Corrigé
 
+- **Gemini : HTTP 400 « Requests ending with a model turn are not supported »** —
+  chaque requête embarquait le placeholder `Assistant("")` créé par l'UI comme
+  cible de streaming : l'historique se terminait donc par un tour `model`, que
+  l'API Gemini refuse (OpenAI-compatible tolère, d'où le passage inaperçu). La
+  préparation de la conversation (`prepare_conversation`) droppe désormais tous
+  les messages vides, tous rôles confondus ; le provider Gemini fusionne en plus
+  les contenus consécutifs de même rôle (résumés System mappés `user`, résultats
+  d'outils user/user) pour une requête canonique.
 - **Capture PTY : plus de timeout de 45s sur les commandes locales** — le scan
   incrémental du sentinel de fin de commande (`OSC 777`) n'examinait que les
   20 derniers caractères du buffer après chaque chunk. Quand l'echo + la sortie +
