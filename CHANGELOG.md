@@ -15,6 +15,32 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Performance
+
+- **Rendu fenêtré du panneau chat : fini la rame à 100% CPU sur les longues
+  sessions** — le rendu concaténait **toute** l'historique en un seul Paragraph
+  et re-comptait ses lignes wraps à chaque frame pour calculer le scroll : sur
+  une session de ~1000 messages / ~10 000 rangées, la vue bottom-ancrée
+  re-wrappait tout ce qui précède la fenêtre visible à 11 fps, saturant un
+  cœur CPU pendant la génération LLM. Pass B ne matérialise plus que les
+  messages recouvrant la fenêtre visible (géométrie par message mémorisée en
+  pass A) et le scroll est dérivé de la somme des hauteurs par message (toutes
+  deux calculées par ratatui : la vieille divergence venait du compteur *simulé*
+  depuis retiré). Mesure sur session de 9820 rangées : CPU de streaming
+  100 % → ~20 %.
+
+### Corrigé
+
+- **Dépliage de la réflexion aléatoire au clic** — après un toggle réussi, les
+  zones de clic (« 💭 Réflexion · ») étaient vidées jusqu'au prochain rendu
+  (~90 ms) : un second clic rapide (double-clic, clics rapprochés) tombait sur
+  une liste vide et démarrait une sélection de texte au lieu de basculer.
+  Les zones ne sont plus vidées manuellement (le rendu les recalcule de toute
+  façon à chaque frame) et la cible est élargie à 2 rangées quand la réflexion
+  est pliée (la rangée vide sous le toggle appartient à la cible ; en état
+  déplié, elle reste sélectionnable). Instrumentation de diagnostic
+  `SPIRITTY_UI_DEBUG=1` (`/tmp/spiritty_ui_debug.log`).
+
 ## v0.5.5 — 2026-08-29
 
 ### Modifié

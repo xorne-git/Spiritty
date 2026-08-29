@@ -236,6 +236,23 @@ pub struct PtyToolCapture {
     pub clean_cache: Option<(usize, String)>,
 }
 
+/// Temporary UI debugging (SPIRITTY_UI_DEBUG=1). Appends one line per event to
+/// /tmp/spiritty_ui_debug.log — used to diagnose click hit-testing issues.
+fn ui_debug(msg: &str) {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var("SPIRITTY_UI_DEBUG").is_ok()) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/spiritty_ui_debug.log")
+        {
+            let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), msg);
+        }
+    }
+}
+
 pub struct App {
     pub focus: Focus,
     pub chat_input: String,
@@ -632,15 +649,27 @@ impl App {
             .iter()
             .find(|&&(_, t, b)| content_row >= t && content_row < b)
         {
+            ui_debug(&format!(
+                "TOGGLE y={y} top={} bottom={} scroll={scroll_offset} content_row={content_row} -> msg#{idx} ({} hits)",
+                area.top(),
+                area.bottom(),
+                hits.len()
+            ));
             self.expanded_thought = if self.expanded_thought == Some(idx) {
                 None
             } else {
                 Some(idx)
             };
             drop(hits);
-            self.chat_thought_hits.borrow_mut().clear();
             return true;
         }
+        ui_debug(&format!(
+            "CLICK-MISS y={y} top={} bottom={} scroll={scroll_offset} content_row={content_row} hits={} ranges={:?}",
+            area.top(),
+            area.bottom(),
+            hits.len(),
+            hits.iter().take(8).collect::<Vec<_>>()
+        ));
         false
     }
 

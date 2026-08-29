@@ -129,6 +129,7 @@ impl<'a> ChatPanel<'a> {
         // ---- Pass A: fill cache misses / invalidate stale entries -------------
         let mut history_rows_total: u16 = 0;
         let mut content_top: u16 = 0;
+        let mut msg_geo: Vec<(u16, u16)> = Vec::with_capacity(total_messages);
         self.app.chat_thought_hits.borrow_mut().clear();
         {
             let mut cache = self.app.chat_render_cache.borrow_mut();
@@ -211,16 +212,26 @@ impl<'a> ChatPanel<'a> {
                     rows_now = cache.entry(idx).map(|e| e.rows).unwrap_or(0);
                 }
 
-                // Click target for expand/collapse: the "Think · " toggle line is the
+                // Click target for expand/collapse: the "💭 Réflexion · " toggle line is the
                 // FIRST row of the message content (assistant messages with reasoning).
+                // When collapsed, the row right below it is the message's blank
+                // separator — folding it into the target gives a forgiving 2-row
+                // click zone (a 1-row target felt random in practice); when expanded,
+                // that row is real reasoning text and must stay selectable.
                 if role_tag == 2 && !skipped && has_visible_thought(&msg.content) {
+                    let hit_bottom = if want_expanded {
+                        content_top.saturating_add(1)
+                    } else {
+                        content_top.saturating_add(2)
+                    };
                     self.app.chat_thought_hits.borrow_mut().push((
                         idx,
                         content_top,
-                        content_top.saturating_add(1),
+                        hit_bottom,
                     ));
                 }
 
+                msg_geo.push((content_top, rows_now));
                 content_top = content_top.saturating_add(rows_now);
                 history_rows_total = history_rows_total.saturating_add(rows_now);
             }
@@ -239,45 +250,61 @@ impl<'a> ChatPanel<'a> {
 
         let visible_height = messages_area.height;
 
-        // ---- Pass B: assemble the widget input from cached compositions -------
+        // ---- Pass B: assemble ONLY the visible row window from cached compositions.
         //
-        // Note: a finer-grained "clone only the visible row window" was tried
-        // and rejected — logical lines span multiple *visual* rows once wrapped,
-        // and mid-window slicing cannot reproduce Paragraph's context-dependent
-        // word wrapping for a truncated line head. Legacy displayed exactly this
-        // full-sequence strategy, so parity wins; the real win stays in pass A
-        // (no markdown re-parse / re-wrap / re-allocation per frame).
-        let mut visible_lines: Vec<Line<'static>> =
-            Vec::with_capacity((history_rows_total + approval_rows) as usize);
-        {
-            let cache = self.app.chat_render_cache.borrow();
-            for idx in 0..total_messages {
-                if let Some(seg) = cache.entry_lines(idx) {
-                    visible_lines.extend(seg.iter().cloned());
-                }
-            }
-        }
-        visible_lines.extend(approval_lines);
-
-        // Authoritative visual height: let ratatui itself count the wrapped rows via
-        // the SAME WordWrapper that `render` uses. The former manual sum of per-message
-        // `compute_wrapped_lines_count` rows used a *simulated* wrap algorithm that
-        // diverged from ratatui's real one on markdown tables / heredoc cards / wide
-        // glyphs — each message added its own (under)counting error to `max_scroll`,
-        // so the bottom rows of the conversation became UNREACHABLE by scrolling and
-        // the tail of responses drifted out of view (user report: "le décalage
-        // s'accentuait, je ne vois plus la fin des réponses", y compris au relancement
-        // avec -c). One Paragraph serves both counting and rendering: zero extra clone.
-        let messages_paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
-        let content_visual_lines = messages_paragraph.line_count(messages_area.width) as u16;
+        // The former implementation concatenated the WHOLE history (thousands of
+        // rows) into one Paragraph and called `line_count` on it every frame to
+        // derive the scroll geometry. With long sessions (1000+ messages, ~10k
+        // wrapped rows) both that count and the scrolled render re-wrap every
+        // preceding row each frame — bottom-anchored at 11 fps this pegged a CPU
+        // core while the LLM streamed ("ça rame à mort" report).
+        //
+        // Each message's wrapped row count is authoritative (ratatui `line_count`
+        // per message, cached in pass A) and sums exactly to the whole-paragraph
+        // count — the old divergence came from the previously *simulated* wrap
+        // counter, since removed. So we:
+        //   • derive max_scroll from the summed rows (O(messages), no wrapping)
+        //   • render only the messages overlapping the visible window, scrolled
+        //     by the offset within the window (O(visible rows))
+        let content_visual_lines = history_rows_total.saturating_add(approval_rows);
 
         let max_scroll = content_visual_lines.saturating_sub(visible_height);
         let scroll_from_bottom = self.app.chat_scroll_from_bottom.min(max_scroll);
         let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
         *self.app.chat_messages_geo.borrow_mut() = (messages_area, scroll_offset);
 
+        // Build the visible row window: the first message whose rows reach past
+        // `scroll_offset` (i.e. the top of the viewport) through the last message
+        // starting above the bottom of the viewport. Only these are materialized
+        // into the render Paragraph — O(visible), not O(entire history).
+        let window_end = scroll_offset.saturating_add(visible_height);
+        let mut lo = 0usize;
+        while lo < msg_geo.len() && msg_geo[lo].0 + msg_geo[lo].1 <= scroll_offset {
+            lo += 1;
+        }
+        let mut hi = lo;
+        while hi < msg_geo.len() && msg_geo[hi].0 < window_end {
+            hi += 1;
+        }
+        let subset_start_row = msg_geo.get(lo).map(|g| g.0).unwrap_or(history_rows_total);
+        let mut visible_lines: Vec<Line<'static>> = Vec::with_capacity(visible_height as usize + 8);
+        {
+            let cache = self.app.chat_render_cache.borrow();
+            for idx in lo..hi {
+                if let Some(seg) = cache.entry_lines(idx) {
+                    visible_lines.extend(seg.iter().cloned());
+                }
+            }
+        }
+        // The approval card lives below the history; only materialize it when the
+        // viewport reaches it.
+        if hi == total_messages && window_end > history_rows_total {
+            visible_lines.extend(approval_lines);
+        }
+
+        let messages_paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         messages_paragraph
-            .scroll((scroll_offset, 0))
+            .scroll((scroll_offset.saturating_sub(subset_start_row), 0))
             .render(messages_area, buf);
 
         // Render scroll indicator badge on the top border (liseret)
