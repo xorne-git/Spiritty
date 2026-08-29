@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.5.6 — 2026-08-29
+
 ### Performance
 
 - **Rendu fenêtré du panneau chat : fini la rame à 100% CPU sur les longues
