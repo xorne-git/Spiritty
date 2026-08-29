@@ -177,6 +177,24 @@ pub struct PendingToolApproval {
     pub approval_tx: Option<tokio::sync::oneshot::Sender<bool>>,
 }
 
+/// Temporary capture-path debugging (SPIRITTY_CAPTURE_DEBUG=1). Appends one line per
+/// event to /tmp/spiritty_capture_debug.log so a full-timeout capture can be diagnosed
+/// after the fact (conclusion reason, shell hooks, remote misdetection, timing).
+fn capture_debug(msg: &str) {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var("SPIRITTY_CAPTURE_DEBUG").is_ok()) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/spiritty_capture_debug.log")
+        {
+            let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), msg);
+        }
+    }
+}
+
 pub struct PtyToolCapture {
     pub command: String,
     pub result_tx: Option<tokio::sync::oneshot::Sender<String>>,
@@ -191,6 +209,11 @@ pub struct PtyToolCapture {
     /// First-complete sentinel sighting not yet terminated (`pos`, `prefix_len`, is_osc),
     /// so later chunks only scan for its terminator instead of the whole buffer again.
     pub sentinel_pending: Option<(usize, usize, bool)>,
+    /// Byte offset in `decoded_text` up to which the sentinel scan has run (exclusive).
+    /// Each chunk rescans only from `watermark - (max_prefix_len - 1)` so a pattern
+    /// straddling a chunk boundary is still caught, while bytes already proven
+    /// sentinel-free are not rescanned (amortized O(new bytes) per chunk).
+    pub sentinel_scan_upto: usize,
     pub start_time: std::time::Instant,
     pub last_output_time: std::time::Instant,
     /// When `true`, the app records the `[RÉSULTAT...]` in the chat history and triggers the
@@ -1745,6 +1768,35 @@ impl App {
                 PASSWORD_WINDOW_BYTES,
             ));
 
+            // Debug: one status line per second while a capture is pending.
+            if self.spinner_frame.is_multiple_of(11) {
+                capture_debug(&format!(
+                    "TICK elapsed={}ms quiet={}ms shell_has_hooks={} is_remote={} waiting_pw={} len={} pending_utf8={}",
+                    elapsed_since_start.as_millis(),
+                    elapsed_since_last_output.as_millis(),
+                    self.pty.shell_name().to_lowercase().contains("bash")
+                        || self.pty.shell_name().to_lowercase().contains("zsh")
+                        || self.pty.shell_name().to_lowercase().contains("fish"),
+                    matches!(
+                        self.system_context.active_session,
+                        crate::system::ActiveSession::Ssh { .. }
+                    ),
+                    is_waiting_password,
+                    capture.decoded_text.len(),
+                    capture.pending_utf8.len()
+                ));
+            }
+            // Debug: once, around the 5s mark, dump the exact captured bytes so a
+            // missing/malformed sentinel can be diagnosed after the fact.
+            let dump_now = elapsed_since_start.as_millis() >= 5000
+                && elapsed_since_start.as_millis() < 5100;
+            if dump_now && capture.sentinel_pending.is_none() {
+                capture_debug(&format!(
+                    "DUMP decoded_text={:?} pending_utf8={:?} raw_len={}",
+                    capture.decoded_text, capture.pending_utf8, capture.output_bytes.len()
+                ));
+            }
+
             let mut timeout_secs = 45u64;
             if is_waiting_password {
                 // Still bounded (was u64::MAX — an infinite wait): a human answers a
@@ -1828,6 +1880,15 @@ impl App {
             let may_conclude = (!clean_is_empty && has_output_settled) || timeout_reached;
 
             if may_conclude {
+                capture_debug(&format!(
+                    "CONCLUDED via={} elapsed={}ms len={} clean_is_empty={} truncated={} waiting_pw={}",
+                    if timeout_reached { "TIMEOUT" } else { "SETTLE" },
+                    elapsed_since_start.as_millis(),
+                    capture.decoded_text.len(),
+                    clean_is_empty,
+                    capture.truncated,
+                    is_waiting_password
+                ));
                 let clean_output = match &capture.clean_cache {
                     Some((l, s)) if *l == capture.decoded_text.len() => s.clone(),
                     _ => clean_pty_output(&capture.decoded_text, &capture.command),
@@ -2638,6 +2699,14 @@ impl App {
         }
 
         let now = std::time::Instant::now();
+        capture_debug(&format!(
+            "ARMED cmd={:?} shell={} shell_name={} is_remote={} auto_prompt={}",
+            command,
+            self.pty.shell(),
+            self.pty.shell_name(),
+            is_remote,
+            auto_prompt
+        ));
         self.active_pty_tool = Some(PtyToolCapture {
             command,
             result_tx: Some(result_tx),
@@ -2645,6 +2714,7 @@ impl App {
             decoded_text: String::new(),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: now,
             last_output_time: now,
             auto_prompt,
@@ -2769,24 +2839,34 @@ impl App {
                 const PLAIN_PREFIX_LEN: usize = "__SPIRITTY_DONE__:".len();
 
                 if capture.sentinel_pending.is_none() {
-                    // Only scan past what was already proven sentinel-free this session:
-                    // from just-before the previous end so a pattern split across two chunks
-                    // is still caught.
-                    let scan_from = char_safe_floor(
+                    // Incremental scan with a watermark: rescanning the whole buffer on
+                    // every chunk is O(N²) on verbose output, but the old "last 20 chars
+                    // only" window missed the sentinel whenever a chunk larger than the
+                    // pattern delivered it mid-chunk (echo + output + sentinel coalesced
+                    // into one PTY read — the capture then hung until the 45s timeout).
+                    // Rescan from just before the watermark so a pattern straddling a
+                    // chunk boundary is still caught, and advance the watermark only over
+                    // bytes proven sentinel-free.
+                    let max_prefix = OSC_PREFIX_LEN.max(PLAIN_PREFIX_LEN);
+                    let from = char_safe_floor(
                         &capture.decoded_text,
-                        capture
-                            .decoded_text
-                            .len()
-                            .saturating_sub(OSC_PREFIX_LEN.max(PLAIN_PREFIX_LEN)),
+                        capture.sentinel_scan_upto.saturating_sub(max_prefix - 1),
                     );
-                    if let Some(rel) =
-                        capture.decoded_text[scan_from..].rfind("\x1b]777;spiritty_done;")
-                    {
-                        capture.sentinel_pending = Some((scan_from + rel, OSC_PREFIX_LEN, true));
-                    } else if let Some(rel) =
-                        capture.decoded_text[scan_from..].rfind("__SPIRITTY_DONE__:")
-                    {
-                        capture.sentinel_pending = Some((scan_from + rel, PLAIN_PREFIX_LEN, false));
+                    let hay = &capture.decoded_text[from..];
+                    if let Some(rel) = hay.rfind("\x1b]777;spiritty_done;") {
+                        capture_debug(&format!(
+                            "SENTINEL OSC SEEN at +{}ms (len={})",
+                            capture.start_time.elapsed().as_millis(),
+                            capture.decoded_text.len()
+                        ));
+                        capture.sentinel_pending = Some((from + rel, OSC_PREFIX_LEN, true));
+                        capture.sentinel_scan_upto = from + rel + 1;
+                    } else if let Some(rel) = hay.rfind("__SPIRITTY_DONE__:") {
+                        capture_debug("SENTINEL PLAIN SEEN");
+                        capture.sentinel_pending = Some((from + rel, PLAIN_PREFIX_LEN, false));
+                        capture.sentinel_scan_upto = from + rel + 1;
+                    } else {
+                        capture.sentinel_scan_upto = capture.decoded_text.len();
                     }
                 }
 
@@ -2812,6 +2892,13 @@ impl App {
                             let exit_code: i32 = code_str.parse().unwrap_or(0);
                             let raw_output = &text[..pos];
                             let clean_output = clean_pty_output(raw_output, &capture.command);
+                            capture_debug(&format!(
+                                "CONCLUDED via=SENTINEL code={} elapsed={}ms raw_len={} clean_len={}",
+                                exit_code,
+                                capture.start_time.elapsed().as_millis(),
+                                raw_output.len(),
+                                clean_output.len()
+                            ));
                             let empty_summary = if exit_code == 0 {
                                 "(Commande exécutée avec succès dans le terminal)".to_string()
                             } else {
@@ -4579,6 +4666,7 @@ mod tests {
             decoded_text: String::new(),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now(),
             last_output_time: Instant::now(),
             auto_prompt: false,
@@ -4830,6 +4918,7 @@ mod tests {
             decoded_text: format!("{}\r\n", cmd),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now() - Duration::from_secs(2),
             last_output_time: Instant::now() - Duration::from_millis(1500),
             auto_prompt: false,
@@ -4843,6 +4932,47 @@ mod tests {
         assert!(
             app.active_pty_tool.is_some(),
             "echo-only capture must keep waiting for real remote output"
+        );
+    }
+
+    #[tokio::test]
+    async fn sentinel_inside_single_large_chunk_concludes_immediately() {
+        use std::time::Instant;
+
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(event_tx, 55, 100).unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        app.active_pty_tool = Some(crate::app::PtyToolCapture {
+            command: "uname -r".to_string(),
+            result_tx: Some(tx),
+            output_bytes: Vec::new(),
+            decoded_text: String::new(),
+            pending_utf8: Vec::new(),
+            sentinel_pending: None,
+            sentinel_scan_upto: 0,
+            start_time: Instant::now(),
+            last_output_time: Instant::now(),
+            auto_prompt: false,
+            truncated: false,
+            overflow_bytes: 0,
+            overflow_tail: Vec::new(),
+            clean_cache: None,
+        });
+        // One single PTY read coalescing echo + output + sentinel + next prompt: the
+        // sentinel sits mid-chunk, far outside any "last 20 chars" incremental window.
+        // Regression: the watermark scan only examined the tail of each chunk, so this
+        // exact byte layout hung the capture until the 45s hard timeout (local fast
+        // shells coalesce output into large reads depending on scheduling).
+        let chunk = "\r\u{1b}[1;36mSpiritty\u{1b}[0m main ❯  uname -r\r\n\u{1b}[?2004l\r7.1.9-arch1-2\r\n\u{1b}]777;spiritty_done;0\u{7}\u{1b}]0;xorne@host:~\u{7}\u{1b}[?2004h\r\n\u{1b}[1;36mSpiritty\u{1b}[0m main ❯ ";
+        app.on_pty_output(chunk.as_bytes());
+        assert!(
+            app.active_pty_tool.is_none(),
+            "sentinel inside a single large chunk must conclude the capture immediately"
+        );
+        let summary = rx.await.unwrap();
+        assert!(
+            summary.contains("7.1.9-arch1-2"),
+            "command output must reach the model, got: {summary:?}"
         );
     }
 
@@ -4868,6 +4998,7 @@ mod tests {
             decoded_text: format!("{}\r\n", cmd),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now() - Duration::from_secs(50),
             last_output_time: Instant::now() - Duration::from_secs(49),
             auto_prompt: false,
@@ -4919,6 +5050,7 @@ mod tests {
             decoded_text: "ligne1\nligne2\nxorne@vps:/var/www/app$ ".to_string(),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now() - Duration::from_millis(2000),
             last_output_time: Instant::now() - Duration::from_millis(1000),
             auto_prompt: false,
@@ -4958,6 +5090,7 @@ mod tests {
             decoded_text: "mysql> select 1;\n... encore des lignes".to_string(),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now() - Duration::from_millis(2000),
             last_output_time: Instant::now() - Duration::from_millis(1000),
             auto_prompt: false,
@@ -4997,6 +5130,7 @@ mod tests {
             decoded_text: "default:\n  password: hunter2\n".to_string(),
             pending_utf8: Vec::new(),
             sentinel_pending: None,
+            sentinel_scan_upto: 0,
             start_time: Instant::now() - Duration::from_millis(5000),
             last_output_time: Instant::now() - Duration::from_millis(4000),
             auto_prompt: false,

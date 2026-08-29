@@ -15,6 +15,24 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Corrigé
+
+- **Capture PTY : plus de timeout de 45s sur les commandes locales** — le scan
+  incrémental du sentinel de fin de commande (`OSC 777`) n'examinait que les
+  20 derniers caractères du buffer après chaque chunk. Quand l'echo + la sortie +
+  le sentinel coalescent dans une seule grosse lecture PTY (fréquent sur shell
+  local rapide, selon le scheduling), le sentinel passait inaperçu et la capture
+  attendait l'expiration du timeout dur. Le scan utilise désormais un watermark
+  (`sentinel_scan_upto`) qui rescanne uniquement le recouvrement nécessaire :
+  détection en ~4 ms au lieu de 45 s, coût amorti O(nouveaux octets) conservé.
+
+### Ajouté
+
+- **Instrumentation de capture** (`SPIRITTY_CAPTURE_DEBUG=1`) : journal
+  d'événements du cycle de capture (armement, sighting du sentinel, conclusion,
+  dump du buffer à 5 s) dans `/tmp/spiritty_capture_debug.log` pour diagnostiquer
+  après coup les captures qui n'aboutissent pas.
+
 ## v0.5.4 — 2026-08-28
 
 ### Changé
