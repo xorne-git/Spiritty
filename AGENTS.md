@@ -36,7 +36,7 @@ src/
 ├── main.rs            # Bootstrap terminal + panic/signal hooks + event loop (pas de logique métier)
 ├── lib.rs             # Expose tous les modules (les tests d'intégration passent par la lib)
 ├── app.rs / event.rs  # État global + routeur d'événements central (clavier, PTY, LLM, timers)
-├── cli.rs             # Parsing CLI fait maison (pas de clap) : --ssh, --model, --yolo, -s/-c...
+├── cli.rs             # Parsing CLI fait maison (pas de clap) : -S/--ssh, -m/--model, --yolo, -c/--continue
 ├── agent/             # Agent IA : prompt.rs, tools.rs, safety.rs (classification commandes)
 │   ├── providers/     # ollama.rs, gemini.rs, anthropic.rs, openai.rs
 │   └── mcp/           # Client MCP (manager + processus)
