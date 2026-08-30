@@ -15,6 +15,163 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.6.0 — 2026-08-30
+
+### Ajouté
+
+- **Collage d'images / screenshots pour les modèles vision (`Ctrl+Shift+V`)**
+  — lecture d'image depuis le presse-papiers (arboard `get_image` → pixels RGBA →
+  PNG → base64), attachée au prochain prompt utilisateur. Le flux :
+  - `Ctrl+Shift+V` déclenche une lecture asynchrone (thread dédié, garde
+    anti-empilement) et stocke l'image dans `pending_image` — le toast
+    « 🖼️ Image attachée… » confirme, puis l'image est jointe au prochain envoi.
+  - `ChatMessage.attachments` (`Vec<MessageAttachment>`, `mime_type` +
+    `data_base64`) transporte l'image ; `.data_uri()` expose la forme
+    `data:<mime>;base64,…`. ⚠️ rétro-compatible : les sessions JSON sans la clé
+    `attachments` se désérialisent toujours (attribut `#[serde(default)]`).
+  - `prepare_conversation` conserve désormais un tour « image seule » (texte
+    vide + pièce jointe) au lieu de le jeter comme vide — le provider reçoit
+    bien la capture.
+  - **Trois providers vision** : `openai.rs` (bloc `image_url` + data-URI),
+    `gemini.rs` (part `inline_data`, base64 sans préfixe), `anthropic.rs`
+    (bloc `image.source` base64). Le texte reste un part `text` pour satisfaire
+    les API qui refusent un tour 100 % image.
+  - Nouvelles dépendances : `base64` et `image` (feature `png`).
+  - Tests : encodage PNG RGBA + base64, schéma JSON des trois blocs vision,
+    data-URI, et survie d'un tour attachment-seule dans `prepare_conversation`.
+
+- **Aperçu TUI de l'image collée (half-blocks)** — l'image en attente est
+  rendue en direct au-dessus de la zone d'input par half-blocks (`▀` = 2 pixels
+  par cellule, haut = fg, bas = bg), downsampling nearest-neighbour
+  (letterboxé, ratio conservé, ~32×8 cellules). Aucun widget image ni dépendance
+  ajoutée. Une ligne de statut affiche les dimensions et les raccourcis :
+  `[Entrée] l'envoie` · `[Ctrl+Shift+⌫] retire`. `pending_image` porte
+  désormais un `PendingImage` (le `MessageAttachment` pour l'envoi + les pixels
+  RGBA décodés une fois au collage, aucun re-décodage par frame). Alpha
+  aplati sur un fond sombre. Tests `render_halfblock_marks_cells…` /
+  `flatten_over_dark…`.
+
+- **`Ctrl+V` intelligent image/texte + lecture image Wayland réparée** — le
+  collage image se fait désormais via **`Ctrl+V`** (global, actif des deux
+  panneaux), et non `Ctrl+Shift+V` que Ghostty et la plupart des émulateurs de
+  terminal capturent avant l'app. Trois corrections :
+  - **Feature `wayland-data-control` activée** sur `arboard` (tire
+    `wl-clipboard-rs`) — sous Wayland, `arboard::get_image()` échouait
+    silencieusement faute de cette feature (arboard retombait sur le backend
+    X11, qui ne voit pas la copie Wayland), d'où le collage du chemin au lieu
+    de la vignette.
+  - **`Ctrl+V` déplacé dans `handle_key`** (global) au lieu du seul paneau chat :
+    en focus Terminal il était renvoyé tel quel au PTY, injectant le chemin de
+    l'image dans le shell (local ou **SSH distant**) — pire sur un VPS.
+    `handle_terminal_key` n'envoie plus `Ctrl+V` au PTY.
+  - **`spawn_smart_paste_request`** : lit le presse-papiers une fois (arboard),
+    priorité à l'image (`get_image`) → `PasteImage` (aperçu), sinon texte →
+    `Paste` (collé dans le paneau actif). Diagnostics confirmés : le presse-
+    papiers contient à la fois des pixels d'image (392×575) et un URI de fichier
+    — l'image est bien lue en priorité.
+  - **`Ctrl+Shift+V` capté par le terminal = image quand même** : Ghostty
+    convertit `Ctrl+Shift+V` en un paste **texte** (l'URI/chemin du fichier).
+    `handle_paste` détecte désormais que le texte collé est un chemin/URI
+    d'image (`looks_like_image_path`) et relit le presse-papiers pour attacher
+    l'image au lieu de coller le chemin dans le paneau (pire sur un VPS).
+    Nouvel événement `PasteInto` (insertion sans re-détection) pour éviter toute
+    récursion. Tests `image_path_detection`.
+
+### Ajouté
+
+- **Outils d'édition de fichiers dédiés** (`tool:read_file` / `tool:edit_file` /
+  `tool:write_file`) — le modèle se rabattait sur des pipelines `sed`/`awk`/
+  heredoc pour modifier un fichier, source de corruption (heredocs mangés) et
+  d'erreurs 127 sur les sessions réelles. Trois outils structurés, dispatchés
+  dans la boucle d'outils (`src/agent/mod.rs`) et documentés dans le system
+  prompt (`src/agent/prompt.rs`) :
+  - `tool:read_file` : affiche le fichier (tronqué à 100 Ko avec compteur), auto-approuvé (lecture seule).
+  - `tool:edit_file` : remplacement d'une chaîne exacte unique (`old`→`new`, séparateur `---`), atomique — échoue bruyamment si le texte est introuvable **ou** apparaît plusieurs fois, au lieu d'appliquer un substitut partiel.
+  - `tool:write_file` : écriture/écrasement d'un fichier complet, contenu verbatim (jamais d'ellipse/placeholder).
+  - Le parseur (`parse_file_edit_fence`, `src/agent/tools.rs`) refuse un `edit_file` avec `old_string` vide et ignore les fences dans les blocs `<think>`.
+  - **Classification par chemin** (`classify_file_edit`, `src/agent/safety.rs`) :
+    fichiers utilisateur/`~/.config`/projets → Standard (auto-approuvé), `/etc`,
+    `/usr`, `/var`, `/root`, `/boot`... → Sudo (demande confirmation hors niveau Sudo),
+    chemins sensibles (`.ssh`, `.zshrc`, `fstab`, `sudoers`, `ssh` config) → Risky
+    (uniquement auto-approuvé en YOLO).
+  - Tests : parsing des fences (read/write/edit, multi-lignes, `<think>`, old vide),
+    classification par chemin, et round-trip lecture/écriture/édition (replacement
+    unique, ambigu, introuvable).
+  - **Refus en session distante (SSH/container)** : les outils d'édition agissent sur
+    le système **local** de Spiritty, pas sur le serveur distant. La boucle d'outils
+    détecte désormais la session via `sys_ctx.active_session` (SSH/container) et refuse
+    `read_file`/`edit_file`/`write_file` avec un message explicite invitant à revenir
+    aux commandes shell (`cat`/`sed`/`tee`/heredoc/`scp`) via `tool:run_command` —
+    plutôt que d'éditer silencieusement un fichier local qui n'est pas celui que
+    l'utilisateur visualise. Règle ajoutée au system prompt.
+
+### Corrigé
+
+- **Détection SSH depuis le panneau shell : faux `Ssh` forgé sur cible invalide**
+  — `parse_ssh_args` (`src/system/process_watcher.rs`) acceptait n'importe quel
+  premier token non-flag comme cible ssh. Un processus de premier plan dont
+  `argv[0]` se résout en `ssh` mais avec un argument non-cible (durée/`sleep`,
+  numéro isolé, `-N` sans destination, reaper) produisait un faux
+  `ActiveSession::Ssh { target: "30", host: "30" }`, faussant la détection
+  Local↔SSH en course. Ajout d'une validation stricte `is_valid_ssh_host` : la
+  cible doit être un hostname (lettres/chiffres/`.`/`-`/`_`, pas purement
+  numérique), une IPv4, ou une IPv6 (entre `[]` ou avec `:`). Tests
+  `test_ssh_without_valid_target_is_rejected` / `test_ssh_with_valid_targets_is_accepted`.
+
+- **Modal de reconnexion SSH proposé à tort sur une session locale** — le cas
+  où le modèle *émet* une commande `ssh …` (proposition/exemple) faisait
+  apparaître la modale de reconnexion au rechargement d'une session en fait
+  locale. L'heuristique `extract_ssh_target` (`src/session/mod.rs`) considérait
+  tout message `💻 \`ssh …\`` comme preuve d'une session distante, alors qu'il
+  ne prouve rien (la commande peut avoir simplement tourné, ou le `ssh` suivi
+  d'un `exit`). La seule preuve fiable qu'une session s'est terminée sur un
+  shell distant est le **reste de prompt** (`user@host:~$`) : le signal
+  « commande `ssh` nue » est supprimé, l'inference ne se fait plus que par un
+  prompt distant. Test `infers_target_from_ssh_command_message` renommé
+  `bare_ssh_command_message_does_not_infer_target`, et `newest_message_wins`
+  réécrit sur des prompts distants.
+
+
+- **`<think><think>` imbriqués dans la réflexion affichée** (audit session
+  20260830) — certains modèles raisonneurs (GLM/Z.ai/DeepSeek) émettent leur
+  propre `<think>` **dans** le contenu visible, en plus du wrapper que Spiritty
+  ajoute pour `reasoning_content` : l'extracteur de raisonnement
+  (`extract_thought_block`, `src/ui/chat_panel.rs`) captait alors `<think>…`
+  avec le tag littéral en tête. Le `thought` extrait est désormais passé par un
+  nettoyage `strip_residual_reasoning_tags` qui retire tous les délimiteurs de
+  raisonnement résiduels (`<think>`/`<thought>`/`<reasoning>` et leurs fermetures)
+  — la délibération est affichée verbatim, le cas normal d'un simple bloc reste
+  inchangé. Test `nested_think_keeps_reasoning_verbatim`.
+
+- **Heredocs multilignes mangés par le line-editor interactif local (zsh/bash)**
+  (audit session 20260830) — les scripts heredoc (`sudo tee … <<'EOF'` avec un
+  corps sur plusieurs lignes physiques) étaient injectés bruts dans le PTY :
+  l'éditeur de ligne du shell local découpait le fichier en plusieurs lignes et
+  en perdait le corps (fragments « `cmdand heredoc> =` », `<<''EOF'>`,
+  duplication de lettres constatée sur les sessions réelles). Désormais
+  `format_command_for_pty_with_session` route les commandes contenant un heredoc
+  (`<<`) dans `bash -c '…'` pour **tout shell local** (zsh/bash/dash, pas
+  seulement fish) : le bloc entier devient UNE seule ligne logique pour l'éditeur
+  interactif, et bash exécute le script verbatim. Les shells distants restent
+  inchangés (leur éditeur gère le multiligne, le wrapping risquait d'en changer
+  la sémantique), et la syntaxe bash « nue » sans heredoc reste native pour bash.
+  Tests `format_command_for_pty` étendus (heredoc zsh local → wrap, heredoc
+  remote → natif, bash-syntaxe non-heredoc → natif).
+
+- **Propositions de commande extraites du `<think>` du modèle exécutées à tort**
+  (audit session 20260830) — l'extracteur de propositions
+  (`extract_all_command_proposals`, `src/app.rs`) scannait les fences de code
+  au sein du bloc `<think>…</think>` du raisonnement, que le parseur d'appels
+  d'outils retirait déjà (`strip_think_blocks`, `src/agent/tools.rs`) mais pas
+  lui. Le raisonnement contient souvent des fences *d'exemple* non exécutables,
+  qui devenaient des cartes ⚡ et étaient exécutées en lieu et place de la
+  vraie commande : cas réel « automount `/dev/sdb1` » où seule la ligne de
+  contenu du heredoc (`UUID=… /mnt/data …`) a été injectée (`code 127`) en
+  place du `sudo mkdir … printf … | sudo tee -a /etc/fstab`, et cas `.desktop`
+  exécuté comme commande. `extract_all_command_proposals` retire désormais les
+  blocs `<think>`/`<thought>`/`<reasoning>` avant de scanner (réutilise
+  `strip_think_blocks`), avec test de non-régression sur le contenu réel.
+
 ## v0.5.6 — 2026-08-29
 
 ### Performance
