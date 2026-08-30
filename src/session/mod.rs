@@ -249,6 +249,7 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
         role: MessageRole::System,
         content: summary_text.clone(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     new_messages.extend_from_slice(recent_msgs);
 
@@ -298,27 +299,16 @@ fn clean_summary_snippet(text: &str, max_chars: usize) -> String {
 
 /// Extracts a SSH target from one message's content, or `None`.
 ///
-/// Two conservative signals (no fuzzy guessing):
-/// 1. an executed/proposed command message (`💻 \``ssh …```) — the first non-flag
-///    token after `ssh` is the target (alias, `host`, or `user@host`);
-/// 2. a remote prompt remnant ANYWHERE in the content — classic `user@host:~$`,
-///    `user@host:/path$`, or the bracketed zsh style `[user@host:/path] main(3) ±`.
-///    The colon must be followed by an absolute path (`/`, `~`) to avoid matching
-///    git remotes (`git@host:user/repo.git`) or e-mail addresses.
+/// Conservative — NO fuzzy guessing, and a bare `ssh …` command line is NOT evidence.
+/// A `💻 `ssh …`` message only means "a command with that text ran": the model can emit
+/// an `ssh` proposal (or the user can `ssh` then immediately `exit`) without ever ending
+/// the session on a remote host, which would spuriously offer a reconnect on a resumed
+/// LOCAL session. The ONLY trustworthy signal that the session actually ended at a remote
+/// shell is the remote prompt remnant itself — classic `user@host:~$`, `user@host:/path$`,
+/// or the bracketed zsh style `[user@host:/path] main(3) ±`. The colon must be followed
+/// by an absolute path (`/`, `~`) to avoid matching git remotes (`git@host:user/repo.git`)
+/// or e-mail addresses.
 fn extract_ssh_target(content: &str) -> Option<String> {
-    if content.starts_with("💻 `") {
-        if let Some(pos) = content.find("ssh ") {
-            let rest = &content[pos + 4..];
-            for tok in rest.split_whitespace() {
-                let tok = tok.trim_matches(|c| c == '`' || c == '"' || c == '\'');
-                if tok.is_empty() || tok.starts_with('-') || tok.contains('/') {
-                    continue;
-                }
-                return Some(tok.to_string());
-            }
-        }
-    }
-
     for line in content.lines() {
         for tok in line.split_whitespace() {
             if !tok.contains('@') || tok.contains("://") {
@@ -362,6 +352,7 @@ mod compaction_tests {
             role: MessageRole::User,
             content: content.to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -387,6 +378,7 @@ mod compaction_tests {
                 },
                 content: format!("message numéro {}", i),
                 command_proposal: None,
+                attachments: Vec::new(),
             });
         }
         let res = compact_chat_messages(&input);
@@ -430,6 +422,7 @@ mod ssh_hint_tests {
             role: MessageRole::User,
             content: content.to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -442,11 +435,16 @@ mod ssh_hint_tests {
     }
 
     #[test]
-    fn infers_target_from_ssh_command_message() {
+    fn bare_ssh_command_message_does_not_infer_target() {
+        // Regression (user report): the model emitted a `💻 `ssh …`` command (proposal /
+        // example), and the legacy heuristic treated it as proof of a remote session,
+        // offering a spurious reconnect on a resumed LOCAL session. A bare `ssh` command
+        // line is NOT evidence the session ended on a remote host — only a remote PROMPT
+        // remnant (`user@host:~$`) is.
         let mut s = Session::new("p", "m");
         s.messages.push(msg("💻 `ssh xorne@203.0.113.7 hostname`"));
         s.infer_last_ssh_target();
-        assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@203.0.113.7"));
+        assert!(s.last_ssh_target.is_none());
     }
 
     #[test]
@@ -518,9 +516,9 @@ mod ssh_hint_tests {
     #[test]
     fn newest_message_wins() {
         let mut s = Session::new("p", "m");
-        s.messages.push(msg("💻 `ssh old-host pwd`"));
-        s.messages.push(msg("💻 `ssh new-host pwd`"));
+        s.messages.push(msg("[RÉSULTAT]:\nxorne@old-host:~$ "));
+        s.messages.push(msg("[RÉSULTAT]:\nxorne@new-host:~$ "));
         s.infer_last_ssh_target();
-        assert_eq!(s.last_ssh_target.as_deref(), Some("new-host"));
+        assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@new-host"));
     }
 }

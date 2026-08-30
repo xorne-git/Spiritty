@@ -352,6 +352,15 @@ fn parse_ssh_args(args: &[String]) -> Option<ActiveSession> {
         (explicit_user, raw_target.clone())
     };
 
+    // A valid SSH target is a hostname, IPv4, or bracketed IPv6 — never a bare number
+    // or a pure flag value. The detection walks the PTY process tree; a foreground leaf
+    // can transiently be a process whose argv[0] resolves to `ssh` but whose args are not
+    // a real target (e.g. a numeric leftover, a reaper, a stray `ssh N`). Reject those so
+    // a Local session is never mislabelled as a bogus `Ssh { target: "30", host: "30" }`.
+    if !is_valid_ssh_host(&host) {
+        return None;
+    }
+
     let target_display = match (&user, explicit_port) {
         (Some(u), Some(p)) => format!("{}@{}:{}", u, host, p),
         (Some(u), None) => format!("{}@{}", u, host),
@@ -365,6 +374,34 @@ fn parse_ssh_args(args: &[String]) -> Option<ActiveSession> {
         host,
         port: explicit_port,
     })
+}
+
+/// True when `host` looks like a usable SSH destination: a hostname (letters/digits/dots
+/// and `-`/`_`, not purely numeric), an IPv4 address, or a bracketed IPv6. Rejects bare
+/// integers, empty strings, and flag-value leftovers so the detector never fabricates a
+/// fake `Ssh` session from an unrelated process.
+fn is_valid_ssh_host(host: &str) -> bool {
+    let h = host.trim();
+    if h.is_empty() {
+        return false;
+    }
+    // Bracketed IPv6, e.g. `[::1]`.
+    if h.starts_with('[') && h.ends_with(']') && h.len() > 2 {
+        return h[1..h.len() - 1].contains(':');
+    }
+    // Bare IPv6 containing colons (e.g. `::1`).
+    if h.contains(':') {
+        return true;
+    }
+    // Purely numeric (a bare port value, a sleep duration, a PID…) is never a host.
+    if h.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Hostname or IPv4: at least one alphanumeric, and only hostname-safe characters.
+    h.chars()
+        .any(|c| c.is_ascii_alphanumeric())
+        && h.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
 }
 
 #[cfg(test)]
@@ -439,5 +476,29 @@ mod tests {
                 container_id: "my-nginx-container".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn test_ssh_without_valid_target_is_rejected() {
+        // A foreground leaf whose argv[0] resolves to `ssh` but carries a non-target
+        // argument must NOT forge a fake Ssh session (e.g. `ssh 30` from a leaked numeric
+        // arg, or `ssh -N` with no destination). Otherwise a Local session gets mislabelled.
+        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "30".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "-N".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string()]), None);
+        // A numeric-looking host is also rejected.
+        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "1234".to_string()]), None);
+    }
+
+    #[test]
+    fn test_ssh_with_valid_targets_is_accepted() {
+        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "vps-prod".to_string()]);
+        assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "vps-prod"));
+
+        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "root@vps.prod.internal".to_string()]);
+        assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "vps.prod.internal"));
+
+        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "10.0.0.8".to_string()]);
+        assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "10.0.0.8"));
     }
 }
