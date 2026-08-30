@@ -15,6 +15,20 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Ajouté
+
+- **Script d'installation (`install.sh`) : détection de bureau et création du lanceur XDG**
+  — sur Linux, l'installateur détecte désormais l'environnement de bureau actif
+  (GNOME, KDE Plasma, XFCE, Hyprland, Sway, DankMaterialShell / DMS, etc.) et
+  propose interactivement d'installer :
+  - L'icône SVG dans `~/.local/share/icons/hicolor/scalable/apps/spiritty.svg`
+  - Le lanceur `~/.local/share/applications/spiritty.desktop`
+  - L'actualisation automatique des bases de données de lanceurs et de caches
+    d'icônes (`update-desktop-database`, `gtk-update-icon-cache`, et redémarrage
+    du service `dms` si actif).
+- **Packaging CI (`release.yml`)** : l'archive tarball release inclut désormais
+  l'icône `assets/icons/spiritty.svg`.
+
 ## v0.6.2 — 2026-08-30
 
 ### Ajouté

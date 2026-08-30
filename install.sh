@@ -206,6 +206,111 @@ check_path() {
     esac
 }
 
+# --- 7. Desktop Environment & Launcher Entry ---
+detect_desktop_environment() {
+    DESKTOP_ENV=""
+    
+    local xdg_desktop="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-}}"
+    
+    if [[ "$xdg_desktop" =~ (GNOME|gnome) ]] || pgrep -x gnome-shell >/dev/null 2>&1; then
+        DESKTOP_ENV="GNOME"
+    elif [[ "$xdg_desktop" =~ (KDE|Kde|plasma) ]] || pgrep -f kwin >/dev/null 2>&1; then
+        DESKTOP_ENV="KDE Plasma"
+    elif [[ "$xdg_desktop" =~ (XFCE|xfce) ]] || pgrep -x xfce4-session >/dev/null 2>&1; then
+        DESKTOP_ENV="XFCE"
+    elif [[ "$xdg_desktop" =~ (Hyprland|hyprland) ]] || pgrep -x Hyprland >/dev/null 2>&1; then
+        DESKTOP_ENV="Hyprland"
+    elif [[ "$xdg_desktop" =~ (sway|Sway) ]] || pgrep -x sway >/dev/null 2>&1; then
+        DESKTOP_ENV="Sway"
+    elif systemctl --user is-active dms.service >/dev/null 2>&1 || [ -d "$HOME/.config/dms" ] || [ -d "$HOME/.config/DankMaterialShell" ]; then
+        DESKTOP_ENV="DankMaterialShell (DMS)"
+    elif [ -n "$xdg_desktop" ]; then
+        DESKTOP_ENV="$xdg_desktop"
+    elif [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; then
+        DESKTOP_ENV="Environnement graphique"
+    fi
+}
+
+setup_desktop_entry() {
+    if [ "$OS" != "Linux" ]; then
+        return 0
+    fi
+
+    detect_desktop_environment
+
+    if [ -z "$DESKTOP_ENV" ]; then
+        # Headless server without GUI/display, skip quietly
+        return 0
+    fi
+
+    echo ""
+    info "Environnement de bureau détecté : ${BOLD}${DESKTOP_ENV}${NC}"
+
+    local should_install="o"
+    if [ -e /dev/tty ]; then
+        printf "${BOLD}Voulez-vous créer une entrée de menu et installer l'icône ? [O/n] ${NC}"
+        read -r response < /dev/tty || response="o"
+        if [ -n "$response" ]; then
+            should_install="$response"
+        fi
+    fi
+
+    case "$should_install" in
+        [oOyY]|"")
+            ;;
+        *)
+            info "Création de l'entrée de menu ignorée."
+            return 0
+            ;;
+    esac
+
+    # 1. Install Icon
+    local icon_dir="$HOME/.local/share/icons/hicolor/scalable/apps"
+    mkdir -p "$icon_dir"
+    local icon_dest="${icon_dir}/spiritty.svg"
+
+    if [ -f "${TMP_DIR}/spiritty.svg" ]; then
+        cp "${TMP_DIR}/spiritty.svg" "$icon_dest"
+    elif [ -f "${TMP_DIR}/assets/icons/spiritty.svg" ]; then
+        cp "${TMP_DIR}/assets/icons/spiritty.svg" "$icon_dest"
+    else
+        info "Téléchargement de l'icône officielle..."
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
+            || curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
+            || true
+    fi
+
+    # 2. Install Desktop Entry
+    local app_dir="$HOME/.local/share/applications"
+    mkdir -p "$app_dir"
+    local desktop_dest="${app_dir}/spiritty.desktop"
+
+    cat > "$desktop_dest" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=Spiritty
+Comment=AI-powered split-screen terminal companion for sysadmins and power users
+Exec=spiritty
+Icon=spiritty
+Terminal=true
+Categories=System;TerminalEmulator;Development;
+Keywords=terminal;ai;assistant;sysadmin;ssh;
+EOF
+
+    # 3. Refresh Caches
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$app_dir" 2>/dev/null || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    fi
+    if systemctl --user is-active dms.service >/dev/null 2>&1; then
+        systemctl --user restart dms.service 2>/dev/null || true
+    fi
+
+    success "Entrée d'application et icône installées dans ${app_dir}/spiritty.desktop !"
+}
+
 main() {
     print_banner
     check_dependencies
@@ -214,6 +319,7 @@ main() {
     get_install_dir
     install_binary
     check_path
+    setup_desktop_entry
 
     echo ""
     echo -e "${GREEN}${BOLD}🎉 Installation terminée !${NC}"
