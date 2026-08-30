@@ -214,12 +214,12 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
                         summary_points.push(format!("- 💻 Commande exécutée : `{}`", snippet));
                     } else {
                         let snippet = clean_summary_snippet(trimmed, 120);
-                        summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
+                        summary_points.push(format!("- 🧞 Résumé assistant : {}", snippet));
                     }
                 } else {
                     let first_line = trimmed.lines().next().unwrap_or(trimmed);
                     let snippet = clean_summary_snippet(first_line, 120);
-                    summary_points.push(format!("- 👻 Résumé assistant : {}", snippet));
+                    summary_points.push(format!("- 🧞 Résumé assistant : {}", snippet));
                 }
             }
             MessageRole::System => {

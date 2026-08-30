@@ -132,7 +132,7 @@ impl CliOptions {
     pub fn print_help() {
         let version = env!("CARGO_PKG_VERSION");
         println!(
-            r#"👻 Spiritty v{version}
+            r#"🧞 Spiritty v{version}
 AI-powered split-screen terminal companion for Sysadmins & DevOps
 
 USAGE:

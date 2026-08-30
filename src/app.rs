@@ -1050,7 +1050,7 @@ impl App {
         let now = chrono::Local::now();
         let mut content = String::new();
         content.push_str(&format!(
-            "# 👻 Rapport d'Intervention Spiritty — {}\n\n",
+            "# 🧞 Rapport d'Intervention Spiritty — {}\n\n",
             self.current_session.title
         ));
         content.push_str(&format!(
@@ -1110,7 +1110,7 @@ impl App {
                 }
                 MessageRole::Assistant => {
                     content.push_str(&format!(
-                        "### 👻 Spiritty (Assistant IA)\n\n{}\n\n",
+                        "### 🧞 Spiritty (Assistant IA)\n\n{}\n\n",
                         msg.content
                     ));
                 }

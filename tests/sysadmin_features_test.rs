@@ -96,7 +96,7 @@ async fn test_markdown_export_generation() {
     assert!(std::path::Path::new(&export_path).exists());
 
     let content = std::fs::read_to_string(&export_path).unwrap();
-    assert!(content.contains("# 👻 Rapport d'Intervention Spiritty — Optimisation Nginx & PHP-FPM"));
+    assert!(content.contains("# 🧞 Rapport d'Intervention Spiritty — Optimisation Nginx & PHP-FPM"));
     assert!(content.contains("`~/Projets/Spiritty`"));
     assert!(content.contains("`main`"));
     assert!(content.contains("Comment configurer php-fpm"));
@@ -365,7 +365,7 @@ async fn test_export_modal_and_custom_destination() {
     assert!(custom_file.exists());
 
     let content = std::fs::read_to_string(&custom_file).unwrap();
-    assert!(content.contains("# 👻 Rapport d'Intervention Spiritty — Audit Sécurité SSH"));
+    assert!(content.contains("# 🧞 Rapport d'Intervention Spiritty — Audit Sécurité SSH"));
 }
 
 #[test]

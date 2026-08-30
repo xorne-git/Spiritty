@@ -52,7 +52,7 @@ impl<'a> ChatPanel<'a> {
         let palette = self.app.theme.palette();
         let is_focused = self.app.focus == Focus::Chat;
         // (spinner glyph resolved inside compose_assistant_message from the frame)
-        let title_text = format!("👻 Spiritty v{} ", env!("CARGO_PKG_VERSION"));
+        let title_text = format!("🧞 Spiritty v{} ", env!("CARGO_PKG_VERSION"));
 
         // 1. Dynamic prompt input sizing & line wrapping (2 lines minimum, with padding top/bot)
         let prompt_pad_x = area.left() + 2;
@@ -769,12 +769,12 @@ fn compose_assistant_message(
 
     let ghost_prefix = if is_generating && is_last {
         if has_pending_approval {
-            "👻 ".to_string()
+            "🧞 ".to_string()
         } else {
-            format!("{} 👻 ", spinner_char)
+            format!("{} 🧞 ", spinner_char)
         }
     } else {
-        "👻 ".to_string()
+        "🧞 ".to_string()
     };
 
     let has_valid_thought = parsed

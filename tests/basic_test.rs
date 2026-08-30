@@ -126,7 +126,7 @@ fn test_paragraph_wrapping_line_count() {
     let complex_lines = vec![
         Line::from("👤 Bonjour, peux-tu m'aider ?"),
         Line::from(""),
-        Line::from("👻 Oui bien sûr ! Voici ce que nous allons vérifier :"),
+        Line::from("🧞 Oui bien sûr ! Voici ce que nous allons vérifier :"),
         Line::from("  - Point 1 : Vérifier le statut du service avec systemctl"),
         Line::from("  - Point 2 : Vérifier les journaux avec journalctl -xeu dms.service"),
         Line::from(""),
@@ -136,7 +136,7 @@ fn test_paragraph_wrapping_line_count() {
         Line::from(""),
         Line::from("💻 `systemctl --user status dms.service`"),
         Line::from(""),
-        Line::from("👻 Analyse terminée avec succès. Tout fonctionne parfaitement."),
+        Line::from("🧞 Analyse terminée avec succès. Tout fonctionne parfaitement."),
     ];
 
     let mut buf2 = Buffer::empty(Rect::new(0, 0, width, 100));
@@ -1000,7 +1000,7 @@ async fn test_deep_thinking_wording_when_silent_stream() {
         "silent stream must show deep-thinking wording; got:\n{text}"
     );
     assert!(
-        text.contains("👻"),
+        text.contains("🧞"),
         "ghost marker must accompany the thinking wording; got:\n{text}"
     );
 }
