@@ -8,6 +8,16 @@ use tokio::time::timeout;
 pub enum ToolInvocation {
     RunCommand(String),
     WebSearch(String),
+    ReadFile(String),
+    EditFile {
+        path: String,
+        old_string: String,
+        new_string: String,
+    },
+    WriteFile {
+        path: String,
+        content: String,
+    },
     McpCall {
         server: String,
         tool: String,
@@ -64,6 +74,73 @@ pub async fn execute_shell_command(cmd: &str) -> String {
             format!("Erreur lors de l'exécution : {}", err)
         }
         Err(_) => "Erreur : La commande a dépassé le délai d'attente (timeout de 15s).".to_string(),
+    }
+}
+
+/// Reads a file asynchronously, truncating very large outputs (like PTY captures) and
+/// showing a byte count so the model can decide to gate further reads.
+pub async fn execute_read_file(path: &str) -> String {
+    const MAX_BYTES: usize = 100 * 1024;
+    match tokio::fs::read(path).await {
+        Ok(bytes) => {
+            if bytes.is_empty() {
+                return "(Fichier vide)".to_string();
+            }
+            let shown = if bytes.len() > MAX_BYTES { &bytes[..MAX_BYTES] } else { &bytes[..] };
+            let text = String::from_utf8_lossy(shown);
+            let mut out = text.to_string();
+            if bytes.len() > MAX_BYTES {
+                out.push_str(&format!(
+                    "\n\n… [Sortie tronquée : {} octets affichés sur {}]",
+                    MAX_BYTES,
+                    bytes.len()
+                ));
+            }
+            out
+        }
+        Err(err) => format!("Erreur de lecture de {} : {}", path, err),
+    }
+}
+
+/// Overwrites a file with the given content. Fails if the target is a directory.
+pub async fn execute_write_file(path: &str, content: &str) -> String {
+    match tokio::fs::write(path, content).await {
+        Ok(()) => format!("✅ Fichier écrit : {} ({} octets)", path, content.len()),
+        Err(err) => format!("Erreur d'écriture de {} : {}", path, err),
+    }
+}
+
+/// Applies a single exact-string replacement within a file. The `old_string` must occur
+/// exactly once; zero or multiple occurrences is reported back (never a silent no-op or
+/// an ambiguous partial replacement). The file is rewritten with the replacement applied.
+pub async fn execute_edit_file(path: &str, old_string: &str, new_string: &str) -> String {
+    match tokio::fs::read_to_string(path).await {
+        Ok(contents) => {
+            let occurrences = contents.matches(old_string).count();
+            if occurrences == 0 {
+                return format!(
+                    "Erreur : le texte à remplacer est introuvable dans {}. Vérifiez le contenu exact (lecture avec tool:read_file) avant de réessayer.",
+                    path
+                );
+            }
+            if occurrences > 1 {
+                return format!(
+                    "Erreur : le texte à remplacer apparaît {} fois dans {} (il doit être unique). Fournissez un fragment plus précis incluant son contexte.",
+                    occurrences, path
+                );
+            }
+            let updated = contents.replace(old_string, new_string);
+            match tokio::fs::write(path, updated.as_bytes()).await {
+                Ok(()) => format!(
+                    "✅ Fichier modifié : {} ({} → {} octets)",
+                    path,
+                    contents.len(),
+                    updated.len()
+                ),
+                Err(err) => format!("Erreur d'écriture de {} : {}", path, err),
+            }
+        }
+        Err(err) => format!("Erreur de lecture de {} : {}", path, err),
     }
 }
 
@@ -149,6 +226,26 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
         }
     }
 
+    // 3.5 File-editing tools (```tool:read_file / edit_file / write_file```) — a proper
+    //     structured alternative to the sed/awk/heredoc shell dance the model falls back to.
+    for (prefix, tool) in [
+        ("```tool:read_file", "read"),
+        ("```tool:edit_file", "edit"),
+        ("```tool:write_file", "write"),
+    ] {
+        if let Some(start) = text.find(prefix) {
+            let after = &text[start + prefix.len()..];
+            let body = if let Some(end) = after.find("```") {
+                &after[..end]
+            } else {
+                after
+            };
+            if let Some(t) = parse_file_edit_fence(body.trim(), tool) {
+                return Some(t);
+            }
+        }
+    }
+
     // 3b. HTML-style tool tags some models emit instead of the fenced block —
     //     observed live from Gemini: `<tool:run_command>\ncmd\n``` ` (opening
     //     tag, command, then a stray fence, closing tag omitted). The payload
@@ -193,11 +290,62 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
     None
 }
 
+/// Parses the body of a fenced file-edit tool block into a `ToolInvocation`.
+///
+/// Three layouts are supported, mirroring what the model is instructed to emit:
+/// - `read`: the body is the absolute/expanded path (`/path/to/file`).
+/// - `write`: the first line is the path, the remainder is the full verbatim content.
+/// - `edit`: the first line is the path, then the literal `old_string` to replace, then
+///   a separator line `---`, then the literal `new_string`. Splitting on a separator
+///   (rather than line count) keeps multi-line old/new payloads intact.
+fn parse_file_edit_fence(body: &str, kind: &str) -> Option<ToolInvocation> {
+    if body.is_empty() {
+        return None;
+    }
+
+    let line_end = body.find('\n').unwrap_or(body.len());
+    let path_str = body[..line_end].trim();
+    if path_str.is_empty() {
+        return None;
+    }
+    let path = crate::app::expand_tilde(path_str);
+    let path = path.to_string_lossy().into_owned();
+
+    let payload = &body[line_end..].trim_start_matches(['\r', '\n']);
+
+    match kind {
+        "read" => Some(ToolInvocation::ReadFile(path)),
+        "write" => Some(ToolInvocation::WriteFile {
+            path,
+            content: payload.to_string(),
+        }),
+        "edit" => {
+            // A payload that immediately starts with the separator (or is empty) means the
+            // old_string is missing — reject rather than corrupting a file with an ambiguous parse.
+            if payload.is_empty() || payload.starts_with("---\n") || payload.trim() == "---" {
+                return None;
+            }
+            let mut split = payload.splitn(2, "\n---\n");
+            let old_string = split.next().unwrap_or("").trim_matches('\r').to_string();
+            let new_string = split.next().unwrap_or("").trim_matches('\r').to_string();
+            if old_string.is_empty() {
+                return None;
+            }
+            Some(ToolInvocation::EditFile {
+                path,
+                old_string,
+                new_string,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Removes `<think>…</think>` reasoning regions so their content is never
 /// parsed as an actionable tool call. An unterminated `<think>` (stream cut
 /// mid-reasoning) strips everything to the end — nothing after it was visible
 /// to the user anyway.
-fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
     const OPEN: &str = "<think>";
     const CLOSE: &str = "</think>";
     if !text.contains(OPEN) {
@@ -811,5 +959,86 @@ mod tool_parse_tests {
                 "sudo systemctl restart nginx".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn parses_read_file_fence() {
+        let home = dirs::home_dir().expect("home dir");
+        let text = "Je lis la config :\n```tool:read_file\n~/.config/niri/config.kdl\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::ReadFile(
+                home.join(".config/niri/config.kdl").to_string_lossy().into_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_write_file_fence_with_verbatim_content() {
+        let text = "Je crée le fichier :\n```tool:write_file\n/tmp/t.txt\nligne1\nligne2\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::WriteFile {
+                path: "/tmp/t.txt".to_string(),
+                content: "ligne1\nligne2".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_edit_file_fence_with_multi_line_payload() {
+        let text = "Je remplace un bloc :\n```tool:edit_file\n/tmp/t.txt\nold line one\nold line two\n---\nnew line one\nnew line two\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::EditFile {
+                path: "/tmp/t.txt".to_string(),
+                old_string: "old line one\nold line two".to_string(),
+                new_string: "new line one\nnew line two".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_edit_file_with_empty_old_string() {
+        let text = "```tool:edit_file\n/tmp/t.txt\n---\nnew\n```";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn file_edit_fence_inside_think_block_is_ignored() {
+        let text = "<think>je vais éditer :\n```tool:edit_file\n/tmp/t.txt\nold\n---\nnew\n```</think>Réponse.";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[tokio::test]
+    async fn write_edit_read_roundtrip() {
+        use super::{execute_edit_file, execute_read_file, execute_write_file};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        let path_str = path.to_string_lossy().into_owned();
+
+        let w = execute_write_file(&path_str, "line one\nline two\nline three\n").await;
+        assert!(w.contains("✅ Fichier écrit"), "write: {}", w);
+
+        let r = execute_read_file(&path_str).await;
+        assert_eq!(r, "line one\nline two\nline three\n");
+
+        // Unique single replacement.
+        let e = execute_edit_file(&path_str, "line two", "line two EDITED").await;
+        assert!(e.contains("✅ Fichier modifié"), "edit: {}", e);
+        let r2 = execute_read_file(&path_str).await;
+        assert_eq!(r2, "line one\nline two EDITED\nline three\n");
+
+        // Ambiguous replacement (occurs twice) must be rejected, not silently applied.
+        let dir2 = tempfile::tempdir().unwrap();
+        let dup = dir2.path().join("dup.txt");
+        let dup_str = dup.to_string_lossy().into_owned();
+        execute_write_file(&dup_str, "x\ny\nx\n").await;
+        let e2 = execute_edit_file(&dup_str, "x", "z").await;
+        assert!(e2.contains("apparaît 2 fois"), "ambiguous edit: {}", e2);
+
+        // Missing old_string must be reported, not a silent no-op.
+        let e3 = execute_edit_file(&path_str, "nope", "z").await;
+        assert!(e3.contains("introuvable"), "missing edit: {}", e3);
     }
 }

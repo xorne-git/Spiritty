@@ -493,6 +493,71 @@ pub fn should_auto_approve_command(cmd: &str, level: AutoApproveLevel) -> bool {
     }
 }
 
+/// Classifies a file-edit operation by target path. A write/edit that only touches the
+/// user's own config/desktop files is a normal user-level change (`Standard`); anything
+/// under system, root-owned or service locations (`/etc`, `/usr`, `/var`, `/root`,
+/// `/boot`, systemd units…) is `Sudo` and always asks beyond the explicit Sudo level;
+/// a truly sensitive path (shell rc files, ssh keys, passwd, fstab…) stays `Risky` so it
+/// is only ever auto-approved in YOLO mode.
+pub fn classify_file_edit(path: &str) -> CommandRisk {
+    let p = path.trim();
+    if p.is_empty() {
+        return CommandRisk::Risky;
+    }
+
+    // Sensitive: shell auth/config, login, mounts. Conservative, never auto-approved
+    // beyond YOLO.
+    const SENSITIVE_MARKERS: &[&str] = &[
+        "/.ssh/",
+        "/.gnupg/",
+        "/authorized_keys",
+        "/.bashrc",
+        "/.zshrc",
+        "/.profile",
+        "/.bash_profile",
+        "/.zshenv",
+        "/.zprofile",
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/fstab",
+        "/etc/sudoers",
+        "/etc/group",
+        "/etc/sudoers.d/",
+        "/etc/ssh/",
+        "/etc/pacman.conf",
+        "/etc/apt/sources",
+        "/etc/dnf/",
+        "/etc/zypp/",
+        "/etc/mkinitcpio",
+        "/etc/X11/",
+        "/etc/ld.so.conf",
+    ];
+    if SENSITIVE_MARKERS.iter().any(|m| p.contains(m)) {
+        return CommandRisk::Risky;
+    }
+
+    // System / service locations: elevated, non-destructive edits.
+    const SYSTEM_PREFIXES: &[&str] = &[
+        "/etc/",
+        "/usr/",
+        "/var/",
+        "/boot/",
+        "/opt/",
+        "/srv/",
+        "/root/",
+        "/sbin/",
+        "/usr/local/",
+        "/run/",
+    ];
+    if SYSTEM_PREFIXES.iter().any(|m| p.starts_with(m)) {
+        return CommandRisk::Sudo;
+    }
+
+    // Everything else (home, ~/.config, ~/.local, project files, /mnt, /media…) is a
+    // regular user-level change.
+    CommandRisk::Standard
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,5 +749,23 @@ mod tests {
             "sudo ls /root",
             AutoApproveLevel::Off
         ));
+    }
+
+    #[test]
+    fn test_classify_file_edit_by_path() {
+        // User-level config/home files: normal change.
+        assert_eq!(classify_file_edit("~/.config/niri/config.kdl"), CommandRisk::Standard);
+        assert_eq!(classify_file_edit("/home/x/project/src/main.rs"), CommandRisk::Standard);
+        assert_eq!(classify_file_edit("/mnt/data/backup.txt"), CommandRisk::Standard);
+        // System / service locations: elevated.
+        assert_eq!(classify_file_edit("/etc/systemd/system/acpi.service"), CommandRisk::Sudo);
+        assert_eq!(classify_file_edit("/usr/share/applications/x.desktop"), CommandRisk::Sudo);
+        assert_eq!(classify_file_edit("/var/www/site/index.html"), CommandRisk::Sudo);
+        // Sensitive / conservative: never auto-approved below YOLO.
+        assert_eq!(classify_file_edit("/home/x/.ssh/authorized_keys"), CommandRisk::Risky);
+        assert_eq!(classify_file_edit("/home/x/.zshrc"), CommandRisk::Risky);
+        assert_eq!(classify_file_edit("/etc/fstab"), CommandRisk::Risky);
+        // Empty path is conservative.
+        assert_eq!(classify_file_edit("   "), CommandRisk::Risky);
     }
 }

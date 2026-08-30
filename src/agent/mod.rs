@@ -17,8 +17,25 @@ use crate::{
 use mcp::McpManager;
 use prompt::build_system_prompt;
 use providers::{create_provider, LlmProvider};
-use safety::should_auto_approve_command;
-use tools::{execute_web_search, parse_tool_call, ToolInvocation};
+use safety::{classify_file_edit, should_auto_approve_command, CommandRisk};
+use tools::{
+    execute_edit_file, execute_read_file, execute_web_search, execute_write_file,
+    parse_tool_call, ToolInvocation,
+};
+
+/// Auto-approves a file-edit operation according to its pre-computed risk, without
+/// re-classifying a path as a shell command (commands reuse `should_auto_approve_command`).
+fn should_auto_approve_risk(risk: CommandRisk, level: crate::config::AutoApproveLevel) -> bool {
+    match level {
+        crate::config::AutoApproveLevel::Off => false,
+        crate::config::AutoApproveLevel::Safe => risk == CommandRisk::Safe,
+        crate::config::AutoApproveLevel::Sudo => matches!(
+            risk,
+            CommandRisk::Safe | CommandRisk::Standard | CommandRisk::Sudo
+        ),
+        crate::config::AutoApproveLevel::Yolo => true,
+    }
+}
 
 /// Prepares the UI message history for the LLM request: strips UI control pills
 /// from assistant messages (command cards, tool banners) and drops every empty
@@ -54,7 +71,9 @@ fn prepare_conversation(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
             }
             m
         })
-        .filter(|m| !m.content.is_empty())
+        // Keep a turn that carries ONLY a vision attachment (empty text but an image):
+        // such a message must still reach the provider so the screenshot is forwarded.
+        .filter(|m| !m.content.is_empty() || !m.attachments.is_empty())
         .collect()
 }
 
@@ -130,6 +149,16 @@ impl AgentEngine {
         let lang = config.get_language();
         let auto_approve = config.auto_approve;
         let mut system_prompt = build_system_prompt(lang, sys_ctx, &config);
+
+        // File-editing tools act on localhost filesystem only. In a live SSH / container
+        // session the model must NOT silently edit a local file that isn't the one the user
+        // is looking at — it should fall back to shell commands. This flag is threaded into
+        // the tool loop so read/write/edit are refused with an explicit message.
+        let is_remote_session = matches!(
+            sys_ctx.active_session,
+            crate::system::ActiveSession::Ssh { .. } | crate::system::ActiveSession::Container { .. }
+        );
+        let is_remote_session = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(is_remote_session));
 
         tokio::spawn(async move {
             let mcp_prompt_summary = mcp_manager.get_tools_summary_for_prompt().await;
@@ -234,6 +263,7 @@ impl AgentEngine {
                                     role: MessageRole::Assistant,
                                     content: current_turn_text,
                                     command_proposal: None,
+                                    attachments: Vec::new(),
                                 });
 
                                 let tool_msg = format!(
@@ -245,6 +275,7 @@ impl AgentEngine {
                                     role: MessageRole::User,
                                     content: tool_msg,
                                     command_proposal: None,
+                                    attachments: Vec::new(),
                                 });
 
                                 let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
@@ -265,6 +296,7 @@ impl AgentEngine {
                                     role: MessageRole::Assistant,
                                     content: current_turn_text,
                                     command_proposal: None,
+                                    attachments: Vec::new(),
                                 });
 
                                 let tool_msg = format!(
@@ -276,6 +308,7 @@ impl AgentEngine {
                                     role: MessageRole::User,
                                     content: tool_msg,
                                     command_proposal: None,
+                                    attachments: Vec::new(),
                                 });
 
                                 let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
@@ -316,6 +349,7 @@ impl AgentEngine {
                                         role: MessageRole::Assistant,
                                         content: current_turn_text,
                                         command_proposal: None,
+                                        attachments: Vec::new(),
                                     });
 
                                     let tool_msg = if tool_steps >= MAX_TOOL_STEPS {
@@ -334,6 +368,7 @@ impl AgentEngine {
                                         role: MessageRole::User,
                                         content: tool_msg,
                                         command_proposal: None,
+                                        attachments: Vec::new(),
                                     });
 
                                     // Signal UI to create a fresh turn for the next assistant response
@@ -341,6 +376,207 @@ impl AgentEngine {
                                     continue;
                                 } else {
                                     // User declined execution (Esc): stop model generation immediately and let user type next prompt
+                                    let _ = forward_event_tx.send(AppEvent::AgentDone);
+                                    break;
+                                }
+                            }
+                            ToolInvocation::ReadFile(path) => {
+                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: current_turn_text,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let tool_msg = format!(
+                                        "[RÉSULTAT DE LA LECTURE DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:read_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Le fichier n'est pas accessible. Utilisez des commandes shell (cat, less, scp) a travers tool:run_command pour lire les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
+                                        path
+                                    );
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::User,
+                                        content: tool_msg,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                    continue;
+                                }
+
+                                let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("📖 Lecture de {}", path)));
+
+                                let read_result = execute_read_file(&path).await;
+
+                                let _ = forward_event_tx.send(AppEvent::AgentToolDone {
+                                    command: format!("📖 {}", path),
+                                    output: read_result.clone(),
+                                });
+
+                                conversation.push(ChatMessage {
+                                    role: MessageRole::Assistant,
+                                    content: current_turn_text,
+                                    command_proposal: None,
+                                    attachments: Vec::new(),
+                                });
+
+                                let tool_msg = format!(
+                                    "[RÉSULTAT DE LA LECTURE DU FICHIER '{}']:\n{}\n[FIN DU RÉSULTAT - Utilisez ces données pour votre diagnostic ou votre édition]",
+                                    path, read_result
+                                );
+                                conversation.push(ChatMessage {
+                                    role: MessageRole::User,
+                                    content: tool_msg,
+                                    command_proposal: None,
+                                    attachments: Vec::new(),
+                                });
+
+                                let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                continue;
+                            }
+                            ToolInvocation::EditFile { path, old_string, new_string } => {
+                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: current_turn_text,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let tool_msg = format!(
+                                        "[RÉSULTAT DE L'ÉDITION DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:edit_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Annule l'operation. Utilisez des commandes shell (sed, tee, heredoc) a travers tool:run_command pour modifier les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
+                                        path
+                                    );
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::User,
+                                        content: tool_msg,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                    continue;
+                                }
+
+                                let risk = classify_file_edit(&path);
+                                let approved = if should_auto_approve_risk(risk, auto_approve) {
+                                    true
+                                } else {
+                                    let old_preview = old_string.lines().next().unwrap_or(old_string.as_str());
+                                    let new_preview = new_string.lines().next().unwrap_or(new_string.as_str());
+                                    let preview = format!(
+                                        "Modifier le fichier `{}` en remplaçant \"{}\" par \"{}\"",
+                                        path, old_preview, new_preview
+                                    );
+                                    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel::<bool>();
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolRequest {
+                                        command: preview,
+                                        approval_tx,
+                                    });
+                                    approval_rx.await.unwrap_or(false)
+                                };
+
+                                if approved {
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("✏️ Édition de {}", path)));
+
+                                    let edit_result = execute_edit_file(&path, &old_string, &new_string).await;
+
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolDone {
+                                        command: format!("✏️ {}", path),
+                                        output: edit_result.clone(),
+                                    });
+
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: current_turn_text,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+
+                                    let tool_msg = format!(
+                                        "[RÉSULTAT DE L'ÉDITION DU FICHIER '{}']:\n{}\n[FIN DU RÉSULTAT - Vérifiez le fichier si nécessaire ou poursuivez]",
+                                        path, edit_result
+                                    );
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::User,
+                                        content: tool_msg,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+
+                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                    continue;
+                                } else {
+                                    let _ = forward_event_tx.send(AppEvent::AgentDone);
+                                    break;
+                                }
+                            }
+                            ToolInvocation::WriteFile { path, content } => {
+                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: current_turn_text,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let tool_msg = format!(
+                                        "[RÉSULTAT DE L'ÉCRITURE DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:write_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Annule l'operation. Utilisez des commandes shell (cat heredoc, tee, scp) a travers tool:run_command pour ecrire les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
+                                        path
+                                    );
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::User,
+                                        content: tool_msg,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                    continue;
+                                }
+
+                                let risk = classify_file_edit(&path);
+                                let approved = if should_auto_approve_risk(risk, auto_approve) {
+                                    true
+                                } else {
+                                    let preview = format!(
+                                        "Écrire dans `{}` ({} octets)",
+                                        path,
+                                        content.len()
+                                    );
+                                    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel::<bool>();
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolRequest {
+                                        command: preview,
+                                        approval_tx,
+                                    });
+                                    approval_rx.await.unwrap_or(false)
+                                };
+
+                                if approved {
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("💾 Écriture de {}", path)));
+
+                                    let write_result = execute_write_file(&path, &content).await;
+
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolDone {
+                                        command: format!("💾 {}", path),
+                                        output: write_result.clone(),
+                                    });
+
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::Assistant,
+                                        content: current_turn_text,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+
+                                    let tool_msg = format!(
+                                        "[RÉSULTAT DE L'ÉCRITURE DU FICHIER '{}']:\n{}\n[FIN DU RÉSULTAT - Vérifiez le fichier si nécessaire ou poursuivez]",
+                                        path, write_result
+                                    );
+                                    conversation.push(ChatMessage {
+                                        role: MessageRole::User,
+                                        content: tool_msg,
+                                        command_proposal: None,
+                                        attachments: Vec::new(),
+                                    });
+
+                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
+                                    continue;
+                                } else {
                                     let _ = forward_event_tx.send(AppEvent::AgentDone);
                                     break;
                                 }
@@ -371,6 +607,7 @@ mod tests {
             role,
             content: content.to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -406,5 +643,23 @@ mod tests {
         assert!(conv[0].content.contains("```bash\nuname -r\n```"));
         assert!(!conv[0].content.contains("🌐 "));
         assert!(conv[0].content.contains("Résultat final."));
+    }
+
+    #[test]
+    fn keeps_attachment_only_turn_for_vision() {
+        // A user turn that carries ONLY an image (empty text) must survive preparation so
+        // the provider can forward the screenshot, instead of being dropped as "empty".
+        let mut m = msg(MessageRole::User, "");
+        m.attachments = vec![crate::app::MessageAttachment {
+            mime_type: "image/png".to_string(),
+            data_base64: "iVBORw0KGgo".to_string(),
+        }];
+        let conv = prepare_conversation(vec![m]);
+        assert_eq!(conv.len(), 1);
+        assert_eq!(conv[0].attachments.len(), 1);
+        assert_eq!(conv[0].attachments[0].mime_type, "image/png");
+        // But a truly empty turn (no content, no attachment) is still dropped.
+        let conv2 = prepare_conversation(vec![msg(MessageRole::User, "")]);
+        assert_eq!(conv2.len(), 0);
     }
 }
