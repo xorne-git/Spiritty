@@ -15,6 +15,8 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.6.3 — 2026-08-30
+
 ### Ajouté
 
 - **Script d'installation (`install.sh`) : détection de bureau et création du lanceur XDG**
