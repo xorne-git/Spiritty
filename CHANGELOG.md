@@ -15,8 +15,17 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.6.4 — 2026-08-30
+
 ### Corrigé
 
+- **Résolution des variables d'environnement des clés API au lancement GUI**
+  — lors du lancement de Spiritty via un lanceur d'applications de bureau (sans passer
+  par un terminal interactif existant), les clés d'API déclarées dans `~/.zshrc` ou
+  `~/.bashrc` (`export GEMINI_API_KEY=...`, `DEEPSEEK_API_KEY`, etc.) n'étaient pas
+  chargées car la sonde exécutait le shell en mode login non-interactif (`-l`). La sonde
+  exécute désormais le shell en mode login interactif (`-l -i`) avec délimiteurs étanches,
+  garantissant le chargement transparent des clés configurées dans votre shell rc.
 - **Script d'installation (`install.sh`) : chemin absolu de l'exécutable dans le lanceur XDG (`Exec`)**
   — le fichier `spiritty.desktop` généré contenait `Exec=spiritty` relatif. Lorsque Spiritty
   est installé dans `~/.local/bin` (installation utilisateur sans sudo), les lanceurs de bureau

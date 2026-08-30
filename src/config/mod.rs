@@ -432,20 +432,27 @@ impl Config {
 
     pub fn load_shell_env() {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        if let Ok(output) = std::process::Command::new(&shell)
-            .args(["-l", "-c", "env"])
+        let output = std::process::Command::new(&shell)
+            .stdin(std::process::Stdio::null())
+            .args(["-l", "-i", "-c", "env"])
             .output()
-        {
+            .or_else(|_| {
+                std::process::Command::new(&shell)
+                    .stdin(std::process::Stdio::null())
+                    .args(["-l", "-c", "env"])
+                    .output()
+            });
+
+        if let Ok(output) = output {
             if output.status.success() {
-                if let Ok(text) = String::from_utf8(output.stdout) {
-                    for line in text.lines() {
-                        if let Some((k, v)) = line.split_once('=') {
-                            let key = k.trim();
-                            let val = v.trim();
-                            if !key.is_empty() && env::var(key).is_err() {
-                                unsafe {
-                                    env::set_var(key, val);
-                                }
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    if let Some((k, v)) = line.split_once('=') {
+                        let key = k.trim();
+                        let val = v.trim();
+                        if !key.is_empty() && env::var(key).is_err() {
+                            unsafe {
+                                env::set_var(key, val);
                             }
                         }
                     }
@@ -710,15 +717,35 @@ IMPORTANT RULES:
             return cached;
         }
 
-        // Probe default login shell (captures fish / zsh / bash export variables)
+        // Probe default interactive login shell (captures fish / zsh / bash export variables)
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut probed: Option<Option<String>> = None;
-        if let Ok(output) = std::process::Command::new(&shell)
-            .args(["-l", "-c", &format!("echo -n \"${}\"", name)])
+        let probe_cmd = format!("printf '__SPIRITTY__:%s:__SPIRITTY__' \"${}\"", name);
+
+        let output = std::process::Command::new(&shell)
+            .stdin(std::process::Stdio::null())
+            .args(["-l", "-i", "-c", &probe_cmd])
             .output()
-        {
+            .or_else(|_| {
+                std::process::Command::new(&shell)
+                    .stdin(std::process::Stdio::null())
+                    .args(["-l", "-c", &probe_cmd])
+                    .output()
+            });
+
+        if let Ok(output) = output {
             if output.status.success() {
-                let val = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let val = if let Some(start) = stdout.find("__SPIRITTY__:") {
+                    let rest = &stdout[start + "__SPIRITTY__:".len()..];
+                    if let Some(end) = rest.find(":__SPIRITTY__") {
+                        rest[..end].trim().to_string()
+                    } else {
+                        rest.trim().to_string()
+                    }
+                } else {
+                    stdout.trim().to_string()
+                };
                 let found = (!val.is_empty()).then_some(val);
                 if let Some(v) = &found {
                     // SAFETY: single-threaded startup probe, before TUI tasks read this var.
