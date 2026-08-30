@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  👻 Spiritty — Official One-Line Installer
+#  🧞 Spiritty — Official One-Line Installer
 #  Usage:
 #    curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash
 # ==============================================================================
@@ -22,7 +22,7 @@ BINARY_NAME="spiritty"
 print_banner() {
     printf "${CYAN}${BOLD}"
     cat << 'EOF'
-   _____       _      _ _   _         👻
+   _____       _      _ _   _         🧞
   / ____|     (_)    (_) | | |        
  | (___  _ __  _ _ __ _| |_| |_ _   _ 
   \___ \| '_ \| | '__| | __| __| | | |

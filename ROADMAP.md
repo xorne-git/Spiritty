@@ -38,7 +38,7 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
 - [x] **Panneau de Chat interactif & Streaming :**
   - Zone de saisie multi-lignes, historique des messages, curseur matériel.
   - Streaming asynchrone sans bloquer le shell interactif PTY.
-  - Indicateur visuel d'état (`👻 Spiritty réfléchit...`).
+  - Indicateur visuel d'état (`🧞 Spiritty réfléchit...`).
 - [x] **Fournisseurs LLM (Multi-Providers) :**
   - Client Ollama (Modèles locaux comme `qwen2.5-coder`, `deepseek-r1`).
   - Client LM Studio (Serveur local OpenAI-compatible).

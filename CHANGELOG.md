@@ -19,12 +19,15 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ### Modifié
 
-- **Emoji de marque remplacé** — l'esprit fantôme `👻` devient **🧞 (génie)**,
-  cohérent avec l'icône « lampe à génie » du projet, partout dans l'app :
-  titre du panneau chat, préfixe des réponses assistant, aide CLI, rapports
-  Markdown exportés et résumés de session. L'icône `assets/icons/spiritty.svg`
-  n'est pas rendue dans la TUI (un terminal ne peut pas afficher un SVG) ; la
-  marque emoji reste le marqueur visible.
+- **Marque : emoji lampe 🧞 + icône SVG officielle** — le fantôme `👻` devient
+  la **lampe bleue 🧞** (référence à la « lampe à génie »), partout : titre du
+  panneau chat, préfixe des réponses assistant, aide CLI, rapports Markdown
+  exportés, résumés de session et documentation (README, README.fr, ROADMAP).
+  L'icône vectorielle `assets/icons/spiritty.svg` est désormais **embarquée**
+  dans le binaire via `include_str!` (nouveau module `src/brand.rs` qui
+  centralise `BRAND_GLYPH`, `brand_title()` et `ICON_SVG`) et poussée comme
+  asset de marque du dépôt. La TUI n'affiche pas le SVG (un terminal ne peut
+  pas dessiner une image vectorielle) — l'emoji reste le marqueur in-TUI.
 
 ## v0.6.0 — 2026-08-30
 
@@ -386,7 +389,7 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
   les longues sessions d'audit où l'approbation répétée devient fastidieuse.
 - **Wording « Réflexion profonde » animé** : pendant la phase silencieuse de réflexion d'un
   modèle (aucun token reçu), le panneau chat affiche une ligne dédiée
-  `⟳ 👻 💭 Réflexion profonde…` / `⟳ 👻 💭 Deep thinking…` parcourue d'un **shimmer
+  `⟳ 🧞 💭 Réflexion profonde…` / `⟳ 🧞 💭 Deep thinking…` parcourue d'un **shimmer
   dégradé cyan** (vague de lumière DarkGray→LightCyan balayant le texte à chaque tick,
   avec pause aux extrémités) au lieu du seul ghost muet.
 - **Édition complète du prompt multi-lignes** :

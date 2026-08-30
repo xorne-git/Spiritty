@@ -1,4 +1,4 @@
-# Spiritty 👻⚡
+# Spiritty 🧞⚡
 
 **English** | [Français](README.fr.md)
 

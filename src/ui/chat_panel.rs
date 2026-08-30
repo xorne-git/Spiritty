@@ -52,7 +52,8 @@ impl<'a> ChatPanel<'a> {
         let palette = self.app.theme.palette();
         let is_focused = self.app.focus == Focus::Chat;
         // (spinner glyph resolved inside compose_assistant_message from the frame)
-        let title_text = format!("🧞 Spiritty v{} ", env!("CARGO_PKG_VERSION"));
+        let title_text =
+            crate::brand::brand_title(env!("CARGO_PKG_VERSION"));
 
         // 1. Dynamic prompt input sizing & line wrapping (2 lines minimum, with padding top/bot)
         let prompt_pad_x = area.left() + 2;
