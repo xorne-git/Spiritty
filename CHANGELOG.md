@@ -15,19 +15,28 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.6.2 — 2026-08-30
+
+### Ajouté
+
+- **Icône SVG officielle embarquée + module `brand`** — l'icône « lampe à
+  génie » `assets/icons/spiritty.svg` est poussée comme asset de marque du dépôt
+  et **embarquée** dans le binaire via `include_str!` (nouveau `src/brand.rs` :
+  `BRAND_GLYPH`, `brand_title()`, `ICON_SVG`). Le titre du panneau chat utilise
+  `brand::brand_title()` et toute l'app partage un seul marqueur. La TUI
+  n'affiche pas le SVG (un terminal ne peut pas dessiner un vecteur) — l'emoji
+  🧞 reste le marqueur in-TUI.
+- Documentation alignée sur le glyphe 🧞 (install.sh, README, README.fr,
+  ROADMAP).
+
 ## v0.6.1 — 2026-08-30
 
 ### Modifié
 
-- **Marque : emoji lampe 🧞 + icône SVG officielle** — le fantôme `👻` devient
-  la **lampe bleue 🧞** (référence à la « lampe à génie »), partout : titre du
-  panneau chat, préfixe des réponses assistant, aide CLI, rapports Markdown
-  exportés, résumés de session et documentation (README, README.fr, ROADMAP).
-  L'icône vectorielle `assets/icons/spiritty.svg` est désormais **embarquée**
-  dans le binaire via `include_str!` (nouveau module `src/brand.rs` qui
-  centralise `BRAND_GLYPH`, `brand_title()` et `ICON_SVG`) et poussée comme
-  asset de marque du dépôt. La TUI n'affiche pas le SVG (un terminal ne peut
-  pas dessiner une image vectorielle) — l'emoji reste le marqueur in-TUI.
+- **Emoji de marque : fantôme → lampe bleue 🧞** — le fantôme `👻` devient la
+  **lampe bleue 🧞** (référence à la « lampe à génie »), partout dans l'app :
+  titre du panneau chat, préfixe des réponses assistant, aide CLI, rapports
+  Markdown exportés et résumés de session.
 
 ## v0.6.0 — 2026-08-30
 

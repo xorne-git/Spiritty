@@ -110,7 +110,7 @@ get_latest_version() {
 
     if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
         # Fallback to hardcoded current release if GitHub API is rate limited
-        LATEST_TAG="v0.6.1"
+        LATEST_TAG="v0.6.2"
         warn "Impossible de contacter l'API GitHub (limite de requêtes atteinte), utilisation de la version ${LATEST_TAG}."
     fi
 
