@@ -68,6 +68,20 @@ impl<'a> ChatPanel<'a> {
         let max_input_height = (area.height.saturating_sub(6) / 2).clamp(2, 8);
         let needed_input_height = total_input_lines.clamp(2, max_input_height);
 
+        // 1b. Compact image preview (Ctrl+Shift+V) — a status line + a small half-block
+        // rendering above the input. A fixed 8-row budget unless the panel is too short.
+        let has_pending_image = self.app.pending_image.is_some();
+        let preview_budget = if has_pending_image {
+            (area.height / 4).clamp(3, 8)
+        } else {
+            0
+        };
+        let preview_rows = if has_pending_image && preview_budget >= 3 {
+            preview_budget.saturating_sub(1) // one row reserved for the status caption
+        } else {
+            0
+        };
+
         // 2. Render Floating Header Title on Chat Panel (1 char padding)
         buf.set_string(
             area.left() + 1,
@@ -83,7 +97,8 @@ impl<'a> ChatPanel<'a> {
         );
 
         // 3. Define content areas (no left, right or bottom borders)
-        let prompt_total_zone = needed_input_height.saturating_add(1);
+        let preview_zone = preview_rows.saturating_add(1); // preview rows + status caption
+        let prompt_total_zone = needed_input_height.saturating_add(1).saturating_add(preview_zone);
         let messages_box_height = area.height.saturating_sub(prompt_total_zone + 1);
 
         let messages_area = Rect {
@@ -93,6 +108,14 @@ impl<'a> ChatPanel<'a> {
             height: messages_box_height,
         };
 
+        let preview_sep_y = area.bottom().saturating_sub(needed_input_height + 1 + preview_zone);
+        let preview_y = area.bottom().saturating_sub(needed_input_height + 1 + preview_rows);
+        let preview_area = Rect {
+            x: prompt_pad_x,
+            y: preview_y,
+            width: prompt_text_width,
+            height: preview_rows,
+        };
         let prompt_sep_y = area.bottom().saturating_sub(needed_input_height + 1);
         let prompt_y = area.bottom().saturating_sub(needed_input_height);
         let input_area = Rect {
@@ -474,6 +497,40 @@ impl<'a> ChatPanel<'a> {
                 .scroll((input_scroll, 0))
                 .style(Style::default().fg(Color::White));
             input_paragraph.render(input_area, buf);
+        }
+
+        // 5b. Compact image preview above the input (Ctrl+Shift+V pending attach).
+        if has_pending_image {
+            if let Some(pending) = &self.app.pending_image {
+                // Status caption line (sits just above the preview rows).
+                let caption = if lang == Language::Fr {
+                    format!(
+                        "🖼️ {}×{} · [Entrée] l'envoie · [Ctrl+Shift+⌫] retire",
+                        pending.width, pending.height
+                    )
+                } else {
+                    format!(
+                        "🖼️ {}×{} · [Enter] sends it · [Ctrl+Shift+⌫] removes",
+                        pending.width, pending.height
+                    )
+                };
+                buf.set_string(
+                    preview_area.x,
+                    preview_sep_y,
+                    &caption,
+                    Style::default()
+                        .fg(palette.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                );
+
+                render_halfblock_preview(
+                    &pending.rgba,
+                    pending.width,
+                    pending.height,
+                    preview_area,
+                    buf,
+                );
+            }
         }
 
         // 6. Return cursor position for native hardware cursor rendering
@@ -1767,6 +1824,48 @@ struct ParsedThought {
     response: String,
 }
 
+/// Removes residual reasoning delimiters that leak into an already-extracted thought
+/// block. Some reasoning models (GLM/Z.ai/DeepSeek) emit their own `<think>` marker in
+/// the visible content on top of the wrapper Spiritty adds for `reasoning_content`,
+/// producing `<think><think>…</think>…`. The extractor then captures `<think>…` —
+/// the inner literal tag survives at the head of the thought. Stripping every known
+/// reasoning marker leaves the real deliberation verbatim.
+fn strip_residual_reasoning_tags(text: &str) -> String {
+    const TAGS: &[&str] = &[
+        "<think>",
+        "</think>",
+        "<thought>",
+        "</thought>",
+        "<reasoning>",
+        "</reasoning>",
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let mut best_pos = None;
+        let mut best_tag = "";
+        for tag in TAGS {
+            if let Some(pos) = rest.find(tag) {
+                if best_pos.is_none_or(|bp| pos < bp) {
+                    best_pos = Some(pos);
+                    best_tag = tag;
+                }
+            }
+        }
+        match best_pos {
+            Some(pos) => {
+                out.push_str(&rest[..pos]);
+                rest = &rest[pos + best_tag.len()..];
+            }
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    out.trim().to_string()
+}
+
 /// Extracts <think>...</think>, <thought>...</thought>, or <reasoning>...</reasoning> reasoning blocks if present.
 fn extract_thought_block(text: &str) -> ParsedThought {
     let delimiters = [
@@ -1781,7 +1880,7 @@ fn extract_thought_block(text: &str) -> ParsedThought {
             let after_start = &text[start + open_tag.len()..];
 
             if let Some(end) = after_start.find(close_tag) {
-                let thought = after_start[..end].trim().to_string();
+                let thought = strip_residual_reasoning_tags(&after_start[..end]);
                 let after_end = after_start[end + close_tag.len()..].trim();
                 let remaining = if before.trim().is_empty() {
                     clean_response(after_end)
@@ -1800,7 +1899,7 @@ fn extract_thought_block(text: &str) -> ParsedThought {
                 };
             } else {
                 // Still streaming inside thought block
-                let thought = after_start.trim().to_string();
+                let thought = strip_residual_reasoning_tags(after_start);
                 let thought_opt = if thought.is_empty() {
                     None
                 } else {
@@ -1973,6 +2072,90 @@ pub(crate) fn char_visual_width(c: char) -> usize {
 
 pub(crate) fn str_visual_width(s: &str) -> usize {
     s.chars().map(char_visual_width).sum()
+}
+
+/// Renders a compact image preview using half-blocks (`▀`): each terminal cell carries
+/// two pixels (top = foreground colour, bottom = background colour). The source RGBA is
+/// nearest-neighbour downsampled (letterboxed, aspect preserved) to fit the area, so a
+/// 64×16-pixel screenshot becomes ~32×8 cells without pulling an image widget or a new
+/// dependency. Alpha is flattened over an assumed dark background.
+fn render_halfblock_preview(
+    rgba: &[u8],
+    src_w: usize,
+    src_h: usize,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    if area.width == 0 || area.height == 0 || src_w == 0 || src_h == 0 {
+        return;
+    }
+    let expected = src_w.checked_mul(src_h).and_then(|n| n.checked_mul(4));
+    if expected.map(|e| e != rgba.len()).unwrap_or(true) {
+        return;
+    }
+
+    // Each cell = 2 pixel rows. Fit the image inside the area while keeping aspect (each
+    // cell is ~2:1 in pixels). Leave the top-left region used; the rest stays blank.
+    let cell_cols = area.width as usize;
+    let cell_rows = area.height as usize;
+    let pixel_rows_avail = cell_rows * 2;
+
+    let scale = (cell_cols as f64 / src_w as f64)
+        .min(pixel_rows_avail as f64 / src_h as f64)
+        .min(1.0);
+    let out_w = ((src_w as f64 * scale).round() as usize).max(1);
+    let out_px_h = ((src_h as f64 * scale).round() as usize).max(1);
+    let out_rows = out_px_h.div_ceil(2);
+
+    // Centered offset to letterbox inside the area.
+    let off_x = (area.width as usize).saturating_sub(out_w) / 2;
+    let off_y = (area.height as usize).saturating_sub(out_rows) / 2;
+
+    // Nearest-neighbour downsampling with a single pass over the output cells.
+    for cy in 0..out_rows {
+        for cx in 0..out_w {
+            // Source pixel rows for top/bottom halves of this output cell.
+            let src_y_top = ((cy * 2) as f64 * src_h as f64 / out_px_h as f64) as usize;
+            let src_y_bot = (((cy * 2 + 1) as f64 * src_h as f64 / out_px_h as f64) as usize)
+                .min(src_h - 1);
+            let src_x = (cx as f64 * src_w as f64 / out_w as f64) as usize;
+
+            let top_c = pixel_at(rgba, src_w, src_x, src_y_top);
+            let bot_c = pixel_at(rgba, src_w, src_x, src_y_bot);
+
+            let bx = area.x + (off_x + cx) as u16;
+            let by = area.y + (off_y + cy) as u16;
+            if bx < area.right() && by < area.bottom() {
+                let cell = &mut buf[(bx, by)];
+                cell.set_char('▀').set_fg(top_c).set_bg(bot_c);
+            }
+        }
+    }
+}
+
+/// Returns the RGBA pixel colour (as a ratatui `Color`) at `(x, y)`.
+fn pixel_at(rgba: &[u8], width: usize, x: usize, y: usize) -> Color {
+    let idx = (y * width + x) * 4;
+    // RGB → a slightly indexable colour; flattened alpha over a dark backdrop.
+    let (r, g, b) = match rgba.get(idx..idx + 4) {
+        Some([r, g, b, a]) => flatten_over_dark(*r, *g, *b, *a),
+        _ => (0, 0, 0),
+    };
+    Color::Rgb(r, g, b)
+}
+
+/// Flattens an RGBA pixel over an assumed near-black background (preview backdrop).
+fn flatten_over_dark(r: u8, g: u8, b: u8, a: u8) -> (u8, u8, u8) {
+    let a = a as u16;
+    if a == 255 {
+        return (r, g, b);
+    }
+    let back = 26u16;
+    let out = |c: u8| {
+        let c = c as u16;
+        ((c * a + back * (255 - a)) / 255).min(255) as u8
+    };
+    (out(r), out(g), out(b))
 }
 
 /// Computes the exact number of visual rendered lines after wrapping at a given width,
@@ -2413,6 +2596,24 @@ mod recovered_regression_tests {
     }
 
     #[test]
+    fn nested_think_keeps_reasoning_verbatim() {
+        use super::extract_thought_block;
+        // Real-world repro (session 20260830): GLM-style models emit their own <think>
+        // inside the visible content in addition to the wrapper added for reasoning_content,
+        // yielding <think><think>…</think>…. The extractor must not leak the inner literal tag.
+        let msg = "<think><think>L'utilisateur voit toujours le fantôme. La cause : le cache dms.</think>Voici la solution :```bash\nrm -rf ~/.cache/DankMaterialShell\n```";
+        let parsed = extract_thought_block(msg);
+        assert_eq!(parsed.thought.as_deref(), Some("L'utilisateur voit toujours le fantôme. La cause : le cache dms."));
+        assert!(parsed.response.contains("Voici la solution :"));
+
+        // A single normal block is untouched.
+        let single = "<think>Réflexion normale.</think>Réponse.";
+        let parsed2 = extract_thought_block(single);
+        assert_eq!(parsed2.thought.as_deref(), Some("Réflexion normale."));
+    }
+
+
+    #[test]
     fn strip_fullwidth_pipe_hybrid_marker() {
         // Exact hybrid delimiter some models emit: fullwidth-pipe open, ASCII close.
         let msg = "Vérif en cours.\n\n\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<invoke name=\"exec_command\">\n<parameter name=\"command\" string=\"true\">ls</parameter>\n</invoke>\n</tool_calls>";
@@ -2483,5 +2684,46 @@ mod recovered_regression_tests {
         assert_eq!(str_visual_width("abc"), 3);
         assert_eq!(str_visual_width("a b"), 3);
         assert_eq!(str_visual_width(""), 0);
+    }
+}
+
+#[cfg(test)]
+mod halfblock_preview_tests {
+    use super::{flatten_over_dark, render_halfblock_preview};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn flatten_over_dark_ignores_opaque() {
+        assert_eq!(flatten_over_dark(255, 0, 0, 255), (255, 0, 0));
+        assert_eq!(flatten_over_dark(0, 255, 0, 255), (0, 255, 0));
+    }
+
+    #[test]
+    fn flatten_over_dark_blends_transparency_towards_backdrop() {
+        // 50% alpha red over a near-black backdrop (26,26,26): red dominates, g/b stay low.
+        let (r, g, b) = flatten_over_dark(255, 0, 0, 128);
+        assert!(r > 100 && r < 200, "r={}", r);
+        assert!(g < 40, "g={}", g);
+        assert!(b < 40, "b={}", b);
+    }
+
+    #[test]
+    fn render_halfblock_marks_cells_with_upper_half_block() {
+        // 2×2 opaque red image → 1×1 cell of `▀` with top=red, bottom=red.
+        let rgba = vec![255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+        let mut buf = Buffer::empty(Rect::new(0, 0, 4, 4));
+        render_halfblock_preview(&rgba, 2, 2, Rect::new(0, 0, 4, 4), &mut buf);
+
+        // Centre region: the image occupies up to area dims; at least one `▀` cell exists.
+        let mut found = false;
+        for y in 0..4 {
+            for x in 0..4 {
+                if buf[(x, y)].symbol() == "▀" {
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "expected a half-block cell to be drawn");
     }
 }

@@ -43,6 +43,69 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub command_proposal: Option<String>,
+    /// Vision attachments (e.g. a pasted screenshot) bundled with this turn. Serialized
+    /// as `data:<mime>;base64,<payload>` data-URIs; empty for plain text turns so older
+    /// session files (without the key) still deserialize.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MessageAttachment>,
+}
+
+impl ChatMessage {
+    /// Plain text message (no vision attachment) — the common case.
+    pub fn new(role: MessageRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            command_proposal: None,
+            attachments: Vec::new(),
+        }
+    }
+}
+
+/// A single media attachment carried by a `ChatMessage` (currently screenshots / pasted
+/// images), encoded as a `data:` URI so every provider can forward it verbatim.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageAttachment {
+    /// MIME type, e.g. `image/png`.
+    pub mime_type: String,
+    /// base64-encoded payload (the `data:<mime>;base64,<…>` body).
+    pub data_base64: String,
+}
+
+impl MessageAttachment {
+    /// Full `data:` URI accepted by OpenAI-compatible / Gemini / Anthropic vision inputs.
+    pub fn data_uri(&self) -> String {
+        format!("data:{};base64,{}", self.mime_type, self.data_base64)
+    }
+}
+
+/// An image pasted with Ctrl+Shift+V, awaiting attach to the next user prompt. Carries the
+/// `MessageAttachment` (base64, what gets sent to the model) plus the raw RGBA pixels and
+/// dimensions so the TUI can render a compact half-block preview — decoded once at paste.
+#[derive(Debug, Clone)]
+pub struct PendingImage {
+    /// What is sent to the model (PNG + base64).
+    pub attachment: MessageAttachment,
+    /// Row-major RGBA pixels (`width * height * 4` bytes) for the preview.
+    pub rgba: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl PendingImage {
+    /// Builds a `PendingImage` from raw RGBA pixels, encoding them to a PNG `MessageAttachment`.
+    pub fn from_rgba(rgba: Vec<u8>, width: usize, height: usize) -> Option<Self> {
+        let png = crate::system::clipboard::encode_rgba_to_png(&rgba, width, height)?;
+        Some(Self {
+            attachment: MessageAttachment {
+                mime_type: "image/png".to_string(),
+                data_base64: crate::system::clipboard::base64_encode(&png),
+            },
+            rgba,
+            width,
+            height,
+        })
+    }
 }
 
 /// Per-message render artifact kept alive between frames so the chat panel only
@@ -258,6 +321,9 @@ pub struct App {
     pub chat_input: String,
     pub cursor_pos: usize,
     pub messages: Vec<ChatMessage>,
+    /// Image pasted with Ctrl+Shift+V, awaiting attachment to the next user prompt. When
+    /// set, the next send bundles it as the first attachment of the user turn then clears.
+    pub pending_image: Option<crate::app::PendingImage>,
     pub pty: PtyProcess,
     pub should_quit: bool,
     pub split_ratio: u16,
@@ -435,6 +501,7 @@ impl App {
             chat_input: String::new(),
             cursor_pos: 0,
             messages: Vec::new(),
+            pending_image: None,
             pty,
             should_quit: false,
             split_ratio,
@@ -1074,12 +1141,14 @@ impl App {
                 role: MessageRole::User,
                 content: prompt_text,
                 command_proposal: None,
+                attachments: Vec::new(),
             });
 
             self.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
                 content: String::new(),
                 command_proposal: None,
+                attachments: Vec::new(),
             });
 
             self.reset_chat_scroll();
@@ -1308,6 +1377,35 @@ impl App {
     }
 
     pub fn handle_paste(&mut self, text: String) {
+        // A terminal emulator that grabs Ctrl+Shift+V (Ghostty, etc.) converts the paste
+        // into a TEXT event whose payload is the image's URI/path. Detect that and re-read
+        // the clipboard for the actual image instead of spilling the path into the pane
+        // (worst on a remote SSH shell). If the clipboard yields no image, fall back to
+        // pasting the text verbatim (PasteInto → no re-detection → no recursion).
+        if crate::system::clipboard::looks_like_image_path(&text) {
+            let paste_tx = self.event_tx.clone();
+            crate::system::clipboard::spawn_smart_paste_request(move |payload| {
+                match payload {
+                    Some(crate::system::clipboard::ClipboardPayload::Image(img)) => {
+                        let _ = paste_tx.send(AppEvent::PasteImage(img));
+                    }
+                    Some(crate::system::clipboard::ClipboardPayload::Text(txt)) => {
+                        let _ = paste_tx.send(AppEvent::PasteInto(txt));
+                    }
+                    None => {
+                        let _ = paste_tx.send(AppEvent::PasteInto(text));
+                    }
+                }
+            });
+            return;
+        }
+
+        self.paste_into(text);
+    }
+
+    /// Inserts pasted text into the active pane (modal-aware). No image-path detection —
+    /// used for regular text pastes and as the non-recursive fallback of `handle_paste`.
+    pub fn paste_into(&mut self, text: String) {
         match &mut self.modal {
             ModalState::SshReconnect { .. } => {
                 // Modal open: pasted text is swallowed.
@@ -1345,6 +1443,44 @@ impl App {
             Focus::Terminal => {
                 let _ = self.pty.write_all(text.as_bytes());
             }
+        }
+    }
+
+    /// Takes (and clears) the image(s) pending attachment for the next user prompt.
+    fn take_pending_attachments(&mut self) -> Vec<crate::app::MessageAttachment> {
+        self.pending_image
+            .take()
+            .map(|p| vec![p.attachment])
+            .unwrap_or_default()
+    }
+
+    /// Attaches a pasted image (Ctrl+Shift+V) to the next user prompt.
+    pub fn handle_paste_image(&mut self, image: crate::app::PendingImage) {
+        self.pending_image = Some(image);
+        if self.focus != Focus::Chat {
+            self.focus = Focus::Chat;
+        }
+        let lang = self.config.get_language();
+        self.set_toast(if lang == crate::i18n::Language::Fr {
+            "🖼️ Image attachée au prochain message (Envoi pour la joindre)".to_string()
+        } else {
+            "🖼️ Image attached to the next message (Send to attach it)".to_string()
+        });
+    }
+
+    /// Removes the pending image (e.g. Ctrl+Shift+Backspace) so the next prompt is plain text.
+    pub fn clear_pending_image(&mut self) -> bool {
+        if self.pending_image.is_some() {
+            self.pending_image = None;
+            let lang = self.config.get_language();
+            self.set_toast(if lang == crate::i18n::Language::Fr {
+                "🗑️ Image retirée".to_string()
+            } else {
+                "🗑️ Image removed".to_string()
+            });
+            true
+        } else {
+            false
         }
     }
 
@@ -1711,6 +1847,44 @@ impl App {
             && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q'))
         {
             self.should_quit = true;
+            return;
+        }
+
+        // 6. Ctrl+V — SMART paste, global (works from BOTH panes). The app reads the
+        // clipboard itself (not via the terminal's paste binding, which Ghostty captures for
+        // Ctrl+Shift+V, and not by forwarding Ctrl+V to the PTY — which would inject the
+        // file URI on a remote SSH session). If the clipboard holds an IMAGE it is attached
+        // (PasteImage → half-block preview) and focus moves to chat; else the TEXT is pasted
+        // into the active pane. Runs on a background thread so a hung clipboard manager can
+        // never freeze the UI.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+        {
+            let paste_tx = self.event_tx.clone();
+            crate::system::clipboard::spawn_smart_paste_request(move |payload| match payload {
+                Some(crate::system::clipboard::ClipboardPayload::Image(img)) => {
+                    let _ = paste_tx.send(AppEvent::PasteImage(img));
+                }
+                Some(crate::system::clipboard::ClipboardPayload::Text(text)) => {
+                    // Already the smart-read result → insert verbatim, no re-detection.
+                    let _ = paste_tx.send(AppEvent::PasteInto(text));
+                }
+                None => {}
+            });
+            return;
+        }
+
+        // Ctrl+Shift+V (fallback kept for emulators that let it through): attach an image.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+        {
+            let paste_tx = self.event_tx.clone();
+            crate::system::clipboard::spawn_image_paste_request(move |image| {
+                if let Some(image) = image {
+                    let _ = paste_tx.send(AppEvent::PasteImage(image));
+                }
+            });
             return;
         }
 
@@ -2164,11 +2338,13 @@ impl App {
                     role: MessageRole::User,
                     content: format!("💻 `{}`", clean_cmd),
                     command_proposal: None,
+                    attachments: Vec::new(),
                 });
                 self.messages.push(ChatMessage {
                     role: MessageRole::Assistant,
                     content: String::new(),
                     command_proposal: None,
+                    attachments: Vec::new(),
                 });
 
                 // 2. Launch execution in live PTY with output capture.
@@ -2353,10 +2529,12 @@ impl App {
                     self.proactive_error_diagnosis = None;
 
                     // Push User message
+                    let attachments = self.take_pending_attachments();
                     self.messages.push(ChatMessage {
                         role: MessageRole::User,
                         content: input.clone(),
                         command_proposal: None,
+                        attachments,
                     });
 
                     // Prepare placeholder for streaming response
@@ -2364,6 +2542,7 @@ impl App {
                         role: MessageRole::Assistant,
                         content: String::new(),
                         command_proposal: None,
+                        attachments: Vec::new(),
                     });
 
                     self.chat_input.clear();
@@ -2408,19 +2587,6 @@ impl App {
                 self.chat_input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
             }
-            KeyCode::Char('v') | KeyCode::Char('V')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                // Asynchronous paste: the clipboard read happens on a background thread and
-                // comes back as a regular Paste event, so a hung clipboard manager can never
-                // freeze the UI thread (the old path blocked up to 1.5 s per keystroke).
-                let paste_tx = self.event_tx.clone();
-                crate::system::clipboard::spawn_paste_request(move |text| {
-                    if let Some(text) = text {
-                        let _ = paste_tx.send(AppEvent::Paste(text));
-                    }
-                });
-            }
             KeyCode::Char('\n') | KeyCode::Char('\r') => {
                 self.chat_input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
@@ -2453,6 +2619,14 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.modifiers.contains(KeyModifiers::SHIFT)
+                {
+                    // Ctrl+Shift+Backspace: drop the pending image before it is attached.
+                    if self.clear_pending_image() {
+                        return;
+                    }
+                }
                 if self.cursor_pos > 0 {
                     let prev_idx = self.chat_input[..self.cursor_pos]
                         .char_indices()
@@ -2700,6 +2874,7 @@ impl App {
                     command, output
                 ),
                 command_proposal: None,
+                attachments: Vec::new(),
             });
         }
         self.chat_scroll_from_bottom = 0;
@@ -2770,11 +2945,13 @@ impl App {
                 command, final_summary
             ),
             command_proposal: None,
+            attachments: Vec::new(),
         });
         self.messages.push(ChatMessage {
             role: MessageRole::Assistant,
             content: String::new(),
             command_proposal: None,
+            attachments: Vec::new(),
         });
         self.chat_scroll_from_bottom = 0;
         self.focus = Focus::Chat;
@@ -3016,6 +3193,7 @@ impl App {
             role: MessageRole::Assistant,
             content: String::new(),
             command_proposal: None,
+            attachments: Vec::new(),
         });
         self.chat_scroll_from_bottom = 0;
     }
@@ -3102,6 +3280,7 @@ impl App {
                     role: MessageRole::Assistant,
                     content: format!("⚠️ Erreur : {}", error),
                     command_proposal: None,
+                    attachments: Vec::new(),
                 });
             }
         } else {
@@ -3109,6 +3288,7 @@ impl App {
                 role: MessageRole::Assistant,
                 content: format!("⚠️ Erreur : {}", error),
                 command_proposal: None,
+                attachments: Vec::new(),
             });
         }
         self.set_toast(format!("Erreur : {}", error));
@@ -3375,7 +3555,13 @@ pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
 
 /// Extracts all proposed shell commands from markdown code blocks (excluding output/tools/trees)
 pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
-    let repaired = repair_prematurely_closed_code_blocks(text);
+    // The model's private <think>…</think> deliberation frequently contains illustrative
+    // (non-executable) code fences. These must never surface as actionable proposals — the
+    // tool-call parser already strips them (see agent::tools::strip_think_blocks). Strip them
+    // here too so an example block inside the reasoning is not executed as a real command.
+    let stripped =
+        crate::agent::tools::strip_think_blocks(text);
+    let repaired = repair_prematurely_closed_code_blocks(&stripped);
     let mut list = Vec::new();
     let mut remaining = repaired.as_str();
 
@@ -4426,7 +4612,20 @@ pub fn format_command_for_pty_with_session(
     }
 
     let is_fish = user_shell.contains("fish") && !is_remote;
-    let needs_bash = is_fish && is_bash_specific_syntax(&clean);
+    // Local shells (zsh/bash/dash) keep an interactive line editor that mangles pasted
+    // multiline heredocs (`<<'EOF'` bodies split across physical lines get eaten —
+    // the recurring "cmdand heredoc> ="/`<<''EOF'>` corruption). Routing heredoc scripts
+    // through `bash -c '…'` inlines the whole block as ONE logical line, so the editor
+    // only ever sees a single terminal line and bash executes the script verbatim.
+    // Remote shells are left untouched (their own line editor handles multiline fine and
+    // wrapping risked changing semantics); bare bash-specific tokens stay native for bash.
+    let needs_bash = if is_remote {
+        false
+    } else if is_fish {
+        is_bash_specific_syntax(&clean)
+    } else {
+        clean.contains("<<")
+    };
 
     if needs_bash {
         let escaped = clean.replace('\'', "'\\''");
@@ -5451,6 +5650,23 @@ mod tests {
         let md = format!("```bash\nbash\n{real}\n```\n", real = real_cmd);
         let proposals = extract_all_command_proposals(&md);
         assert_eq!(proposals, vec![real_cmd.to_string()]);
+    }
+
+    #[test]
+    fn extracts_only_the_real_command_not_thinking_examples() {
+        use super::extract_all_command_proposals;
+        // Real-world repro (session 20260830): the model's <think> deliberation contained an
+        // untagged example fence with the bare heredoc content line, which used to be extracted
+        // as the actionable proposal (and executed → code 127) while the real `sudo … tee`
+        // command live outside the think block.
+        let text = "<think>Ajouter dans /etc/fstab :\n```\nUUID=b7edcd14 /mnt/data ext4 defaults,nofail,x-systemd.automount 0 2\n```\n- nofail ne bloque pas le boot</think>Parfait, voici la commande :\n\n```bash\nsudo mkdir -p /mnt/data && printf 'UUID=b7edcd14 /mnt/data ext4 defaults,nofail,x-systemd.automount 0 2\\n' | sudo tee -a /etc/fstab && systemctl daemon-reload\n```";
+        let proposals = extract_all_command_proposals(text);
+        assert_eq!(
+            proposals,
+            vec![
+                "sudo mkdir -p /mnt/data && printf 'UUID=b7edcd14 /mnt/data ext4 defaults,nofail,x-systemd.automount 0 2\\n' | sudo tee -a /etc/fstab && systemctl daemon-reload".to_string()
+            ]
+        );
     }
 
     #[test]

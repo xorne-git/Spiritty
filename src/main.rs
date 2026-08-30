@@ -147,6 +147,8 @@ async fn run_loop(
             match event {
                 AppEvent::Key(key) => app.handle_key(key),
                 AppEvent::Paste(text) => app.handle_paste(text),
+                AppEvent::PasteInto(text) => app.paste_into(text),
+                AppEvent::PasteImage(image) => app.handle_paste_image(image),
                 AppEvent::Mouse(mouse) => {
                     let total_width = terminal.size()?.width;
                     app.handle_mouse(mouse, total_width);

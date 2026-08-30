@@ -75,16 +75,19 @@ async fn test_markdown_export_generation() {
         role: MessageRole::User,
         content: "Comment configurer php-fpm avec pm = ondemand ?".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "Voici la configuration recommandée pour le pool www.conf :\n```ini\npm = ondemand\npm.max_children = 50\n```".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.messages.push(ChatMessage {
         role: MessageRole::User,
         content: "💻 `systemctl restart php8.2-fpm`".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     let export_path = app
@@ -110,16 +113,19 @@ async fn test_chat_search_match_finding() {
         role: MessageRole::User,
         content: "Bonjour Spiritty, vérifie le port 80".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "Le port 80 est bien ouvert par Nginx.".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.messages.push(ChatMessage {
         role: MessageRole::User,
         content: "Et pour le port 443 ?".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.chat_search_query = "port".to_string();

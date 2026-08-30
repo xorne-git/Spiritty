@@ -50,7 +50,23 @@ impl OpenAiCompatibleProvider {
 #[derive(Serialize)]
 struct Message<'a> {
     role: &'a str,
-    content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<Vec<ContentPart<'a>>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ContentPart<'a> {
+    Text { r#type: &'a str, text: &'a str },
+    ImageUrl {
+        r#type: &'a str,
+        image_url: ImageUrl<'a>,
+    },
+}
+
+#[derive(Serialize)]
+struct ImageUrl<'a> {
+    url: &'a str,
 }
 
 #[derive(Serialize)]
@@ -173,20 +189,56 @@ impl LlmProvider for OpenAiCompatibleProvider {
         if !system_prompt.is_empty() {
             api_messages.push(Message {
                 role: "system",
-                content: system_prompt,
+                content: Some(vec![ContentPart::Text {
+                    r#type: "text",
+                    text: system_prompt,
+                }]),
             });
         }
 
-        for msg in messages {
+        // Owned data-URIs of every attachment, aligned per-message with `messages`. They
+        // must outlive the request body (which borrows them), so they are precomputed
+        // rather than produced inline (a temporary would be dropped).
+        let message_uris: Vec<Vec<String>> = messages
+            .iter()
+            .map(|m| m.attachments.iter().map(|a| a.data_uri()).collect())
+            .collect();
+
+        let mut api_messages = Vec::new();
+        for (idx, msg) in messages.iter().enumerate() {
             let role = match msg.role {
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
                 MessageRole::System => "user",
             };
-            api_messages.push(Message {
-                role,
-                content: &msg.content,
-            });
+            if msg.attachments.is_empty() {
+                api_messages.push(Message {
+                    role,
+                    content: Some(vec![ContentPart::Text {
+                        r#type: "text",
+                        text: &msg.content,
+                    }]),
+                });
+            } else {
+                // Vision turn: text + one image part per attachment (data: URI). The text
+                // part is retained so an image-only attach still carries an empty text block
+                // (the API refuses an image-only turn for some providers).
+                let mut parts = Vec::with_capacity(msg.attachments.len() + 1);
+                parts.push(ContentPart::Text {
+                    r#type: "text",
+                    text: &msg.content,
+                });
+                for uri in &message_uris[idx] {
+                    parts.push(ContentPart::ImageUrl {
+                        r#type: "image_url",
+                        image_url: ImageUrl { url: uri },
+                    });
+                }
+                api_messages.push(Message {
+                    role,
+                    content: Some(parts),
+                });
+            }
         }
 
         let request_body = ChatCompletionRequest {
@@ -355,5 +407,72 @@ mod reasoning_bracket_tests {
         assert_eq!(b.on_delta(None, Some("direct")), "direct");
         assert_eq!(b.on_delta(Some("stray after answer"), Some("")), "");
         assert_eq!(b.on_delta(None, Some("suite")), "suite");
+    }
+}
+
+#[cfg(test)]
+mod vision_payload_tests {
+    use crate::app::MessageAttachment;
+    use super::{ContentPart, ImageUrl, Message};
+
+    #[test]
+    fn plain_text_message_is_single_text_part() {
+        let msg = Message {
+            role: "user",
+            content: Some(vec![ContentPart::Text {
+                r#type: "text",
+                text: "hello",
+            }]),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"][0]["type"], "text");
+        assert_eq!(json["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn image_message_emits_image_url_data_uri_part() {
+        let att = MessageAttachment {
+            mime_type: "image/png".to_string(),
+            data_base64: "iVBORw0KGgo".to_string(),
+        };
+        let uri = att.data_uri();
+        assert_eq!(uri, "data:image/png;base64,iVBORw0KGgo");
+
+        let msg = Message {
+            role: "user",
+            content: Some(vec![
+                ContentPart::Text { r#type: "text", text: "" },
+                ContentPart::ImageUrl {
+                    r#type: "image_url",
+                    image_url: ImageUrl { url: &uri },
+                },
+            ]),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["content"][1]["type"], "image_url");
+        assert_eq!(json["content"][1]["image_url"]["url"], uri);
+    }
+
+    #[test]
+    fn data_uri_roundtrip_of_attachment() {
+        let att = MessageAttachment {
+            mime_type: "image/jpeg".to_string(),
+            data_base64: "abc123".to_string(),
+        };
+        assert_eq!(att.data_uri(), "data:image/jpeg;base64,abc123");
+        // Ensure `data:` URI form is what the MessageAttachment API promises.
+        assert!(att.data_uri().starts_with("data:"));
+    }
+
+    #[test]
+    fn message_attachment_serializes_verbatim() {
+        let att = MessageAttachment {
+            mime_type: "image/png".to_string(),
+            data_base64: "iVBORw0KGgo".to_string(),
+        };
+        let json = serde_json::to_value(&att).unwrap();
+        assert_eq!(json["mime_type"], "image/png");
+        assert_eq!(json["data_base64"], "iVBORw0KGgo");
     }
 }

@@ -16,11 +16,13 @@ fn test_session_creation_and_title_generation() {
             role: MessageRole::User,
             content: "Comment vérifier l'utilisation de la RAM avec free -h ?".to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         },
         ChatMessage {
             role: MessageRole::Assistant,
             content: "Voici la commande :\n```bash\nfree -h\n```".to_string(),
             command_proposal: Some("free -h".to_string()),
+            attachments: Vec::new(),
         },
     ];
 
@@ -52,11 +54,13 @@ fn test_session_compaction() {
             role: MessageRole::User,
             content: "Première question".to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         },
         ChatMessage {
             role: MessageRole::Assistant,
             content: "Première réponse".to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         },
     ];
     let short_history = vec!["Première question".to_string()];
@@ -78,12 +82,14 @@ fn test_session_compaction() {
             role: MessageRole::User,
             content: format!("Question numéro {}", i),
             command_proposal: None,
+            attachments: Vec::new(),
         });
         long_history.push(format!("Question numéro {}", i));
         long_messages.push(ChatMessage {
             role: MessageRole::Assistant,
             content: format!("💻 `echo {}`", i),
             command_proposal: Some(format!("echo {}", i)),
+            attachments: Vec::new(),
         });
     }
     // Total 16 messages
@@ -116,11 +122,13 @@ fn test_session_greeting_refinement() {
             role: MessageRole::User,
             content: "salut".to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         },
         ChatMessage {
             role: MessageRole::Assistant,
             content: "Salut ! Comment puis-je vous aider ?".to_string(),
             command_proposal: None,
+            attachments: Vec::new(),
         },
     ];
     session.update_from_chat(
@@ -138,6 +146,7 @@ fn test_session_greeting_refinement() {
         role: MessageRole::User,
         content: "ma session dms+niri ne démarre plus".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     session.update_from_chat(
         &msgs_full,
@@ -162,11 +171,13 @@ fn test_session_storage_roundtrip() {
         role: MessageRole::User,
         content: "df -h /".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     session.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "Espace disque vérifié.".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     // 1. Save
@@ -210,6 +221,7 @@ async fn test_app_new_session_shortcut() {
         role: MessageRole::User,
         content: "Première question".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.chat_input = "Draft en cours".to_string();
 
@@ -242,11 +254,13 @@ async fn test_app_load_session_shortcut() {
         role: MessageRole::User,
         content: "Question sauvegardée".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     saved_session.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "Réponse sauvegardée".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     let _ = SessionStorage::save(&saved_session);
 

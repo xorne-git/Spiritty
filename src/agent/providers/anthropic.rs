@@ -37,9 +37,38 @@ impl AnthropicProvider {
 }
 
 #[derive(Serialize)]
+#[serde(untagged)]
+enum AnthropicContent<'a> {
+    /// Plain text turn (the common case, string content).
+    Text(&'a str),
+    /// Vision turn: an array of content blocks (text + image).
+    Blocks(Vec<AnthropicBlock<'a>>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum AnthropicBlock<'a> {
+    #[serde(rename = "text")]
+    Text {
+        text: &'a str,
+    },
+    #[serde(rename = "image")]
+    Image {
+        source: AnthropicImageSource<'a>,
+    },
+}
+
+#[derive(Serialize)]
+struct AnthropicImageSource<'a> {
+    r#type: &'a str,
+    media_type: &'a str,
+    data: &'a str,
+}
+
+#[derive(Serialize)]
 struct AnthropicMessage<'a> {
     role: &'a str,
-    content: &'a str,
+    content: AnthropicContent<'a>,
 }
 
 #[derive(Serialize)]
@@ -115,17 +144,52 @@ impl LlmProvider for AnthropicProvider {
             anyhow::bail!(err);
         }
 
+        // Owned inline data per message, aligned with `messages`, so the blocks can borrow
+        // them while the request body lives. Anthropic expects the raw base64 body (no
+        // `data:` prefix) as the `source.data` of an `image` content block.
+        let inline_datas: Vec<Vec<(String, String)>> = messages
+            .iter()
+            .map(|m| {
+                m.attachments
+                    .iter()
+                    .map(|a| (a.mime_type.clone(), a.data_base64.clone()))
+                    .collect()
+            })
+            .collect();
+
         let mut api_messages = Vec::new();
-        for msg in messages {
+        for (idx, msg) in messages.iter().enumerate() {
             let role = match msg.role {
                 MessageRole::User => "user",
                 MessageRole::Assistant => "assistant",
                 MessageRole::System => "user",
             };
-            api_messages.push(AnthropicMessage {
-                role,
-                content: &msg.content,
-            });
+            if msg.attachments.is_empty() {
+                api_messages.push(AnthropicMessage {
+                    role,
+                    content: AnthropicContent::Text(&msg.content),
+                });
+            } else {
+                let mut blocks = Vec::with_capacity(msg.attachments.len() + 1);
+                if !msg.content.is_empty() {
+                    blocks.push(AnthropicBlock::Text {
+                        text: &msg.content,
+                    });
+                }
+                for (mime, data) in &inline_datas[idx] {
+                    blocks.push(AnthropicBlock::Image {
+                        source: AnthropicImageSource {
+                            r#type: "base64",
+                            media_type: mime,
+                            data,
+                        },
+                    });
+                }
+                api_messages.push(AnthropicMessage {
+                    role,
+                    content: AnthropicContent::Blocks(blocks),
+                });
+            }
         }
 
         let request_body = AnthropicRequest {

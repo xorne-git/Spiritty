@@ -247,30 +247,35 @@ async fn test_chat_scrolling_repro() {
         role: MessageRole::Assistant,
         content: "L'utilisateur me salue simplement. Je dois répondre de manière concise et amicale en français, comme un assistant Spiritty. Pas besoin d'exécuter de commande ici - c'est juste une salutation.\n\nSalut ! 🦀 Je suis Spiritty, ton assistant terminal. Comment puis-je t'aider aujourd'hui ?".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.messages.push(ChatMessage {
         role: MessageRole::User,
         content: "Génère-moi un fichier ~/audit_systeme.md récapitulant les informations clés de mon noyau, shell et mémoire RAM.".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "<think>\nL'utilisateur veut que je génère un fichier ~/audit_systeme.md avec des infos sur le noyau, le shell et la RAM. Je dois d'abord récupérer ces informations via tool:run_command, puis créer le fichier.\n\nJe vais exécuter les commandes nécessaires pour obtenir :\n- Version du noyau (uname -r)\n- Shell en cours (echo $SHELL ou whoami)\n- Informations sur la RAM (free -h)\n</think>\n```tool:run_command\nuname -r && echo \"---\" && whoami && echo \"---\" && free -h | head -2 && echo \"---\" && cat /etc/os-release | grep PRETTY_NAME\n```".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.messages.push(ChatMessage {
         role: MessageRole::User,
         content: "💻 `uname -r && echo \"---\" && whoami && echo \"---\" && free -h | head -2 && echo \"---\" && cat /etc/os-release | grep PRETTY_NAME`".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "```bash\ncat > ~/audit_systeme.md << 'EOF'\n# Audit Système - CachyOS\n\n## Informations Clés\n\n### Noyau (Kernel)\n- **Version** : 7.1.8-1-cachyos\n- **Distribution** : CachyOS\n\n### Shell\n- **Shell actif** : xorne (alias pour fish)\n- **Utilisateur** : xorne\n\n### Mémoire RAM\n| Statut | Quantité |\n|--------|----------|\n| **Total** | 31 GiB |\n| **Utilisé** | 11 GiB |\n| **Libre** | 885 MiB |\n| **Disponible** | 19 GiB |\n\n### Résumé\n- **Utilisation RAM** : ~36% (11 GiB / 31 GiB)\n- **Etat** : ✅ Bon - La mémoire est correctement gérée avec suffisamment de ressources disponibles.\nEOF\n```".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     let panel_area_big = Rect::new(0, 0, 100, 200);
@@ -449,6 +454,7 @@ async fn test_stop_agent_generation() {
         role: MessageRole::Assistant,
         content: "Génération partielle...".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
 
     app.agent.is_generating = true;
@@ -492,6 +498,27 @@ fn test_format_command_for_pty() {
     assert_eq!(
         format_command_for_pty("node app.js & BGPID=$!", "bash"),
         " node app.js & BGPID=$!\n"
+    );
+
+    // 5b. Heredoc (multiline, `<<EOF`) on a LOCAL zsh -> wrapped in `bash -c '…'` so the
+    //     interactive line editor never sees the body split across physical lines
+    //     (regression: "cmdand heredoc> =" / `<<''EOF'>` corruption on real sessions).
+    assert_eq!(
+        format_command_for_pty("sudo tee /etc/acpi <<'EOF'\n[Unit]\nDescription=acpi\nEOF", "zsh"),
+        " bash -c 'sudo tee /etc/acpi <<'\\''EOF'\\''\n[Unit]\nDescription=acpi\nEOF'\n"
+    );
+
+    // 5c. Non-heredoc bash syntax on local zsh stays native (no needless wrap).
+    assert_eq!(
+        format_command_for_pty("echo $? > /tmp/rc", "zsh"),
+        " echo $? > /tmp/rc\n"
+    );
+
+    // 5d. Heredoc on a REMOTE shell is left untouched (the remote line editor handles
+    //     multiline fine; wrapping would risk changing semantics).
+    assert_eq!(
+        format_command_for_pty_with_session("printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE", "zsh", true, true),
+        " printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE\n"
     );
 
     // 6. Simple single line on remote SSH (tool capture -> clean command, no inline sentinel,
@@ -921,11 +948,13 @@ async fn test_streaming_tail_is_rendered_live() {
         role: MessageRole::User,
         content: "Hello".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: "Réponse partielle en cours de streaming XYZQ".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.agent.is_generating = true;
     app.spinner_frame = 3;
@@ -955,6 +984,7 @@ async fn test_deep_thinking_wording_when_silent_stream() {
         role: MessageRole::Assistant,
         content: String::new(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.agent.is_generating = true;
     app.spinner_frame = 5;
@@ -991,6 +1021,7 @@ async fn test_streaming_frame_stability_between_spins() {
         role: MessageRole::Assistant,
         content: "Corps stable pendant le streaming.".to_string(),
         command_proposal: None,
+        attachments: Vec::new(),
     });
     app.agent.is_generating = true;
 

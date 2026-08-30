@@ -9,6 +9,13 @@ pub enum AppEvent {
     Key(KeyEvent),
     Mouse(MouseEvent),
     Paste(String),
+    /// Like `Paste` but inserted verbatim (no image-path detection) — used after a smart
+    /// re-read already tried the image and fell back to text, so it cannot recurse.
+    PasteInto(String),
+    /// An image was read from the clipboard and is ready to be attached to the next
+    /// user prompt (Ctrl+Shift+V). Carries the attachment (sent to the model) plus the raw
+    /// RGBA pixels for a compact TUI preview.
+    PasteImage(crate::app::PendingImage),
     Resize(u16, u16),
     PtyOutput(Vec<u8>),
     PtyExit,

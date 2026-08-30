@@ -37,8 +37,18 @@ impl GeminiProvider {
 }
 
 #[derive(Serialize)]
-struct GeminiPart<'a> {
-    text: &'a str,
+#[serde(untagged)]
+enum GeminiPart<'a> {
+    Text { text: &'a str },
+    InlineData {
+        inline_data: InlineData<'a>,
+    },
+}
+
+#[derive(Serialize)]
+struct InlineData<'a> {
+    mime_type: &'a str,
+    data: &'a str,
 }
 
 #[derive(Serialize)]
@@ -108,7 +118,7 @@ impl LlmProvider for GeminiProvider {
 
         let system_instruction = if !system_prompt.is_empty() {
             Some(GeminiSystemInstruction {
-                parts: vec![GeminiPart {
+                parts: vec![GeminiPart::Text {
                     text: system_prompt,
                 }],
             })
@@ -116,9 +126,22 @@ impl LlmProvider for GeminiProvider {
             None
         };
 
+        // Owned inline_data payloads per message, aligned with `messages`, so the parts can
+        // borrow them while the request body lives. Gemini's `inline_data` is the raw (non
+        // data:-URI) base64 body, e.g. `data` = "iVBOR…" with `mime_type` = "image/png".
+        let inline_datas: Vec<Vec<(String, String)>> = messages
+            .iter()
+            .map(|m| {
+                m.attachments
+                    .iter()
+                    .map(|a| (a.mime_type.clone(), a.data_base64.clone()))
+                    .collect()
+            })
+            .collect();
+
         let mut contents: Vec<GeminiContent> = Vec::new();
-        for msg in messages {
-            if msg.content.is_empty() {
+        for (idx, msg) in messages.iter().enumerate() {
+            if msg.content.is_empty() && msg.attachments.is_empty() {
                 // Never send empty turns (the trailing assistant streaming
                 // placeholder is dropped upstream, but stay defensive).
                 continue;
@@ -128,19 +151,31 @@ impl LlmProvider for GeminiProvider {
                 MessageRole::Assistant => "model",
                 MessageRole::System => "user",
             };
+            let mut parts: Vec<GeminiPart> = Vec::new();
+            if !msg.content.is_empty() {
+                parts.push(GeminiPart::Text { text: &msg.content });
+            }
+            for (mime, data) in &inline_datas[idx] {
+                parts.push(GeminiPart::InlineData {
+                    inline_data: InlineData {
+                        mime_type: mime,
+                        data,
+                    },
+                });
+            }
+            if parts.is_empty() {
+                continue;
+            }
             match contents.last_mut() {
                 // Merge consecutive same-role contents (System summaries map to
                 // "user" and tool results arrive as back-to-back user turns):
                 // keeps the request canonical for the Gemini API.
                 Some(last) if last.role == role => {
-                    last.parts.push(GeminiPart { text: "\n" });
-                    last.parts.push(GeminiPart { text: &msg.content });
+                    last.parts.push(GeminiPart::Text { text: "\n" });
+                    last.parts.extend(parts);
                 }
                 _ => {
-                    contents.push(GeminiContent {
-                        role,
-                        parts: vec![GeminiPart { text: &msg.content }],
-                    });
+                    contents.push(GeminiContent { role, parts });
                 }
             }
         }
