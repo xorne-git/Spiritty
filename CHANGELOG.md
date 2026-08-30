@@ -15,6 +15,15 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Corrigé
+
+- **Script d'installation (`install.sh`) : chemin absolu de l'exécutable dans le lanceur XDG (`Exec`)**
+  — le fichier `spiritty.desktop` généré contenait `Exec=spiritty` relatif. Lorsque Spiritty
+  est installé dans `~/.local/bin` (installation utilisateur sans sudo), les lanceurs de bureau
+  et émulateurs de terminal (Ghostty, etc.) échouaient avec l'erreur `Failed to find executable spiritty`
+  car `~/.local/bin` n'est pas présent dans le `$PATH` global de la session graphique. Le script
+  utilise désormais le chemin absolu exact `${INSTALL_DIR}/${BINARY_NAME}`.
+
 ## v0.6.3 — 2026-08-30
 
 ### Ajouté

@@ -285,12 +285,12 @@ setup_desktop_entry() {
     mkdir -p "$app_dir"
     local desktop_dest="${app_dir}/spiritty.desktop"
 
-    cat > "$desktop_dest" << 'EOF'
+    cat > "$desktop_dest" << EOF
 [Desktop Entry]
 Type=Application
 Name=Spiritty
 Comment=AI-powered split-screen terminal companion for sysadmins and power users
-Exec=spiritty
+Exec=${INSTALL_DIR}/${BINARY_NAME}
 Icon=spiritty
 Terminal=true
 Categories=System;TerminalEmulator;Development;
