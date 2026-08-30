@@ -15,6 +15,17 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+## v0.6.1 — 2026-08-30
+
+### Modifié
+
+- **Emoji de marque remplacé** — l'esprit fantôme `👻` devient **🧞 (génie)**,
+  cohérent avec l'icône « lampe à génie » du projet, partout dans l'app :
+  titre du panneau chat, préfixe des réponses assistant, aide CLI, rapports
+  Markdown exportés et résumés de session. L'icône `assets/icons/spiritty.svg`
+  n'est pas rendue dans la TUI (un terminal ne peut pas afficher un SVG) ; la
+  marque emoji reste le marqueur visible.
+
 ## v0.6.0 — 2026-08-30
 
 ### Ajouté
