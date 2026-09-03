@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -10,6 +11,12 @@ use ratatui::{
 use crate::i18n::{I18nKey, Language};
 
 pub struct HelpModal;
+
+impl HelpModal {
+    pub fn handle_key(key: KeyEvent) -> bool {
+        key.code == KeyCode::Esc || key.code == KeyCode::Enter
+    }
+}
 
 fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
     vec![

@@ -7,7 +7,13 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
 };
 
+use crossterm::event::{KeyCode, KeyEvent};
 use crate::i18n::{I18nKey, Language};
+
+pub enum SshReconnectAction {
+    Connect(String),
+    Close,
+}
 
 /// Small centered modal offering to reconnect to the SSH host of a `-c`-resumed
 /// session while the PTY is still local. Enter accepts, Esc dismisses (the 🏷️
@@ -15,6 +21,14 @@ use crate::i18n::{I18nKey, Language};
 pub struct SshReconnectModal;
 
 impl SshReconnectModal {
+    pub fn handle_key(key: KeyEvent, target: &str) -> Option<SshReconnectAction> {
+        match key.code {
+            KeyCode::Enter => Some(SshReconnectAction::Connect(target.to_string())),
+            KeyCode::Esc | KeyCode::Char('n' | 'N' | 'q' | 'Q') => Some(SshReconnectAction::Close),
+            _ => None,
+        }
+    }
+
     pub fn render_modal(area: Rect, buf: &mut Buffer, target: &str, lang: Language) {
         // Compact box: wide enough for the target, never larger than the screen.
         let modal_width = 48u16.min(area.width.saturating_sub(4)).max(24);

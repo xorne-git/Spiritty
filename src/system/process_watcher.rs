@@ -483,22 +483,22 @@ mod tests {
         // A foreground leaf whose argv[0] resolves to `ssh` but carries a non-target
         // argument must NOT forge a fake Ssh session (e.g. `ssh 30` from a leaked numeric
         // arg, or `ssh -N` with no destination). Otherwise a Local session gets mislabelled.
-        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "30".to_string()]), None);
-        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "-N".to_string()]), None);
-        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&["ssh".to_string(), "30".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&["ssh".to_string(), "-N".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&["ssh".to_string()]), None);
         // A numeric-looking host is also rejected.
-        assert_eq!(parse_session_from_cmdline(&vec!["ssh".to_string(), "1234".to_string()]), None);
+        assert_eq!(parse_session_from_cmdline(&["ssh".to_string(), "1234".to_string()]), None);
     }
 
     #[test]
     fn test_ssh_with_valid_targets_is_accepted() {
-        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "vps-prod".to_string()]);
+        let res = parse_session_from_cmdline(&["ssh".to_string(), "vps-prod".to_string()]);
         assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "vps-prod"));
 
-        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "root@vps.prod.internal".to_string()]);
+        let res = parse_session_from_cmdline(&["ssh".to_string(), "root@vps.prod.internal".to_string()]);
         assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "vps.prod.internal"));
 
-        let res = parse_session_from_cmdline(&vec!["ssh".to_string(), "10.0.0.8".to_string()]);
+        let res = parse_session_from_cmdline(&["ssh".to_string(), "10.0.0.8".to_string()]);
         assert!(matches!(res, Some(ActiveSession::Ssh { ref host, .. }) if host == "10.0.0.8"));
     }
 }

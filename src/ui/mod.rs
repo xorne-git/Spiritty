@@ -15,11 +15,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, Focus, ModalState},
+    app::{App, Focus},
     i18n::{I18nKey, Language},
 };
 use chat_panel::ChatPanel;
-use components::{BookmarksModal, ExportModal, HelpModal};
 use terminal_panel::TerminalPanel;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -202,48 +201,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let lang = app.config.get_language();
 
     // 3. Render Modal Overlays on top of the split screen if active
-    match &app.modal {
-        ModalState::Help => {
-            HelpModal::render_modal(size, frame.buffer_mut(), lang);
-        }
-        ModalState::Config(config_state) => {
-            config_state.render_modal(size, frame.buffer_mut(), lang);
-        }
-        ModalState::Sessions(session_state) => {
-            session_state.render_modal(size, frame.buffer_mut(), lang);
-        }
-        ModalState::Bookmarks(bookmarks_state) => {
-            BookmarksModal::render_modal(size, frame.buffer_mut(), bookmarks_state, lang);
-        }
-        ModalState::Export(export_state) => {
-            ExportModal::render_modal(size, frame.buffer_mut(), export_state, lang);
-        }
-        ModalState::Mcp(mcp_state) => {
-            crate::ui::components::McpModal::new(mcp_state, lang).render(size, frame.buffer_mut());
-        }
-        ModalState::SshReconnect { ref target } => {
-            crate::ui::components::SshReconnectModal::render_modal(
-                size,
-                frame.buffer_mut(),
-                target,
-                lang,
-            );
-        }
-        ModalState::RenameTab { tab_index, ref input } => {
-            render_rename_tab_modal(size, frame.buffer_mut(), *tab_index, input, app.theme, lang);
-        }
-        ModalState::None => {
-            // Position cursor on the active pane only when no modal is open
-            match app.focus {
-                Focus::Chat => {
-                    if let Some((cx, cy)) = chat_cursor {
-                        frame.set_cursor_position((cx, cy));
-                    }
+    if app.modal.is_open() {
+        app.modal.render(size, frame.buffer_mut(), app.theme, lang);
+    } else {
+        // Position cursor on the active pane only when no modal is open
+        match app.focus {
+            Focus::Chat => {
+                if let Some((cx, cy)) = chat_cursor {
+                    frame.set_cursor_position((cx, cy));
                 }
-                Focus::Terminal => {
-                    if let Some((cx, cy)) = term_cursor {
-                        frame.set_cursor_position((cx, cy));
-                    }
+            }
+            Focus::Terminal => {
+                if let Some((cx, cy)) = term_cursor {
+                    frame.set_cursor_position((cx, cy));
                 }
             }
         }
@@ -255,72 +225,6 @@ const SPINNER_FRAMES: &[&str] = &["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯
 /// Returns the current spinner frame for smooth continuous rotation
 pub fn get_spinner_char(frame: usize) -> &'static str {
     SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]
-}
-
-fn render_rename_tab_modal(
-    area: Rect,
-    buf: &mut Buffer,
-    tab_index: usize,
-    input: &str,
-    theme: crate::ui::theme::ThemeId,
-    lang: Language,
-) {
-    let palette = theme.palette();
-    let modal_width = 54u16.min(area.width.saturating_sub(4));
-    let modal_height = 7u16;
-
-    let modal_x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
-    let modal_y = area.top() + (area.height.saturating_sub(modal_height)) / 2;
-    let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height);
-
-    Clear.render(modal_area, buf);
-
-    let title = format!(" 🏷️ {} #{} ", lang.t(I18nKey::TabRenameTitle), tab_index + 1);
-    let block = Block::default()
-        .borders(ratatui::widgets::Borders::ALL)
-        .border_set(ratatui::symbols::border::ROUNDED)
-        .border_style(Style::default().fg(palette.accent_primary))
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(palette.accent_primary)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-    let inner = block.inner(modal_area);
-    block.render(modal_area, buf);
-
-    if inner.height >= 3 && inner.width >= 10 {
-        // Label
-        let label = lang.t(I18nKey::TabRenamePrompt);
-        buf.set_string(inner.x + 1, inner.y, label, Style::default().fg(palette.text_secondary));
-
-        // Text input field box
-        let input_area = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
-        let input_style = Style::default()
-            .bg(palette.selection_bg)
-            .fg(palette.text_primary);
-        buf.set_style(input_area, input_style);
-
-        let display_text = if input.is_empty() {
-            " "
-        } else {
-            input
-        };
-        buf.set_string(input_area.x + 1, input_area.y, display_text, input_style.add_modifier(Modifier::BOLD));
-        // Render cursor symbol
-        let cursor_x = (input_area.x + 1 + unicode_width::UnicodeWidthStr::width(input) as u16).min(input_area.right().saturating_sub(1));
-        buf.set_string(cursor_x, input_area.y, "█", Style::default().fg(palette.accent_primary));
-
-        // Help line
-        let help_text = lang.t(I18nKey::TabRenameHelp);
-        buf.set_string(
-            inner.x + 1,
-            inner.y + 3,
-            help_text,
-            Style::default().fg(palette.text_secondary),
-        );
-    }
 }
 
 /// Renders the 1-line info bar at the bottom: Left metrics have full priority, right shortcuts adapt to remaining space

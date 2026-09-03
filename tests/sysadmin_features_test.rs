@@ -634,7 +634,7 @@ async fn test_tab_renaming_and_session_persistence() {
     // 2. Alt + R opens the tab rename modal
     let alt_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT);
     app.handle_key(alt_r);
-    assert!(matches!(app.modal, ModalState::RenameTab { .. }));
+    assert!(matches!(app.modal, ModalState::RenameTab(_)));
 
     // 3. Type new title "production-db" and press Enter
     for c in "production-db".chars() {

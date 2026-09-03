@@ -1,12 +1,14 @@
 pub mod clipboard;
 pub mod hosts;
 pub mod process_watcher;
+pub mod supervisor;
 
 pub use hosts::{HostBookmark, HostEntry, HostProfile, HostsStore};
 pub use process_watcher::{
     detect_active_session, detect_current_working_dir, detect_git_branch, format_compact_path,
     ActiveSession,
 };
+pub use supervisor::{InspectableTab, SystemSupervisor};
 
 use std::env;
 use std::fs;

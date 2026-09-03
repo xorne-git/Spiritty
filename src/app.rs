@@ -17,8 +17,7 @@ use crate::{
     ui::{
         chat_panel::prompt_visual_rows,
         components::{
-            BookmarksModalAction, BookmarksModalState, ConfigModalState, ExportModalAction,
-            ExportModalState, SessionModalAction, SessionModalState,
+            BookmarksModalState, ConfigModalState, ExportModalState, SessionModalState,
         },
         theme::ThemeId,
     },
@@ -206,25 +205,7 @@ pub struct ProactiveDiagnosis {
     pub error_message: String,
 }
 
-pub enum ModalState {
-    None,
-    Help,
-    Config(ConfigModalState),
-    Sessions(SessionModalState),
-    Bookmarks(BookmarksModalState),
-    Export(ExportModalState),
-    Mcp(crate::ui::components::McpModalState),
-    /// Small prompt offering to reconnect to the SSH host of a `-c`-resumed session
-    /// whose PTY is currently local.
-    SshReconnect {
-        target: String,
-    },
-    /// Modal allowing the user to set or reset the custom title of a terminal tab (Alt+R)
-    RenameTab {
-        tab_index: usize,
-        input: String,
-    },
-}
+pub use crate::ui::components::{ModalOutcome, ModalState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionPanel {
@@ -342,6 +323,32 @@ impl TerminalTab {
     }
 }
 
+impl crate::system::InspectableTab for TerminalTab {
+    fn child_pid(&self) -> Option<u32> {
+        self.pty.child_pid()
+    }
+
+    fn active_session(&self) -> &ActiveSession {
+        &self.active_session
+    }
+
+    fn set_active_session(&mut self, session: ActiveSession) {
+        self.active_session = session;
+    }
+
+    fn set_remote_profile(&mut self, profile: Option<crate::system::HostProfile>) {
+        self.active_remote_profile = profile;
+    }
+
+    fn set_current_dir(&mut self, dir: Option<String>) {
+        self.current_dir = dir;
+    }
+
+    fn set_git_branch(&mut self, branch: Option<String>) {
+        self.git_branch = branch;
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TerminalTabHit {
     pub tab_index: usize,
@@ -409,7 +416,7 @@ pub struct App {
     pub clipboard_toast: Option<(std::time::Instant, usize)>,
     pub copied_current_selection: bool,
     pub current_session: Session,
-    pub hosts_store: HostsStore,
+    pub system_supervisor: crate::system::SystemSupervisor,
     pub toast_message: Option<(std::time::Instant, String)>,
     pub theme: ThemeId,
     pub proactive_error_diagnosis: Option<ProactiveDiagnosis>,
@@ -713,7 +720,7 @@ impl App {
             clipboard_toast: None,
             copied_current_selection: false,
             current_session,
-            hosts_store: HostsStore::load(),
+            system_supervisor: crate::system::SystemSupervisor::new(),
             toast_message: None,
             theme,
             proactive_error_diagnosis: None,
@@ -739,6 +746,14 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    pub fn hosts_store(&self) -> &HostsStore {
+        &self.system_supervisor.hosts_store
+    }
+
+    pub fn hosts_store_mut(&mut self) -> &mut HostsStore {
+        &mut self.system_supervisor.hosts_store
     }
 
     /// Refreshes the online pricing registry (multi-provider listing). When `announce` is
@@ -964,6 +979,80 @@ impl App {
         }
     }
 
+    pub fn apply_modal_outcome(&mut self, outcome: ModalOutcome) {
+        match outcome {
+            ModalOutcome::None => {}
+            ModalOutcome::Close => {
+                self.modal = ModalState::None;
+            }
+            ModalOutcome::LoadSession(id) => {
+                self.load_session(&id);
+                self.close_sessions_modal_after_load();
+            }
+            ModalOutcome::NewSession => {
+                self.new_session();
+                self.modal = ModalState::None;
+            }
+            ModalOutcome::ConnectSsh(target) => {
+                self.modal = ModalState::None;
+                let cmd = format!("ssh {}\n", target);
+                let _ = self.pty_mut().write_all(cmd.as_bytes());
+                self.focus = Focus::Terminal;
+                let lang = self.config.get_language();
+                self.set_toast(if lang == Language::Fr {
+                    format!("🔗 Connexion à {}…", target)
+                } else {
+                    format!("🔗 Connecting to {}…", target)
+                });
+            }
+            ModalOutcome::TriggerHostScan => {
+                self.trigger_host_scan();
+            }
+            ModalOutcome::ExportMarkdown(target_path) => {
+                self.modal = ModalState::None;
+                match self.export_current_session_markdown_to(&target_path) {
+                    Ok(resolved_path) => {
+                        let compact = crate::system::format_compact_path(&resolved_path);
+                        self.set_toast(format!("📝 Rapport exporté : {}", compact));
+                    }
+                    Err(e) => {
+                        self.set_toast(format!("❌ Erreur export : {}", e));
+                    }
+                }
+            }
+            ModalOutcome::McpServersChanged => {
+                self.agent
+                    .reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                if let ModalState::Mcp(ref mut mcp_state) = self.modal {
+                    mcp_state.sync_with_config(&self.config);
+                }
+            }
+            ModalOutcome::SaveConfigAndClose => {
+                if let ModalState::Config(ref config_state) = self.modal {
+                    self.theme = config_state.theme;
+                }
+                self.agent
+                    .reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                self.trigger_context_probe();
+                self.save_current_session();
+                self.modal = ModalState::None;
+            }
+            ModalOutcome::UpdatePricing => {
+                if let ModalState::Config(ref config_state) = self.modal {
+                    self.theme = config_state.theme;
+                }
+                self.trigger_pricing_update();
+            }
+            ModalOutcome::SetTabTitle { tab_index, title } => {
+                if tab_index < self.tabs.len() {
+                    self.tabs[tab_index].custom_title = title;
+                    self.save_current_session();
+                }
+                self.modal = ModalState::None;
+            }
+        }
+    }
+
     /// After resuming a session that WAS remote while the PTY is still local, offer
     /// a one-keystroke reconnection to the recorded SSH host. Never interrupts a
     /// running PTY capture, and never shows when already connected (the live 🌐
@@ -975,7 +1064,10 @@ impl App {
                 // which is not directly connectable — resolve it to the address that
                 // actually reached that machine (store: `ducasse-seine.com`), and
                 // heal the persisted hint so the next resume offers it directly.
-                let connectable = self.hosts_store.resolve_connectable_target(&target);
+                let connectable = self
+                    .system_supervisor
+                    .hosts_store
+                    .resolve_connectable_target(&target);
                 if connectable != target {
                     self.current_session.last_ssh_target = Some(connectable.clone());
                 }
@@ -1704,32 +1796,9 @@ impl App {
     /// Inserts pasted text into the active pane (modal-aware). No image-path detection —
     /// used for regular text pastes and as the non-recursive fallback of `handle_paste`.
     pub fn paste_into(&mut self, text: String) {
-        match &mut self.modal {
-            ModalState::SshReconnect { .. } => {
-                // Modal open: pasted text is swallowed.
-            }
-            ModalState::Config(config_state) => {
-                config_state.handle_paste(text);
-                return;
-            }
-            ModalState::Export(export_state) => {
-                export_state.handle_paste(text);
-                return;
-            }
-            ModalState::Mcp(mcp_state) => {
-                mcp_state.handle_paste(text);
-                return;
-            }
-            ModalState::Bookmarks(bm_state) => {
-                bm_state.handle_paste(text);
-                return;
-            }
-            ModalState::RenameTab { ref mut input, .. } => {
-                input.push_str(&text);
-                return;
-            }
-            ModalState::Help | ModalState::Sessions(_) => return,
-            ModalState::None => {}
+        if self.modal.is_open() {
+            self.modal.handle_paste(&text);
+            return;
         }
 
         match self.focus {
@@ -1877,7 +1946,10 @@ impl App {
                         .active_session
                         .ssh_target()
                         .map(|s| s.to_string());
-                    ModalState::Bookmarks(BookmarksModalState::new(&self.hosts_store, active_ssh))
+                    ModalState::Bookmarks(BookmarksModalState::new(
+                        &self.system_supervisor.hosts_store,
+                        active_ssh,
+                    ))
                 }
             };
             return;
@@ -2001,189 +2073,16 @@ impl App {
         }
 
         // 2. If a modal is open, it captures all keys
-        if let ModalState::SshReconnect { ref target } = self.modal {
-            let target = target.clone();
-            match key.code {
-                KeyCode::Enter => {
-                    let cmd = format!("ssh {}\n", target);
-                    let _ = self.pty_mut().write_all(cmd.as_bytes());
-                    self.focus = Focus::Terminal;
-                    self.modal = ModalState::None;
-                    let lang = self.config.get_language();
-                    self.set_toast(if lang == Language::Fr {
-                        format!("🔗 Connexion à {}…", target)
-                    } else {
-                        format!("🔗 Connecting to {}…", target)
-                    });
-                }
-                KeyCode::Esc | KeyCode::Char('n' | 'N' | 'q' | 'Q') => {
-                    self.modal = ModalState::None;
-                }
-                _ => {}
+        if self.modal.is_open() {
+            let outcome = self.modal.handle_key(
+                key,
+                &mut self.config,
+                &mut self.system_supervisor.hosts_store,
+            );
+            if outcome != ModalOutcome::None {
+                self.apply_modal_outcome(outcome);
             }
             return;
-        }
-        let session_action = if let ModalState::Sessions(ref mut session_state) = self.modal {
-            session_state.handle_key(key)
-        } else {
-            None
-        };
-
-        if let Some(action) = session_action {
-            match action {
-                SessionModalAction::Load(id) => {
-                    self.load_session(&id);
-                    self.close_sessions_modal_after_load();
-                }
-                SessionModalAction::NewSession => {
-                    self.new_session();
-                    self.modal = ModalState::None;
-                }
-                SessionModalAction::Close => {
-                    self.modal = ModalState::None;
-                }
-            }
-            return;
-        }
-
-        let bookmark_action = if let ModalState::Bookmarks(ref mut bm_state) = self.modal {
-            bm_state.handle_key(key, &mut self.hosts_store)
-        } else {
-            None
-        };
-
-        if let Some(action) = bookmark_action {
-            match action {
-                BookmarksModalAction::Connect(target) => {
-                    self.modal = ModalState::None;
-                    let cmd = format!("ssh {}\n", target);
-                    let _ = self.pty_mut().write_all(cmd.as_bytes());
-                    self.focus = Focus::Terminal;
-                }
-                BookmarksModalAction::TriggerScan => {
-                    self.trigger_host_scan();
-                }
-                BookmarksModalAction::Close => {
-                    self.modal = ModalState::None;
-                }
-            }
-            return;
-        }
-
-        let export_action = if let ModalState::Export(ref mut exp_state) = self.modal {
-            exp_state.handle_key(key)
-        } else {
-            None
-        };
-
-        if let Some(action) = export_action {
-            match action {
-                ExportModalAction::Export(target_path) => {
-                    self.modal = ModalState::None;
-                    match self.export_current_session_markdown_to(&target_path) {
-                        Ok(resolved_path) => {
-                            let compact = crate::system::format_compact_path(&resolved_path);
-                            self.set_toast(format!("📝 Rapport exporté : {}", compact));
-                        }
-                        Err(e) => {
-                            self.set_toast(format!("❌ Erreur export : {}", e));
-                        }
-                    }
-                }
-                ExportModalAction::Close => {
-                    self.modal = ModalState::None;
-                }
-            }
-            return;
-        }
-
-        let mcp_action = if let ModalState::Mcp(ref mut mcp_state) = self.modal {
-            mcp_state.handle_key(key, &mut self.config)
-        } else {
-            None
-        };
-
-        if let Some(action) = mcp_action {
-            match action {
-                crate::ui::components::McpModalAction::ServersChanged => {
-                    self.agent
-                        .reload_config(self.config.clone(), Some(self.event_tx.clone()));
-                    if let ModalState::Mcp(ref mut mcp_state) = self.modal {
-                        mcp_state.sync_with_config(&self.config);
-                    }
-                }
-                crate::ui::components::McpModalAction::Close => {
-                    self.modal = ModalState::None;
-                }
-            }
-            return;
-        }
-
-        match &mut self.modal {
-            ModalState::SshReconnect { .. } => {
-                // Already fully handled (and returned) above; arm kept for
-                // exhaustiveness of the generic modal dispatch.
-            }
-            ModalState::Help => {
-                if key.code == KeyCode::Esc || key.code == KeyCode::Enter {
-                    self.modal = ModalState::None;
-                }
-                return;
-            }
-            ModalState::Config(config_state) => {
-                let action = config_state.handle_key(key, &mut self.config);
-                self.theme = config_state.theme;
-                match action {
-                    crate::ui::components::ConfigModalAction::SaveAndClose => {
-                        self.agent
-                            .reload_config(self.config.clone(), Some(self.event_tx.clone()));
-                        self.trigger_context_probe();
-                        self.save_current_session();
-                        self.modal = ModalState::None;
-                    }
-                    crate::ui::components::ConfigModalAction::Close => {
-                        self.modal = ModalState::None;
-                    }
-                    crate::ui::components::ConfigModalAction::UpdatePricing => {
-                        self.trigger_pricing_update();
-                    }
-                    crate::ui::components::ConfigModalAction::None => {}
-                }
-                return;
-            }
-            ModalState::RenameTab { tab_index, ref mut input } => {
-                let tab_idx = *tab_index;
-                match key.code {
-                    KeyCode::Esc => {
-                        self.modal = ModalState::None;
-                    }
-                    KeyCode::Enter => {
-                        let new_title = if input.trim().is_empty() {
-                            None
-                        } else {
-                            Some(input.trim().to_string())
-                        };
-                        if tab_idx < self.tabs.len() {
-                            self.tabs[tab_idx].custom_title = new_title;
-                            self.save_current_session();
-                        }
-                        self.modal = ModalState::None;
-                    }
-                    KeyCode::Backspace => {
-                        input.pop();
-                    }
-                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
-                        input.push(c);
-                    }
-                    _ => {}
-                }
-                return;
-            }
-            ModalState::Sessions(_)
-            | ModalState::Bookmarks(_)
-            | ModalState::Export(_)
-            | ModalState::Mcp(_) => return,
-            ModalState::None => {}
         }
 
         // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss, Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
@@ -2206,10 +2105,12 @@ impl App {
 
             if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
                 let current_title = self.active_tab().custom_title.clone().unwrap_or_default();
-                self.modal = ModalState::RenameTab {
-                    tab_index: self.active_tab_index,
-                    input: current_title,
-                };
+                self.modal = ModalState::RenameTab(
+                    crate::ui::components::RenameTabModalState::new(
+                        self.active_tab_index,
+                        current_title,
+                    ),
+                );
                 return;
             }
 
@@ -2401,80 +2302,25 @@ impl App {
     }
 
     pub fn poll_active_session(&mut self) {
-        let active_idx = self.active_tab_index;
-        let mut probes_to_trigger = Vec::new();
-        let mut active_session_changed = None;
-
-        for (idx, tab) in self.tabs.iter_mut().enumerate() {
-            if let Some(child_pid) = tab.pty.child_pid() {
-                let new_session = crate::system::detect_active_session(child_pid);
-                if new_session != tab.active_session {
-                    let was_ssh = tab.active_session.is_ssh();
-                    tab.active_session = new_session.clone();
-                    match &new_session {
-                        ActiveSession::Ssh { target, .. } => {
-                            if let Some(profile) = self.hosts_store.get(target) {
-                                tab.active_remote_profile = Some(profile.clone());
-                            } else {
-                                tab.active_remote_profile = None;
-                                probes_to_trigger.push(target.clone());
-                            }
-                        }
-                        _ => {
-                            tab.active_remote_profile = None;
-                        }
-                    }
-                    if idx == active_idx {
-                        active_session_changed = Some((was_ssh, new_session.clone()));
-                    }
-                }
-
-                // Also refresh PWD and Git branch on local sessions
-                if !tab.active_session.is_ssh() {
-                    if let Some(cwd) = crate::system::detect_current_working_dir(child_pid) {
-                        let branch = crate::system::detect_git_branch(&cwd);
-                        tab.current_dir = Some(cwd);
-                        tab.git_branch = branch;
-                    }
-                }
-            }
-        }
-
-        for target in probes_to_trigger {
-            self.trigger_background_host_probe(target);
-        }
-
-        // Sync system_context with active tab
-        self.sync_active_tab_system_context();
-
-        if let Some((was_ssh, new_session)) = active_session_changed {
-            match new_session {
-                ActiveSession::Ssh { target, .. } => {
-                    if let Some(profile) = self.hosts_store.get(&target) {
-                        self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
-                    } else {
-                        self.set_toast(format!("🌐 SSH: {}", target));
-                    }
-                }
-                ActiveSession::Container { runtime, container_id } => {
-                    self.set_toast(format!("📦 {}: {}", runtime, container_id));
-                }
-                ActiveSession::Local { .. } => {
-                    if was_ssh {
-                        self.set_toast("🖥️ Retour à l'environnement local".to_string());
-                    }
-                }
-            }
+        if let Some(toast) = self.system_supervisor.scan_tabs(
+            &mut self.tabs,
+            self.active_tab_index,
+            &mut self.system_context,
+            &self.event_tx,
+        ) {
+            self.set_toast(toast);
         }
     }
 
     pub fn on_active_session_changed(&mut self, new_session: ActiveSession) {
-        let was_ssh = self.system_context.active_session.is_ssh();
+        let active_idx = self.active_tab_index;
+        if let Some(tab) = self.tabs.get_mut(active_idx) {
+            tab.active_session = new_session.clone();
+        }
         self.system_context.active_session = new_session.clone();
-
         match new_session {
             ActiveSession::Ssh { target, .. } => {
-                if let Some(profile) = self.hosts_store.get(&target) {
+                if let Some(profile) = self.system_supervisor.hosts_store.get(&target) {
                     self.system_context.active_remote_profile = Some(profile.clone());
                     self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
                 } else {
@@ -2483,89 +2329,47 @@ impl App {
                     self.trigger_background_host_probe(target);
                 }
             }
-            ActiveSession::Container {
-                runtime,
-                container_id,
-            } => {
+            ActiveSession::Container { runtime, container_id } => {
                 self.system_context.active_remote_profile = None;
                 self.set_toast(format!("📦 {}: {}", runtime, container_id));
             }
             ActiveSession::Local { .. } => {
                 self.system_context.active_remote_profile = None;
-                if was_ssh {
-                    self.set_toast("🖥️ Retour à l'environnement local".to_string());
-                }
             }
         }
     }
 
     pub fn trigger_background_host_probe(&mut self, target: String) {
-        let event_tx = self.event_tx.clone();
-        tokio::spawn(async move {
-            let probe_cmd = HostsStore::generate_probe_command();
-            let res = tokio::process::Command::new("ssh")
-                .args([
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=4",
-                    "-o",
-                    "StrictHostKeyChecking=accept-new",
-                    &target,
-                    probe_cmd,
-                ])
-                .output()
-                .await;
-            if let Ok(out) = res {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout).to_string();
-                    let _ = event_tx.send(AppEvent::RemoteHostProbed {
-                        target,
-                        output: text,
-                    });
-                }
-            }
-        });
+        self.system_supervisor.spawn_probe(target, &self.event_tx);
     }
 
     pub fn on_remote_host_probed(&mut self, target: String, output: String) {
-        if let Some(profile) = HostsStore::parse_probe_output(&target, &output) {
-            let distro_name = profile.distro.clone();
-            let _ = self.hosts_store.upsert(profile.clone());
-            if let Some(active_target) = self.system_context.active_session.ssh_target() {
-                if self
-                    .hosts_store
-                    .get(active_target)
-                    .map(|p| p.target.as_str())
-                    == Some(&profile.target)
-                    || active_target == target
-                    || target.contains(active_target)
-                    || active_target.contains(&target)
-                {
-                    self.system_context.active_remote_profile = Some(profile);
-                    self.set_toast(format!(
-                        "🌐 {} — Profil {} enregistré",
-                        active_target, distro_name
-                    ));
-                }
-            }
+        if let Some(profile) = self.system_supervisor.on_remote_host_probed(
+            &target,
+            &output,
+            &mut self.system_context,
+        ) {
+            self.set_toast(format!(
+                "🌐 {} — Profil {} enregistré",
+                target, profile.distro
+            ));
             if let ModalState::Bookmarks(ref mut bm_state) = self.modal {
-                bm_state.refresh(&self.hosts_store);
+                bm_state.refresh(&self.system_supervisor.hosts_store);
             }
         }
     }
 
     pub fn trigger_host_scan(&mut self) {
-        if let Some(target) = self
-            .system_context
-            .active_session
-            .ssh_target()
-            .map(|s| s.to_string())
+        match self
+            .system_supervisor
+            .trigger_active_host_scan(&self.system_context, &self.event_tx)
         {
-            self.set_toast("🌐 Scan de l'environnement distant en arrière-plan...".to_string());
-            self.trigger_background_host_probe(target);
-        } else {
-            self.set_toast("ℹ️ Le scan est réservé aux sessions SSH distantes".to_string());
+            Ok(_) => {
+                self.set_toast("🌐 Scan de l'environnement distant en arrière-plan...".to_string());
+            }
+            Err(msg) => {
+                self.set_toast(msg.to_string());
+            }
         }
     }
 
@@ -5065,7 +4869,7 @@ mod tests {
                 last_seen: "2026-08-26T11:33:07+00:00".to_string(),
             },
         );
-        app.hosts_store = store;
+        app.system_supervisor.hosts_store = store;
 
         app.maybe_offer_ssh_reconnect(Some("xorne@prod".to_string()));
         assert!(matches!(

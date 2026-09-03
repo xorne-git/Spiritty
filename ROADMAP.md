@@ -156,8 +156,12 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
 - [x] **Hardening v0.5.4 — Footer Ctx corrigé & CI release épurée :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
   - `get_context_used_tokens` sommait tout l'historique de la session (rémanence de l'option C) → « Ctx: 178k / 131k (100%) » absurde (utilisé > fenêtre, clampé à 100%). Il estime désormais le contexte **compacté réellement envoyé** (résumé + 8 derniers tours verbatim), cohérent avec la compaction à la requête ; le compteur de tokens total reste séparé.
   - CI release : retrait de la cible `x86_64-apple-darwin` (runners macOS Intel hébergés `macos-13` retirés par GitHub — le job restait `queued` sans jamais builder). Matrice réduite à Linux `x86_64` / `aarch64` + macOS Apple Silicon `aarch64`.
-- [ ] **Tests de Robustesse :**
-  - Gestion des applications ncurses interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`).
+- [x] **Tests de Robustesse & Ergonomie Terminal Avancée :**
+  - [x] Gestion robuste des applications ncurses & TUI interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`) : SGR mouse tracking, shift bypass, navigation alternate-screen, xterm modifiers, bracketed paste.
+  - [x] Multi-onglets enrichis : renommage d'onglets (`Alt+R`), persistance en session des libellés et cibles SSH.
+  - [x] Approfondissement architectural (Deep Modules) :
+    - Unification des modales TUI (`ModalState` / `ModalOutcome` dans `src/ui/components/`), centralisant frappes, collage et rendu.
+    - Superviseur système et contextes SSH (`SystemSupervisor` et `InspectableTab` dans `src/system/supervisor.rs`), isolant la détection de processus `/proc`, le profilage de distribution et la déduplication des sondes d'arrière-plan.
   - [x] Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP` (restauration complète du terminal + sortie `128+signal`, même UI figée).
 - [x] **Packaging & Distribution Automatisée :**
   - Script d'installation universel one-line `install.sh` (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) avec détection automatique de l'OS et de l'architecture (`x86_64`, `aarch64`, macOS).

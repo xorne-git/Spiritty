@@ -29,6 +29,12 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ### Modifié
 
+- **Architecture : unification et approfondissement des modales TUI ([`src/ui/components/`](file:///home/xorne/Projets/Spiritty/src/ui/components/))** :
+  - Centralisation de la gestion des frappes (`handle_key`), du collage presse-papier (`handle_paste`) et du rendu visuel (`render`) de l'ensemble des 7 modales (`Help`, `Config`, `Sessions`, `Bookmarks`, `Export`, `Mcp`, `RenameTab`, `SshReconnect`) au sein de l'enum unifiée `ModalState` et de la machine à états de transition `ModalOutcome`.
+  - Élimination de plus de 280 lignes de logique dispersée entre `src/app.rs` et `src/ui/mod.rs`, réduisant les blocs ad-hoc à de simples délégations composables et testables de façon isolée.
+- **Architecture : création du superviseur système et hôtes SSH ([`src/system/supervisor.rs`](file:///home/xorne/Projets/Spiritty/src/system/supervisor.rs))** :
+  - Encapsulation complète de la surveillance `/proc` des processus en avant-plan (`SystemSupervisor`), de la détection de session SSH/Docker/locale, de la synchronisation de répertoire courant et branche Git, ainsi que de l'exécution en arrière-plan des sondes d'inspection de distribution (`ssh -o BatchMode=yes ...`).
+  - Découplage des onglets via le trait `InspectableTab` permettant de tester la détection de processus, l'état multi-onglets et le profilage système sans dépendance sur la boucle TUI ni le PTY réel. Déduplication active des sondes SSH en vol pour éviter toute saturation réseau.
 - **Architecture : extraction et approfondissement du sous-système `ToolCapture` ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
   — allègement substantiel de `src/app.rs` (-690 lignes) par l'encapsulation complète de la capture d'outils, du décodage UTF-8 incrémental avec carry buffer, du balayage de sentinelles (`OSC 777`), du plafond d'overflow 1 Mio, de la détection des invites interactives (`InteractionKind`) et de l'annulation propre `SIGINT` au sein d'une machine à états pure `ToolCaptureSession` 100% testable en mode headless.
 
