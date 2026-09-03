@@ -241,63 +241,14 @@ pub struct PendingToolApproval {
 }
 
 /// Temporary capture-path debugging (SPIRITTY_CAPTURE_DEBUG=1). Appends one line per
-/// event to /tmp/spiritty_capture_debug.log so a full-timeout capture can be diagnosed
-/// after the fact (conclusion reason, shell hooks, remote misdetection, timing).
-fn capture_debug(msg: &str) {
-    use std::sync::OnceLock;
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    if *ENABLED.get_or_init(|| std::env::var("SPIRITTY_CAPTURE_DEBUG").is_ok()) {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/spiritty_capture_debug.log")
-        {
-            let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), msg);
-        }
-    }
-}
-
-pub struct PtyToolCapture {
-    pub command: String,
-    pub result_tx: Option<tokio::sync::oneshot::Sender<String>>,
-    pub output_bytes: Vec<u8>,
-    /// Incrementally decoded text of `output_bytes`: each arriving chunk is UTF-8 decoded
-    /// once (with a small carry buffer for split multi-byte sequences) instead of the
-    /// entire buffer being re-decoded on every chunk — the old behavior degraded
-    /// quadratically during verbose command output.
-    pub decoded_text: String,
-    /// Raw tail bytes of an incomplete multi-byte UTF-8 sequence, flushed once complete.
-    pub pending_utf8: Vec<u8>,
-    /// First-complete sentinel sighting not yet terminated (`pos`, `prefix_len`, is_osc),
-    /// so later chunks only scan for its terminator instead of the whole buffer again.
-    pub sentinel_pending: Option<(usize, usize, bool)>,
-    /// Byte offset in `decoded_text` up to which the sentinel scan has run (exclusive).
-    /// Each chunk rescans only from `watermark - (max_prefix_len - 1)` so a pattern
-    /// straddling a chunk boundary is still caught, while bytes already proven
-    /// sentinel-free are not rescanned (amortized O(new bytes) per chunk).
-    pub sentinel_scan_upto: usize,
-    pub start_time: std::time::Instant,
-    pub last_output_time: std::time::Instant,
-    /// When `true`, the app records the `[RÉSULTAT...]` in the chat history and triggers the
-    /// next model turn itself (used for user-executed command cards). When `false`, the caller
-    /// (the agent engine) awaits `result_tx` and handles the result (agent-requested tools).
-    pub auto_prompt: bool,
-    /// Set once buffering stopped because `MAX_CAPTURE_BYTES` was reached: further output
-    /// is counted in `overflow_bytes` and scanned for the completion sentinel without
-    /// being buffered. A runaway/hallucinating command previously grew the buffer without
-    /// limit while `on_tick` re-ran the full O(N) `clean_pty_output` every frame — the UI
-    /// degraded quadratically and appeared frozen.
-    pub truncated: bool,
-    /// Total bytes received (and discarded) after the cap was reached.
-    pub overflow_bytes: u64,
-    /// Small rolling tail of the raw stream, used in overflow mode to detect the OSC 777
-    /// completion sentinel even though buffering has stopped.
-    pub overflow_tail: Vec<u8>,
-    /// Cache of the last `clean_pty_output` result keyed by `decoded_text.len()`, so the
-    /// per-tick settle check does not re-clean the whole buffer on every frame.
-    pub clean_cache: Option<(usize, String)>,
-}
+pub use crate::pty::{
+    build_capture_summary, capture_debug, char_safe_floor, char_safe_tail, clean_pty_output,
+    is_prompt_remnant, is_waiting_for_password, is_waiting_for_user_interaction,
+    scan_completed_sentinel, strip_ansi_sequences, utf8_decode_incremental, IngestOutcome,
+    InteractionKind, TickOutcome, ToolCaptureSession, DEFAULT_CAPTURE_TIMEOUT_SECS,
+    MAX_CAPTURE_BYTES, PASSWORD_WAIT_HARD_CAP_SECS, PASSWORD_WINDOW_BYTES,
+};
+pub type PtyToolCapture = ToolCaptureSession;
 
 /// Temporary UI debugging (SPIRITTY_UI_DEBUG=1). Appends one line per event to
 /// /tmp/spiritty_ui_debug.log — used to diagnose click hit-testing issues.
@@ -2282,153 +2233,21 @@ impl App {
             || shell_name.contains("fish");
 
         if let Some(ref mut capture) = self.active_pty_tool {
-            let elapsed_since_start = capture.start_time.elapsed();
-            let elapsed_since_last_output = capture.last_output_time.elapsed();
-            let is_waiting_interaction = is_waiting_for_user_interaction(char_safe_tail(
-                &capture.decoded_text,
-                PASSWORD_WINDOW_BYTES,
-            )).is_some();
-
-            // Debug: one status line per second while a capture is pending.
-            if self.spinner_frame.is_multiple_of(11) {
-                capture_debug(&format!(
-                    "TICK elapsed={}ms quiet={}ms shell_has_hooks={} is_remote={} waiting_interaction={} len={} pending_utf8={}",
-                    elapsed_since_start.as_millis(),
-                    elapsed_since_last_output.as_millis(),
-                    shell_has_hooks_base,
-                    matches!(
-                        self.system_context.active_session,
-                        crate::system::ActiveSession::Ssh { .. }
-                    ),
-                    is_waiting_interaction,
-                    capture.decoded_text.len(),
-                    capture.pending_utf8.len()
-                ));
-            }
-            // Debug: once, around the 5s mark, dump the exact captured bytes so a
-            // missing/malformed sentinel can be diagnosed after the fact.
-            let dump_now = elapsed_since_start.as_millis() >= 5000
-                && elapsed_since_start.as_millis() < 5100;
-            if dump_now && capture.sentinel_pending.is_none() {
-                capture_debug(&format!(
-                    "DUMP decoded_text={:?} pending_utf8={:?} raw_len={}",
-                    capture.decoded_text, capture.pending_utf8, capture.output_bytes.len()
-                ));
-            }
-
-            let mut timeout_secs = 45u64;
-            if is_waiting_interaction {
-                // Still bounded (was u64::MAX — an infinite wait): a human answers a
-                // sudo or [y/n] prompt within seconds, while a detector false-positive
-                // would previously hang the capture FOREVER on remote sessions where
-                // no sentinel ever arrives.
-                timeout_secs = PASSWORD_WAIT_HARD_CAP_SECS;
-            }
-
-            // A hooked local shell (bash/zsh/fish) reliably emits the OSC 777 sentinel as soon
-            // as the command completes. For those shells we MUST wait for the sentinel — the
-            // silence-based settle below is only a fallback for shells that deliver no sentinel
-            // (remote SSH without our hooks, or sh/dash/ash), where it previously fired too early
-            // on a quiet stretch (network I/O, sudo password wait) and truncated the output.
             let is_remote = matches!(
                 self.system_context.active_session,
                 crate::system::ActiveSession::Ssh { .. }
             );
             let shell_has_hooks = !is_remote && shell_has_hooks_base;
 
-            // Prompt-aware fast settle (non-hooked shells only): when a remote command
-            // completes, the remote shell re-displays its PS1. If the output tail ends
-            // with a prompt-looking line and has been quiet for 800ms, the command is
-            // done — no need to burn the full 3s silence fallback on EVERY remote
-            // command (this was the dominant latency in remote file-edit loops).
-            let last_output_line =
-                strip_ansi_sequences(char_safe_tail(&capture.decoded_text, PASSWORD_WINDOW_BYTES))
-                    .lines()
-                    .rev()
-                    .find(|l| !l.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_default();
-            let remote_prompt_quiet = !last_output_line.is_empty()
-                && !shell_has_hooks
-                && !is_waiting_interaction
-                && elapsed_since_last_output >= std::time::Duration::from_millis(800)
-                && is_prompt_remnant(&last_output_line);
-
-            let has_output_settled = !shell_has_hooks
-                && !is_waiting_interaction
-                && !capture.decoded_text.is_empty()
-                && elapsed_since_start >= std::time::Duration::from_millis(800)
-                && (elapsed_since_last_output >= std::time::Duration::from_millis(3000)
-                    || remote_prompt_quiet);
-
-            // Never conclude from a capture that holds NOTHING beyond the echoed
-            // command itself: on a slow remote (SSH latency, mysql handshakes) the
-            // real output can land seconds after the echo, and settling then produced
-            // an EMPTY result falsely reported as "exécutée avec succès" (user report:
-            // two commands in a row captured nothing while working on the VPS). If the
-            // cleaned output is empty we keep waiting — only the hard timeout (45s, or
-            // the 120s password cap) may conclude, with an explicit warning below.
-            //
-            // `clean_pty_output` is O(N) over the WHOLE capture, so it must NOT run on
-            // every tick: it used to (~11×/s while a capture was active) and a chatty
-            // command made the per-frame cost grow quadratically into an apparent UI
-            // freeze (freeze report, 2026-08-28). It is only needed once the output
-            // has settled or the hard timeout has been reached, and the length-keyed
-            // cache below makes repeated ticks on a quiet buffer free.
-            let timeout_reached = elapsed_since_start.as_secs() >= timeout_secs;
-            let mut clean_is_empty = true;
-            if has_output_settled || timeout_reached {
-                let len_now = capture.decoded_text.len();
-                let cached_len = capture.clean_cache.as_ref().map(|(l, _)| *l);
-                if cached_len != Some(len_now) {
-                    let cleaned = clean_pty_output(&capture.decoded_text, &capture.command);
-                    clean_is_empty = cleaned.is_empty();
-                    capture.clean_cache = Some((len_now, cleaned));
-                } else {
-                    clean_is_empty = capture
-                        .clean_cache
-                        .as_ref()
-                        .map(|(_, s)| s.is_empty())
-                        .unwrap_or(true);
-                }
-            }
-            let may_conclude = (!clean_is_empty && has_output_settled) || timeout_reached;
-
-            if may_conclude {
-                capture_debug(&format!(
-                    "CONCLUDED via={} elapsed={}ms len={} clean_is_empty={} truncated={} waiting_pw={}",
-                    if timeout_reached { "TIMEOUT" } else { "SETTLE" },
-                    elapsed_since_start.as_millis(),
-                    capture.decoded_text.len(),
-                    clean_is_empty,
-                    capture.truncated,
-                    is_waiting_interaction
-                ));
-                let clean_output = match &capture.clean_cache {
-                    Some((l, s)) if *l == capture.decoded_text.len() => s.clone(),
-                    _ => clean_pty_output(&capture.decoded_text, &capture.command),
-                };
-                // Explicit failure signal instead of a false "success": lets the
-                // model retry (shell not ready, session dropped, silent command)
-                // instead of reasoning on an imaginary success.
-                let final_summary = build_capture_summary(
-                    0,
-                    clean_output,
-                    capture.truncated,
-                    capture.overflow_bytes,
-                    capture.decoded_text.len(),
-                    "⚠️ Aucune sortie capturée : la commande a été injectée mais le terminal n'a rien renvoyé d'exploitable. Le shell distant n'était peut-être pas prêt, la session a pu être interrompue, ou la commande n'a produit ni sortie ni erreur. Vérifie l'état du terminal (invite visible ?) et relance une commande minimale (ex. `pwd`) si besoin.".to_string(),
-                );
-
-                let command = capture.command.clone();
-                let auto_prompt = capture.auto_prompt;
-                let result_tx = capture.result_tx.take();
+            if let TickOutcome::Concluded {
+                command,
+                summary,
+                auto_prompt,
+            } = capture.tick(shell_has_hooks)
+            {
                 self.active_pty_tool = None;
-
                 if auto_prompt {
-                    self.record_command_result(command, final_summary);
-                } else if let Some(tx) = result_tx {
-                    let _ = tx.send(final_summary);
+                    self.record_command_result(command, summary);
                 }
             }
         }
@@ -3292,7 +3111,6 @@ impl App {
             self.focus = Focus::Terminal;
         }
 
-        let now = std::time::Instant::now();
         capture_debug(&format!(
             "ARMED cmd={:?} shell={} shell_name={} is_remote={} auto_prompt={}",
             command,
@@ -3301,22 +3119,7 @@ impl App {
             is_remote,
             auto_prompt
         ));
-        self.active_pty_tool = Some(PtyToolCapture {
-            command,
-            result_tx: Some(result_tx),
-            output_bytes: Vec::new(),
-            decoded_text: String::new(),
-            pending_utf8: Vec::new(),
-            sentinel_pending: None,
-            sentinel_scan_upto: 0,
-            start_time: now,
-            last_output_time: now,
-            auto_prompt,
-            truncated: false,
-            overflow_bytes: 0,
-            overflow_tail: Vec::new(),
-            clean_cache: None,
-        });
+        self.active_pty_tool = Some(ToolCaptureSession::new(command, Some(result_tx), auto_prompt));
     }
 
     /// Records a completed user-command execution into the chat history (as a `[RÉSULTAT...]`
@@ -3383,189 +3186,40 @@ impl App {
             return;
         }
 
-        let mut interaction_prompt_detected = None;
         if let Some(ref mut capture) = self.active_pty_tool {
-            capture.last_output_time = std::time::Instant::now();
-
-            if capture.output_bytes.len() >= MAX_CAPTURE_BYTES {
-                // Overflow mode: buffering stopped once the cap was hit. Keep counting
-                // the discarded bytes and keep watching a small rolling tail of the raw
-                // stream for the completion sentinel (it arrives at the very END of the
-                // output, after everything that was discarded) so a runaway command
-                // still concludes as soon as it finishes instead of burning the full
-                // 45s hard timeout.
-                capture.truncated = true;
-                capture.overflow_bytes += bytes.len() as u64;
-                capture.overflow_tail.extend_from_slice(bytes);
-                let stale = capture.overflow_tail.len().saturating_sub(256);
-                if stale > 0 {
-                    capture.overflow_tail.drain(..stale);
-                }
-                if let Some(exit_code) = scan_completed_sentinel(&capture.overflow_tail) {
-                    let clean_output = clean_pty_output(&capture.decoded_text, &capture.command);
-                    let empty_summary = if exit_code == 0 {
-                        "(Commande exécutée avec succès dans le terminal)".to_string()
-                    } else {
-                        format!("(Commande terminée avec le code {})", exit_code)
-                    };
-                    let final_summary = build_capture_summary(
-                        exit_code,
-                        clean_output,
-                        capture.truncated,
-                        capture.overflow_bytes,
-                        capture.decoded_text.len(),
-                        empty_summary,
-                    );
-                    let command = capture.command.clone();
-                    let auto_prompt = capture.auto_prompt;
-                    let result_tx = capture.result_tx.take();
-                    self.active_pty_tool = None;
-
-                    if auto_prompt {
-                        self.record_command_result(command, final_summary);
-                    } else if let Some(tx) = result_tx {
-                        let _ = tx.send(final_summary);
-                    }
-                }
-            } else {
-                capture.output_bytes.extend_from_slice(bytes);
-
-                // Incremental UTF-8 decode: only the newly arrived bytes are processed, with a
-                // carry for multi-byte sequences split across chunks. The whole-buffer
-                // from_utf8_lossy this replaces ran on every PTY chunk and made long-running,
-                // verbose commands degrade quadratically.
-                capture.pending_utf8.extend_from_slice(bytes);
-                utf8_decode_incremental(&mut capture.decoded_text, &mut capture.pending_utf8);
-
-                // Interactive prompts (password, sudo, [y/n] confirmation, etc.) appear at the tail
-                if let Some(kind) = is_waiting_for_user_interaction(char_safe_tail(
-                    &capture.decoded_text,
-                    PASSWORD_WINDOW_BYTES,
-                )) {
-                    interaction_prompt_detected = Some(kind);
-                }
-
-                // Locate the OSC 777 sentinel incrementally. Once seen (complete), its position
-                // is parked in `sentinel_pending` and subsequent chunks only search onward for
-                // the terminator instead of re-scanning the accumulated buffer.
-                //
-                // NOTE: we must NOT match the bare `777;spiritty_done;` substring — the command echo
-                // is literally `printf '\033]777;spiritty_done;%s\007' $?`, which contains that text
-                // (as literal `\033`, no real ESC byte). Matching it would end the capture the moment
-                // the command is echoed, mis-parse `\007` as a bogus exit code, and truncate the output.
-                const OSC_PREFIX_LEN: usize = "\x1b]777;spiritty_done;".len();
-                const PLAIN_PREFIX_LEN: usize = "__SPIRITTY_DONE__:".len();
-
-                if capture.sentinel_pending.is_none() {
-                    // Incremental scan with a watermark: rescanning the whole buffer on
-                    // every chunk is O(N²) on verbose output, but the old "last 20 chars
-                    // only" window missed the sentinel whenever a chunk larger than the
-                    // pattern delivered it mid-chunk (echo + output + sentinel coalesced
-                    // into one PTY read — the capture then hung until the 45s timeout).
-                    // Rescan from just before the watermark so a pattern straddling a
-                    // chunk boundary is still caught, and advance the watermark only over
-                    // bytes proven sentinel-free.
-                    let max_prefix = OSC_PREFIX_LEN.max(PLAIN_PREFIX_LEN);
-                    let from = char_safe_floor(
-                        &capture.decoded_text,
-                        capture.sentinel_scan_upto.saturating_sub(max_prefix - 1),
-                    );
-                    let hay = &capture.decoded_text[from..];
-                    if let Some(rel) = hay.rfind("\x1b]777;spiritty_done;") {
-                        capture_debug(&format!(
-                            "SENTINEL OSC SEEN at +{}ms (len={})",
-                            capture.start_time.elapsed().as_millis(),
-                            capture.decoded_text.len()
-                        ));
-                        capture.sentinel_pending = Some((from + rel, OSC_PREFIX_LEN, true));
-                        capture.sentinel_scan_upto = from + rel + 1;
-                    } else if let Some(rel) = hay.rfind("__SPIRITTY_DONE__:") {
-                        capture_debug("SENTINEL PLAIN SEEN");
-                        capture.sentinel_pending = Some((from + rel, PLAIN_PREFIX_LEN, false));
-                        capture.sentinel_scan_upto = from + rel + 1;
-                    } else {
-                        capture.sentinel_scan_upto = capture.decoded_text.len();
-                    }
-                }
-
-                if let Some((pos, prefix_len, is_osc)) = capture.sentinel_pending {
-                    let text = &capture.decoded_text;
-                    if pos + prefix_len <= text.len() {
-                        let after = &text[pos + prefix_len..];
-                        let found_terminator = if is_osc {
-                            after
-                                .find('\x1b')
-                                .or(after.find('\x07'))
-                                .or(after.find('\n'))
-                                .or(after.find('\r'))
-                                .or(after.find('\\'))
-                                .or(after.find(';'))
-                        } else {
-                            after.find('\n').or(after.find('\r'))
-                        };
-
-                        if let Some(end_idx) = found_terminator {
-                            let code_str =
-                                after[..end_idx].trim_matches(|c: char| !c.is_ascii_digit());
-                            let exit_code: i32 = code_str.parse().unwrap_or(0);
-                            let raw_output = &text[..pos];
-                            let clean_output = clean_pty_output(raw_output, &capture.command);
-                            capture_debug(&format!(
-                                "CONCLUDED via=SENTINEL code={} elapsed={}ms raw_len={} clean_len={}",
-                                exit_code,
-                                capture.start_time.elapsed().as_millis(),
-                                raw_output.len(),
-                                clean_output.len()
-                            ));
-                            let empty_summary = if exit_code == 0 {
-                                "(Commande exécutée avec succès dans le terminal)".to_string()
-                            } else {
-                                format!("(Commande terminée avec le code {})", exit_code)
-                            };
-                            let final_summary = build_capture_summary(
-                                exit_code,
-                                clean_output,
-                                capture.truncated,
-                                capture.overflow_bytes,
-                                capture.decoded_text.len(),
-                                empty_summary,
-                            );
-
-                            let command = capture.command.clone();
-                            let auto_prompt = capture.auto_prompt;
-                            let result_tx = capture.result_tx.take();
-                            self.active_pty_tool = None;
-
-                            if auto_prompt {
-                                self.record_command_result(command, final_summary);
-                            } else if let Some(tx) = result_tx {
-                                let _ = tx.send(final_summary);
+            match capture.ingest(bytes) {
+                IngestOutcome::Continuing => {}
+                IngestOutcome::InteractionRequired(kind) => {
+                    if self.focus != Focus::Terminal {
+                        self.focus = Focus::Terminal;
+                        let lang = self.config.get_language();
+                        let toast_msg = match (kind, lang) {
+                            (InteractionKind::Password, Language::Fr) => {
+                                "🔒 Saisie requise dans le terminal (mot de passe / sudo)".to_string()
                             }
-                        }
+                            (InteractionKind::Password, _) => {
+                                "🔒 Input required in terminal (password / sudo)".to_string()
+                            }
+                            (InteractionKind::Confirmation, Language::Fr) => {
+                                "⚡ Interaction requise dans le terminal ([o/n], confirmation...)".to_string()
+                            }
+                            (InteractionKind::Confirmation, _) => {
+                                "⚡ Interaction required in terminal ([y/n], confirmation...)".to_string()
+                            }
+                        };
+                        self.set_toast(toast_msg);
                     }
                 }
-            }
-        }
-
-        if let Some(kind) = interaction_prompt_detected {
-            if self.focus != Focus::Terminal {
-                self.focus = Focus::Terminal;
-                let lang = self.config.get_language();
-                let toast_msg = match (kind, lang) {
-                    (InteractionKind::Password, Language::Fr) => {
-                        "🔒 Saisie requise dans le terminal (mot de passe / sudo)".to_string()
+                IngestOutcome::Concluded {
+                    command,
+                    summary,
+                    auto_prompt,
+                } => {
+                    self.active_pty_tool = None;
+                    if auto_prompt {
+                        self.record_command_result(command, summary);
                     }
-                    (InteractionKind::Password, _) => {
-                        "🔒 Input required in terminal (password / sudo)".to_string()
-                    }
-                    (InteractionKind::Confirmation, Language::Fr) => {
-                        "⚡ Interaction requise dans le terminal ([o/n], confirmation...)".to_string()
-                    }
-                    (InteractionKind::Confirmation, _) => {
-                        "⚡ Interaction required in terminal ([y/n], confirmation...)".to_string()
-                    }
-                };
-                self.set_toast(toast_msg);
+                }
             }
         }
 
@@ -3722,10 +3376,9 @@ impl App {
         if self.agent.is_generating {
             self.agent.stop_generation();
             self.pending_tool_approval = None;
-            if self.active_pty_tool.is_some() {
-                self.active_pty_tool = None;
-                // Cleanly kill any active command still running in the PTY so the shell returns to prompt
-                let _ = self.pty_mut().write_all(b"\x03");
+            if let Some(mut capture) = self.active_pty_tool.take() {
+                let sigint = capture.cancel();
+                let _ = self.pty_mut().write_all(sigint);
             }
             if let Some(last_msg) = self.messages.last_mut() {
                 if last_msg.role == MessageRole::Assistant {
@@ -4448,254 +4101,7 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
     });
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InteractionKind {
-    Password,
-    Confirmation,
-}
 
-/// Checks if the raw terminal output indicates that a process is waiting for user interaction
-/// (sudo/doas/su password, ssh passphrase, [y/n] confirmation, press enter, etc.)
-pub fn is_waiting_for_user_interaction(raw_text: &str) -> Option<InteractionKind> {
-    let clean = strip_ansi_sequences(raw_text);
-    let trimmed = clean.trim_end();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let lower = trimmed.to_lowercase();
-    let last_line = lower.lines().next_back().unwrap_or(&lower).trim();
-
-    // 1. Password / Passphrase / Sudo / Authentication
-    if last_line.contains("password for")
-        || last_line.contains("mot de passe de")
-        || last_line.contains("mot de passe pour")
-        || last_line.contains("mot de passe :")
-        || last_line.contains("mot de passe:")
-        || last_line.contains("password:")
-        || last_line.contains("password :")
-        || last_line.contains("passphrase")
-        || last_line.contains("authentication required")
-        || last_line.contains("authenticating")
-        || last_line.contains("doas password")
-        || last_line.starts_with("[sudo]")
-    {
-        return Some(InteractionKind::Password);
-    }
-
-    // 2. Interactive confirmation prompts ([y/n], [o/n], continue connecting, etc.)
-    if last_line.contains("[y/n]")
-        || last_line.contains("[o/n]")
-        || last_line.contains("(y/n)")
-        || last_line.contains("(o/n)")
-        || last_line.contains("[yes/no]")
-        || last_line.contains("(yes/no")
-        || last_line.contains("continue connecting (yes/no")
-        || last_line.contains("voulez-vous continuer")
-        || last_line.contains("souhaitez-vous continuer")
-        || last_line.contains("do you want to continue")
-        || last_line.contains("proceed with installation")
-        || last_line.contains("press enter")
-        || last_line.contains("press [enter]")
-        || last_line.contains("appuyez sur entrée")
-        || last_line.contains("appuyez sur entree")
-        || last_line.contains("press any key")
-    {
-        return Some(InteractionKind::Confirmation);
-    }
-
-    None
-}
-
-/// Checks if the raw terminal output indicates that sudo/doas/su is waiting for password entry.
-pub fn is_waiting_for_password(raw_text: &str) -> bool {
-    matches!(is_waiting_for_user_interaction(raw_text), Some(InteractionKind::Password))
-}
-
-/// Cleans captured PTY output by stripping ANSI colors, CRs, and prompt echoes.
-/// Hard cap on the bytes buffered for ONE PTY tool capture. A runaway (or hallucinating)
-/// command that dumps unbounded output previously grew the capture buffer without limit
-/// while `on_tick` re-ran the full O(N) `clean_pty_output` on every frame (~11×/s): the
-/// UI degraded quadratically and appeared frozen. Past the cap, incoming bytes are only
-/// counted (and scanned for the completion sentinel via a small rolling tail) — the
-/// reported result carries an explicit truncation notice.
-const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
-
-/// Builds the model-facing summary of a concluded PTY capture, unifying the sentinel,
-/// settle and overflow conclusion paths. `empty_output_summary` differs by path: the
-/// settle path reports an explicit failure (lets the model retry), while a sentinel or
-/// overflow conclusion PROVES completion, so an empty output is reported as a success
-/// (or by exit code). A truncated capture appends an explicit truncation notice so the
-/// model knows the result is partial instead of reasoning on a silently cut output.
-fn build_capture_summary(
-    exit_code: i32,
-    clean_output: String,
-    truncated: bool,
-    overflow_bytes: u64,
-    captured_len: usize,
-    empty_output_summary: String,
-) -> String {
-    let mut body = clean_output;
-    if truncated {
-        body.push_str(&format!(
-            "\n⚠️ [Sortie tronquée : seuls les premiers {} Ko ont été capturés ; {:.1} Mo supplémentaires ont été reçus puis ignorés.]",
-            captured_len / 1024,
-            overflow_bytes as f64 / (1024.0 * 1024.0)
-        ));
-    }
-    if body.is_empty() {
-        empty_output_summary
-    } else if exit_code == 0 {
-        format!("Sortie dans le terminal:\n{}", body)
-    } else {
-        format!("Sortie dans le terminal (code {}):\n{}", exit_code, body)
-    }
-}
-
-/// Scans a small rolling byte buffer for a COMPLETED OSC 777 completion sentinel
-/// (`ESC ] 777 ; spiritty_done ; <code>` terminated like the main scan) and returns the
-/// exit code. Only used in overflow mode, where buffering has stopped and the sentinel
-/// is detected on the raw stream tail. Matching requires a real `ESC` byte, which the
-/// echoed `printf '\033]777…'` hook text never contains (its escape is literal text),
-/// so the command echo cannot false-positive.
-fn scan_completed_sentinel(buf: &[u8]) -> Option<i32> {
-    const PREFIX: &[u8] = b"\x1b]777;spiritty_done;";
-    let pos = buf.windows(PREFIX.len()).position(|w| w == PREFIX)?;
-    let after = &buf[pos + PREFIX.len()..];
-    let end = after
-        .iter()
-        .position(|b| matches!(b, b'\x1b' | b'\x07' | b'\n' | b'\r' | b'\\' | b';'))?;
-    let code_str = std::str::from_utf8(&after[..end]).unwrap_or("");
-    let digits: String = code_str.chars().filter(|c| c.is_ascii_digit()).collect();
-    Some(digits.parse().unwrap_or(0))
-}
-
-fn clean_pty_output(raw: &str, command: &str) -> String {
-    let no_ansi = strip_ansi_sequences(raw);
-    let no_cr = no_ansi.replace('\r', "");
-    // Strip stray terminal control characters (BEL \x07, etc.) that leak into the captured
-    // output. The terminal renders them as a bell or nothing, but they pollute the model-facing
-    // text (e.g. a leaked OSC-sentinel BEL terminator or a prompt-start marker).
-    let no_ctrl: String = no_cr
-        .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .collect();
-
-    let mut lines: Vec<&str> = no_ctrl.lines().collect();
-
-    // Filter out internal sentinel, command echo remnants, or sudo password prompts
-    lines.retain(|l| {
-        let t = l.trim();
-        let lower = t.to_lowercase();
-        !t.is_empty()
-            && !t.contains("spiritty_done")
-            && !t.contains("__spiritty")
-            && !t.contains("__SPIRITTY")
-            && !t.contains("printf '\\e]777")
-            && !t.contains("printf '\\033]777")
-            && !lower.contains("password for")
-            && !lower.contains("mot de passe de")
-            && !lower.contains("mot de passe pour")
-            && !(lower.starts_with("[sudo]") && lower.contains("password"))
-    });
-
-    // Remove ONLY the exact command echo if it appears at the beginning
-    if let Some(first) = lines.first() {
-        let first_t = first.trim();
-        let cmd_t = command.trim();
-        if first_t == cmd_t
-            || first_t.starts_with(cmd_t)
-            || (first_t.contains(cmd_t)
-                && (first_t.contains("printf '\\033]777") || first_t.contains("printf '\\e]777")))
-            || (first_t.ends_with(cmd_t) && first_t.len() <= cmd_t.len() + 10)
-        {
-            lines.remove(0);
-        }
-    }
-
-    // Garbled-echo fallback: remote line-editor redraws (zle over SSH) can interleave
-    // redraw fragments into the raw echo, duplicating chars mid-line (`logs/` →
-    // `llogs/`, `…8ecd…` → `…8ecdd…`). The exact-match strip above then misses, the
-    // garbled echo survives cleaning and is reported as command output — the model
-    // reads it as proof its commands were "altered" and starts working around an
-    // imaginary saboteur. Recognize the echo by SUBSEQUENCE containment instead:
-    // insertion-only corruption still keeps every sent character in order. Guarded
-    // by a length window so a genuinely longer first output line is never stripped.
-    let cmd_t = command.trim();
-    if !cmd_t.is_empty() {
-        if let Some(first) = lines.first() {
-            let first_t = first.trim();
-            // Fold to alphanumeric chars: the garbling inserts chars, it does not
-            // change spacing/punctuation reliably, and folding absorbs that noise.
-            let fold =
-                |s: &str| -> Vec<char> { s.chars().filter(|c| c.is_alphanumeric()).collect() };
-            let cmd_fold = fold(cmd_t);
-            let line_fold = fold(first_t);
-            let plausible_len =
-                line_fold.len() >= cmd_fold.len() && line_fold.len() <= cmd_fold.len() * 3 / 2 + 16;
-            if plausible_len {
-                // Is `cmd` a subsequence of the line? Insertion-only corruption keeps
-                // every sent character in order, so a garbled echo still matches.
-                let mut cursor = 0usize;
-                let mut is_subseq = true;
-                for &c in &cmd_fold {
-                    while cursor < line_fold.len() && line_fold[cursor] != c {
-                        cursor += 1;
-                    }
-                    if cursor == line_fold.len() {
-                        is_subseq = false;
-                        break;
-                    }
-                    cursor += 1;
-                }
-                if is_subseq {
-                    lines.remove(0);
-                }
-            }
-        }
-    }
-
-    // Drop trailing shell-prompt remnants. For commands that produce no real output (e.g. an empty
-    // mail log), the settle fallback captures the prompt the shell re-displays afterwards — which can
-    // be a single decorative symbol like `∙` (U+2219). We strip those so the model sees a clean
-    // "no output" result instead of a spurious `∙`.
-    while let Some(last) = lines.last() {
-        if is_prompt_remnant(last) {
-            lines.pop();
-        } else {
-            break;
-        }
-    }
-
-    lines.join("\n").trim().to_string()
-}
-
-/// True if a line is (trailing) shell-prompt noise that should not be reported as command output.
-/// Handles decorative one-symbol prompts (`∙`, `❯`, `➜`, `λ`, …) and standard `user@host:path$` /
-/// `host:~#` style prompts.
-fn is_prompt_remnant(line: &str) -> bool {
-    let t = line.trim();
-    if t.is_empty() {
-        return true;
-    }
-    // Single decorative prompt symbol (e.g. `∙`, `❯`, `➜`, `λ`, `›`, `±`)
-    if t.chars().count() <= 2 && t.chars().all(|c| "∙•·❯➜λ›±◆✗✔".contains(c)) {
-        return true;
-    }
-    // Standard shell prompt: user@host:path…$ / host:~# / host:/path>  (short, ends with a marker).
-    // Also matches git-aware prompts like `[user@host:path] branch(+0/-7) ±`.
-    let ends_marker = t.ends_with('$')
-        || t.ends_with('#')
-        || t.ends_with('>')
-        || t.ends_with('%')
-        || t.ends_with('❯')
-        || t.ends_with('➜')
-        || t.ends_with('λ')
-        || t.ends_with('±');
-    if ends_marker && t.len() <= 96 && (t.contains(':') || t.contains('~') || t.contains('@')) {
-        return true;
-    }
-    false
-}
 
 /// Cleans and formats a multiline command into a valid single-line command or bash script wrapper.
 /// - If the command is a heredoc (`<<EOF`), script (shebang #!), or contains bash keywords (while/for/if/IFS), wraps it safely in `bash -c '...'` preserving newlines and markdown content verbatim.
@@ -5207,104 +4613,7 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(path)
 }
 
-/// Strips all ANSI escape sequences, CSI controls, and OSC strings from raw PTY text.
-fn strip_ansi_sequences(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1B' {
-            if let Some(&next) = chars.peek() {
-                if next == '[' {
-                    chars.next();
-                    // Consume until terminating char (@ through ~)
-                    for c2 in chars.by_ref() {
-                        if ('@'..='~').contains(&c2) {
-                            break;
-                        }
-                    }
-                    continue;
-                } else if next == ']' {
-                    chars.next();
-                    // OSC sequence: consume until BEL (\x07) or ST (\x1B\\)
-                    let mut prev = '\0';
-                    for c2 in chars.by_ref() {
-                        if c2 == '\x07' || (prev == '\x1B' && c2 == '\\') {
-                            break;
-                        }
-                        prev = c2;
-                    }
-                    continue;
-                } else if next == '(' || next == ')' {
-                    chars.next();
-                    chars.next(); // Charset designator
-                    continue;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
 
-/// Max window used for tail-only checks (password prompts appear at the end of output).
-const PASSWORD_WINDOW_BYTES: usize = 1024;
-
-/// Hard cap for captures that LOOK like they are waiting on a password prompt.
-/// A human answers sudo within seconds; the cap only guards against infinite hangs
-/// when the detector false-positives (command output merely *mentioning* a password,
-/// e.g. echoing a config/YAML dump) on sessions where no completion sentinel exists.
-const PASSWORD_WAIT_HARD_CAP_SECS: u64 = 120;
-
-/// Largest index ≤ `byte_idx` that lies on a UTF-8 char boundary of `s`.
-fn char_safe_floor(s: &str, byte_idx: usize) -> usize {
-    let mut i = byte_idx.min(s.len());
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-/// Char-boundary-safe slice of at most the last `max_bytes` bytes of `s`.
-fn char_safe_tail(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        s
-    } else {
-        &s[char_safe_floor(s, s.len() - max_bytes)..]
-    }
-}
-
-/// Incremental UTF-8 decoder: appends newly valid bytes to `text`, carrying incomplete
-/// multi-byte sequences across calls and replacing genuinely invalid bytes with U+FFFD
-/// (matching `String::from_utf8_lossy` semantics without re-scanning the whole buffer).
-fn utf8_decode_incremental(text: &mut String, pending: &mut Vec<u8>) {
-    loop {
-        match std::str::from_utf8(pending) {
-            Ok(valid) => {
-                text.push_str(valid);
-                pending.clear();
-                break;
-            }
-            Err(err) => {
-                let valid_up_to = err.valid_up_to();
-                if valid_up_to > 0 {
-                    if let Ok(chunk) = std::str::from_utf8(&pending[..valid_up_to]) {
-                        text.push_str(chunk);
-                    }
-                    pending.drain(..valid_up_to);
-                }
-                match err.error_len() {
-                    Some(bad_len) => {
-                        // Genuinely invalid bytes: consume them, emit a replacement marker.
-                        text.push('\u{FFFD}');
-                        pending.drain(..bad_len.max(1));
-                    }
-                    None => break, // incomplete sequence: keep as carry
-                }
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

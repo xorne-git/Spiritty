@@ -15,6 +15,11 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Modifié
+
+- **Architecture : extraction et approfondissement du sous-système `ToolCapture` ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
+  — allègement substantiel de `src/app.rs` (-690 lignes) par l'encapsulation complète de la capture d'outils, du décodage UTF-8 incrémental avec carry buffer, du balayage de sentinelles (`OSC 777`), du plafond d'overflow 1 Mio, de la détection des invites interactives (`InteractionKind`) et de l'annulation propre `SIGINT` au sein d'une machine à états pure `ToolCaptureSession` 100% testable en mode headless.
+
 ---
 
 ## v0.7.0 — 2026-09-03
