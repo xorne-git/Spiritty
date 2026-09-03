@@ -316,6 +316,86 @@ fn ui_debug(msg: &str) {
     }
 }
 
+pub struct TerminalTab {
+    pub id: usize,
+    pub pty: PtyProcess,
+    pub active_session: ActiveSession,
+    pub active_remote_profile: Option<crate::system::HostProfile>,
+    pub current_dir: Option<String>,
+    pub git_branch: Option<String>,
+    pub custom_title: Option<String>,
+    pub unread_activity: bool,
+}
+
+impl TerminalTab {
+    pub fn new(id: usize, pty: PtyProcess) -> Self {
+        Self {
+            id,
+            pty,
+            active_session: ActiveSession::Local {
+                foreground_process: None,
+            },
+            active_remote_profile: None,
+            current_dir: None,
+            git_branch: None,
+            custom_title: None,
+            unread_activity: false,
+        }
+    }
+
+    pub fn display_title(&self) -> String {
+        if let Some(ref custom) = self.custom_title {
+            return custom.clone();
+        }
+        match &self.active_session {
+            ActiveSession::Ssh { target, .. } => {
+                if let Some(ref prof) = self.active_remote_profile {
+                    let short_distro = prof.distro.split_whitespace().next().unwrap_or(&prof.distro);
+                    format!("🌐 {} ({})", target, short_distro)
+                } else {
+                    format!("🌐 {}", target)
+                }
+            }
+            ActiveSession::Container { runtime, container_id } => {
+                let cut = container_id.floor_char_boundary(8);
+                let short_id = if container_id.len() > 8 {
+                    &container_id[..cut]
+                } else {
+                    container_id
+                };
+                format!("📦 {}: {}", runtime, short_id)
+            }
+            ActiveSession::Local { foreground_process } => {
+                if let Some(proc) = foreground_process {
+                    if proc != "fish" && proc != "bash" && proc != "zsh" && proc != "sh" {
+                        format!("💻 {}", proc)
+                    } else if let Some(ref cwd) = self.current_dir {
+                        let short_cwd = cwd.split('/').next_back().unwrap_or(cwd);
+                        format!("💻 {}", short_cwd)
+                    } else {
+                        "💻 local".to_string()
+                    }
+                } else if let Some(ref cwd) = self.current_dir {
+                    let short_cwd = cwd.split('/').next_back().unwrap_or(cwd);
+                    format!("💻 {}", short_cwd)
+                } else {
+                    "💻 local".to_string()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalTabHit {
+    pub tab_index: usize,
+    pub start_x: u16,
+    pub end_x: u16,
+    pub y: u16,
+    pub is_close: bool,
+    pub is_plus: bool,
+}
+
 pub struct App {
     pub focus: Focus,
     pub chat_input: String,
@@ -324,7 +404,11 @@ pub struct App {
     /// Image pasted with Ctrl+Shift+V, awaiting attachment to the next user prompt. When
     /// set, the next send bundles it as the first attachment of the user turn then clears.
     pub pending_image: Option<crate::app::PendingImage>,
-    pub pty: PtyProcess,
+    pub tabs: Vec<TerminalTab>,
+    pub active_tab_index: usize,
+    pub next_tab_id: usize,
+    /// Hit regions for terminal tabs
+    pub terminal_tab_hits: std::cell::RefCell<Vec<TerminalTabHit>>,
     pub should_quit: bool,
     pub split_ratio: u16,
     pub terminal_inner_size: (u16, u16),
@@ -437,35 +521,166 @@ fn prompt_move_cursor_vertical(
 }
 
 impl App {
+    /// Spawns a new PTY process and wires up asynchronous event forwarding with tab_id.
+    pub fn spawn_tab_pty(
+        tab_id: usize,
+        rows: u16,
+        cols: u16,
+        event_tx: &UnboundedSender<AppEvent>,
+    ) -> Result<PtyProcess> {
+        let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let (pty_exit_tx, mut pty_exit_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let pty = PtyProcess::spawn(rows, cols, pty_tx, pty_exit_tx)?;
+
+        let forward_tx = event_tx.clone();
+        tokio::spawn(async move {
+            while let Some(bytes) = pty_rx.recv().await {
+                if forward_tx
+                    .send(AppEvent::PtyOutput {
+                        tab_id,
+                        data: bytes,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let exit_forward_tx = event_tx.clone();
+        tokio::spawn(async move {
+            while pty_exit_rx.recv().await.is_some() {
+                if exit_forward_tx
+                    .send(AppEvent::PtyExit { tab_id })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        Ok(pty)
+    }
+
+    pub fn active_tab(&self) -> &TerminalTab {
+        &self.tabs[self.active_tab_index.min(self.tabs.len().saturating_sub(1))]
+    }
+
+    pub fn active_tab_mut(&mut self) -> &mut TerminalTab {
+        let idx = self.active_tab_index.min(self.tabs.len().saturating_sub(1));
+        &mut self.tabs[idx]
+    }
+
+    pub fn pty(&self) -> &PtyProcess {
+        &self.active_tab().pty
+    }
+
+    pub fn pty_mut(&mut self) -> &mut PtyProcess {
+        &mut self.active_tab_mut().pty
+    }
+
+    pub fn new_tab(&mut self) -> Result<usize> {
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
+        let (rows, cols) = if self.terminal_inner_size.0 > 0 && self.terminal_inner_size.1 > 0 {
+            self.terminal_inner_size
+        } else {
+            (24, 80)
+        };
+
+        let pty = Self::spawn_tab_pty(tab_id, rows, cols, &self.event_tx)?;
+        let tab = TerminalTab::new(tab_id, pty);
+        self.tabs.push(tab);
+        let new_idx = self.tabs.len() - 1;
+        self.select_tab(new_idx);
+
+        let lang = self.config.get_language();
+        self.set_toast(if lang == Language::Fr {
+            format!("📑 Onglet {} ouvert", new_idx + 1)
+        } else {
+            format!("📑 Tab {} opened", new_idx + 1)
+        });
+
+        Ok(new_idx)
+    }
+
+    pub fn close_tab(&mut self, index: usize) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+
+        if index < self.tabs.len() {
+            self.tabs.remove(index);
+            if self.active_tab_index >= self.tabs.len() {
+                self.active_tab_index = self.tabs.len().saturating_sub(1);
+            } else if index < self.active_tab_index {
+                self.active_tab_index = self.active_tab_index.saturating_sub(1);
+            }
+            self.sync_active_tab_system_context();
+            if self.terminal_inner_size.0 > 0 && self.terminal_inner_size.1 > 0 {
+                let (rows, cols) = self.terminal_inner_size;
+                let _ = self.active_tab_mut().pty.resize(rows, cols);
+            }
+            let lang = self.config.get_language();
+            self.set_toast(if lang == Language::Fr {
+                "📑 Onglet fermé".to_string()
+            } else {
+                "📑 Tab closed".to_string()
+            });
+        }
+    }
+
+    pub fn close_active_tab(&mut self) {
+        let idx = self.active_tab_index;
+        self.close_tab(idx);
+    }
+
+    pub fn select_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.active_tab_index = index;
+            self.active_tab_mut().unread_activity = false;
+            self.sync_active_tab_system_context();
+            if self.terminal_inner_size.0 > 0 && self.terminal_inner_size.1 > 0 {
+                let (rows, cols) = self.terminal_inner_size;
+                let _ = self.active_tab_mut().pty.resize(rows, cols);
+            }
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            let next_idx = (self.active_tab_index + 1) % self.tabs.len();
+            self.select_tab(next_idx);
+        }
+    }
+
+    pub fn previous_tab(&mut self) {
+        if self.tabs.len() > 1 {
+            let prev_idx = (self.active_tab_index + self.tabs.len() - 1) % self.tabs.len();
+            self.select_tab(prev_idx);
+        }
+    }
+
+    pub fn sync_active_tab_system_context(&mut self) {
+        if let Some(tab) = self.tabs.get(self.active_tab_index) {
+            self.system_context.active_session = tab.active_session.clone();
+            self.system_context.active_remote_profile = tab.active_remote_profile.clone();
+            self.system_context.current_dir = tab.current_dir.clone();
+            self.system_context.git_branch = tab.git_branch.clone();
+        }
+    }
+
     pub fn new(
         event_tx: UnboundedSender<AppEvent>,
         initial_rows: u16,
         initial_cols: u16,
     ) -> Result<Self> {
-        let (pty_tx, mut pty_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        let (pty_exit_tx, mut pty_exit_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-        let pty = PtyProcess::spawn(initial_rows, initial_cols, pty_tx, pty_exit_tx)?;
-
-        // Forward raw PTY output to unified event channel
-        let forward_tx = event_tx.clone();
-        tokio::spawn(async move {
-            while let Some(bytes) = pty_rx.recv().await {
-                if forward_tx.send(AppEvent::PtyOutput(bytes)).is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Forward shell termination (EOF or reaped child) so the UI quits cleanly
-        // instead of staying on a dead PTY when the user types `exit`.
-        let exit_forward_tx = event_tx.clone();
-        tokio::spawn(async move {
-            while pty_exit_rx.recv().await.is_some() {
-                if exit_forward_tx.send(AppEvent::PtyExit).is_err() {
-                    break;
-                }
-            }
-        });
+        let tab_0_id = 0;
+        let pty = Self::spawn_tab_pty(tab_0_id, initial_rows, initial_cols, &event_tx)?;
+        let tab_0 = TerminalTab::new(tab_0_id, pty);
+        let tabs = vec![tab_0];
+        let active_tab_index = 0;
+        let next_tab_id = 1;
 
         let mut config = Config::load();
 
@@ -491,7 +706,8 @@ impl App {
 
         let active_provider = config.default_provider.display_name();
         let active_model = config.get_active_provider_config().model.clone();
-        let current_session = Session::new(active_provider, &active_model);
+        let mut current_session = Session::new(active_provider, &active_model);
+        current_session.auto_approve = Some(config.auto_approve);
 
         let split_ratio = config.get_split_ratio();
         let theme = ThemeId::parse_or_default(&config.get_theme());
@@ -502,7 +718,10 @@ impl App {
             cursor_pos: 0,
             messages: Vec::new(),
             pending_image: None,
-            pty,
+            tabs,
+            active_tab_index,
+            next_tab_id,
+            terminal_tab_hits: std::cell::RefCell::new(Vec::new()),
             should_quit: false,
             split_ratio,
             terminal_inner_size: (initial_rows, initial_cols),
@@ -748,6 +967,7 @@ impl App {
         let active_provider = self.config.default_provider.display_name();
         let active_model = self.config.get_active_provider_config().model.clone();
         let total_tokens = self.get_total_tokens_used();
+        self.current_session.auto_approve = Some(self.config.auto_approve);
         self.current_session.update_from_chat(
             &self.messages,
             &self.chat_history,
@@ -837,6 +1057,11 @@ impl App {
                 loaded.infer_last_ssh_target();
                 let resumed_ssh = loaded.last_ssh_target.clone();
                 self.messages = loaded.messages.clone();
+                for msg in &mut self.messages {
+                    if msg.role == MessageRole::Assistant && msg.command_proposal.is_none() {
+                        msg.command_proposal = extract_command_proposal(&msg.content);
+                    }
+                }
                 // Wholesale replacement: render cache entries are positional, wipe them.
                 self.chat_render_cache.borrow_mut().hard_reset();
                 // Restore prompt history
@@ -873,6 +1098,15 @@ impl App {
                     self.trigger_context_probe();
                 }
 
+                // Restore auto-approve level if persisted in session
+                let auto_level = loaded.auto_approve;
+                if let Some(lvl) = auto_level {
+                    self.config.auto_approve = lvl;
+                    let _ = self.config.save();
+                    self.agent
+                        .reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                }
+
                 self.current_session = loaded;
                 self.chat_input.clear();
                 self.cursor_pos = 0;
@@ -882,9 +1116,13 @@ impl App {
                     Some(_) => " · 🔗 SSH".to_string(),
                     None => String::new(),
                 };
+                let auto_note = match auto_level {
+                    Some(lvl) => format!(" · ⚡ {}", lvl.display_name()),
+                    None => String::new(),
+                };
                 self.set_toast(format!(
-                    "📂 Session '{}' restaurée ({} messages){}",
-                    title, count, ssh_note
+                    "📂 Session '{}' restaurée ({} messages){}{}",
+                    title, count, ssh_note, auto_note
                 ));
                 self.maybe_offer_ssh_reconnect(resumed_ssh);
             }
@@ -946,7 +1184,7 @@ impl App {
         }
         if let Some(ssh) = ssh_target {
             let cmd = format!("ssh {}\n", ssh);
-            let _ = self.pty.write_all(cmd.as_bytes());
+            let _ = self.pty_mut().write_all(cmd.as_bytes());
             self.focus = Focus::Terminal;
         }
     }
@@ -958,7 +1196,9 @@ impl App {
         self.save_current_session();
         let active_provider = self.config.default_provider.display_name();
         let active_model = self.config.get_active_provider_config().model.clone();
-        self.current_session = Session::new(active_provider, &active_model);
+        let mut new_sess = Session::new(active_provider, &active_model);
+        new_sess.auto_approve = Some(self.config.auto_approve);
+        self.current_session = new_sess;
         self.messages.clear();
         // Wholesale reset: positional render cache must not leak across sessions.
         self.chat_render_cache.borrow_mut().hard_reset();
@@ -1284,7 +1524,9 @@ impl App {
             && self.terminal_inner_size != (area.height, area.width)
         {
             self.terminal_inner_size = (area.height, area.width);
-            let _ = self.pty.resize(area.height, area.width);
+            for tab in &mut self.tabs {
+                let _ = tab.pty.resize(area.height, area.width);
+            }
         }
     }
 
@@ -1322,6 +1564,23 @@ impl App {
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
                 {
+                    // Check tab bar hits first (switch, close, plus)
+                    let hits = self.terminal_tab_hits.borrow().clone();
+                    for hit in hits {
+                        if y == hit.y && x >= hit.start_x && x <= hit.end_x {
+                            self.focus = Focus::Terminal;
+                            self.is_dragging_split = false;
+                            if hit.is_plus {
+                                let _ = self.new_tab();
+                            } else if hit.is_close {
+                                self.close_tab(hit.tab_index);
+                            } else {
+                                self.select_tab(hit.tab_index);
+                            }
+                            return;
+                        }
+                    }
+
                     self.focus = Focus::Terminal;
                     self.is_dragging_split = false;
                     self.mouse_selection = Some(MouseSelection {
@@ -1359,7 +1618,7 @@ impl App {
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
                 {
-                    self.pty.scroll_up(2);
+                    self.pty_mut().scroll_up(2);
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -1369,7 +1628,7 @@ impl App {
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
                 {
-                    self.pty.scroll_down(2);
+                    self.pty_mut().scroll_down(2);
                 }
             }
             _ => {}
@@ -1441,7 +1700,7 @@ impl App {
                 }
             }
             Focus::Terminal => {
-                let _ = self.pty.write_all(text.as_bytes());
+                let _ = self.pty_mut().write_all(text.as_bytes());
             }
         }
     }
@@ -1490,6 +1749,7 @@ impl App {
         self.agent
             .reload_config(self.config.clone(), Some(self.event_tx.clone()));
         let _ = self.config.save();
+        self.save_current_session();
         next_level
     }
 
@@ -1637,13 +1897,65 @@ impl App {
             return;
         }
 
+        // Multi-tab shortcuts: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle)
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T'))
+        {
+            let _ = self.new_tab();
+            self.focus = Focus::Terminal;
+            return;
+        }
+
+        // Close tab shortcut: Ctrl+Shift+W (or Ctrl+W if Shift held)
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W'))
+        {
+            self.close_active_tab();
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Tab {
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                self.previous_tab();
+            } else {
+                self.next_tab();
+            }
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::PageDown {
+            self.next_tab();
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::PageUp {
+            self.previous_tab();
+            return;
+        }
+
+        // Direct tab switch with Alt + 1..9 when terminal is focused
+        if self.focus == Focus::Terminal && key.modifiers.contains(KeyModifiers::ALT) {
+            if let KeyCode::Char(c) = key.code {
+                if let Some(digit) = c.to_digit(10) {
+                    if (1..=9).contains(&digit) {
+                        let target_idx = (digit - 1) as usize;
+                        if target_idx < self.tabs.len() {
+                            self.select_tab(target_idx);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // 2. If a modal is open, it captures all keys
         if let ModalState::SshReconnect { ref target } = self.modal {
             let target = target.clone();
             match key.code {
                 KeyCode::Enter => {
                     let cmd = format!("ssh {}\n", target);
-                    let _ = self.pty.write_all(cmd.as_bytes());
+                    let _ = self.pty_mut().write_all(cmd.as_bytes());
                     self.focus = Focus::Terminal;
                     self.modal = ModalState::None;
                     let lang = self.config.get_language();
@@ -1694,7 +2006,7 @@ impl App {
                 BookmarksModalAction::Connect(target) => {
                     self.modal = ModalState::None;
                     let cmd = format!("ssh {}\n", target);
-                    let _ = self.pty.write_all(cmd.as_bytes());
+                    let _ = self.pty_mut().write_all(cmd.as_bytes());
                     self.focus = Focus::Terminal;
                 }
                 BookmarksModalAction::TriggerScan => {
@@ -1775,6 +2087,7 @@ impl App {
                         self.agent
                             .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                         self.trigger_context_probe();
+                        self.save_current_session();
                         self.modal = ModalState::None;
                     }
                     crate::ui::components::ConfigModalAction::Close => {
@@ -1898,19 +2211,19 @@ impl App {
         if key.code == KeyCode::PageUp
             || (key.code == KeyCode::Up && key.modifiers.contains(KeyModifiers::SHIFT))
         {
-            self.pty.scroll_up(15);
+            self.pty_mut().scroll_up(15);
             return;
         }
         if key.code == KeyCode::PageDown
             || (key.code == KeyCode::Down && key.modifiers.contains(KeyModifiers::SHIFT))
         {
-            self.pty.scroll_down(15);
+            self.pty_mut().scroll_down(15);
             return;
         }
 
         // Any regular keystroke resets scroll to 0 (live terminal)
-        if self.pty.scroll_offset() > 0 {
-            self.pty.reset_scroll();
+        if self.pty().scroll_offset() > 0 {
+            self.pty_mut().reset_scroll();
         }
 
         // If user is typing normal commands, dismiss any lingering error toast
@@ -1949,9 +2262,9 @@ impl App {
             _ => {}
         }
 
-        let bytes = key_event_to_pty_bytes(key, self.pty.app_cursor_mode());
+        let bytes = key_event_to_pty_bytes(key, self.pty().app_cursor_mode());
         if !bytes.is_empty() {
-            let _ = self.pty.write_all(&bytes);
+            let _ = self.pty_mut().write_all(&bytes);
         }
     }
 
@@ -1963,28 +2276,31 @@ impl App {
             self.poll_active_session();
         }
 
+        let shell_name = self.pty().shell_name().to_lowercase();
+        let shell_has_hooks_base = shell_name.contains("bash")
+            || shell_name.contains("zsh")
+            || shell_name.contains("fish");
+
         if let Some(ref mut capture) = self.active_pty_tool {
             let elapsed_since_start = capture.start_time.elapsed();
             let elapsed_since_last_output = capture.last_output_time.elapsed();
-            let is_waiting_password = is_waiting_for_password(char_safe_tail(
+            let is_waiting_interaction = is_waiting_for_user_interaction(char_safe_tail(
                 &capture.decoded_text,
                 PASSWORD_WINDOW_BYTES,
-            ));
+            )).is_some();
 
             // Debug: one status line per second while a capture is pending.
             if self.spinner_frame.is_multiple_of(11) {
                 capture_debug(&format!(
-                    "TICK elapsed={}ms quiet={}ms shell_has_hooks={} is_remote={} waiting_pw={} len={} pending_utf8={}",
+                    "TICK elapsed={}ms quiet={}ms shell_has_hooks={} is_remote={} waiting_interaction={} len={} pending_utf8={}",
                     elapsed_since_start.as_millis(),
                     elapsed_since_last_output.as_millis(),
-                    self.pty.shell_name().to_lowercase().contains("bash")
-                        || self.pty.shell_name().to_lowercase().contains("zsh")
-                        || self.pty.shell_name().to_lowercase().contains("fish"),
+                    shell_has_hooks_base,
                     matches!(
                         self.system_context.active_session,
                         crate::system::ActiveSession::Ssh { .. }
                     ),
-                    is_waiting_password,
+                    is_waiting_interaction,
                     capture.decoded_text.len(),
                     capture.pending_utf8.len()
                 ));
@@ -2001,11 +2317,11 @@ impl App {
             }
 
             let mut timeout_secs = 45u64;
-            if is_waiting_password {
+            if is_waiting_interaction {
                 // Still bounded (was u64::MAX — an infinite wait): a human answers a
-                // sudo prompt within seconds, while a detector false-positive (output
-                // tail merely containing "password:") would previously hang the capture
-                // FOREVER on remote sessions where no sentinel ever arrives.
+                // sudo or [y/n] prompt within seconds, while a detector false-positive
+                // would previously hang the capture FOREVER on remote sessions where
+                // no sentinel ever arrives.
                 timeout_secs = PASSWORD_WAIT_HARD_CAP_SECS;
             }
 
@@ -2018,11 +2334,7 @@ impl App {
                 self.system_context.active_session,
                 crate::system::ActiveSession::Ssh { .. }
             );
-            let shell_name = self.pty.shell_name().to_lowercase();
-            let shell_has_hooks = !is_remote
-                && (shell_name.contains("bash")
-                    || shell_name.contains("zsh")
-                    || shell_name.contains("fish"));
+            let shell_has_hooks = !is_remote && shell_has_hooks_base;
 
             // Prompt-aware fast settle (non-hooked shells only): when a remote command
             // completes, the remote shell re-displays its PS1. If the output tail ends
@@ -2038,12 +2350,12 @@ impl App {
                     .unwrap_or_default();
             let remote_prompt_quiet = !last_output_line.is_empty()
                 && !shell_has_hooks
-                && !is_waiting_password
+                && !is_waiting_interaction
                 && elapsed_since_last_output >= std::time::Duration::from_millis(800)
                 && is_prompt_remnant(&last_output_line);
 
             let has_output_settled = !shell_has_hooks
-                && !is_waiting_password
+                && !is_waiting_interaction
                 && !capture.decoded_text.is_empty()
                 && elapsed_since_start >= std::time::Duration::from_millis(800)
                 && (elapsed_since_last_output >= std::time::Duration::from_millis(3000)
@@ -2090,7 +2402,7 @@ impl App {
                     capture.decoded_text.len(),
                     clean_is_empty,
                     capture.truncated,
-                    is_waiting_password
+                    is_waiting_interaction
                 ));
                 let clean_output = match &capture.clean_cache {
                     Some((l, s)) if *l == capture.decoded_text.len() => s.clone(),
@@ -2123,18 +2435,68 @@ impl App {
     }
 
     pub fn poll_active_session(&mut self) {
-        if let Some(child_pid) = self.pty.child_pid() {
-            let new_session = crate::system::detect_active_session(child_pid);
-            if new_session != self.system_context.active_session {
-                self.on_active_session_changed(new_session);
-            }
+        let active_idx = self.active_tab_index;
+        let mut probes_to_trigger = Vec::new();
+        let mut active_session_changed = None;
 
-            // Also refresh PWD and Git branch on local sessions
-            if !self.system_context.active_session.is_ssh() {
-                if let Some(cwd) = crate::system::detect_current_working_dir(child_pid) {
-                    let branch = crate::system::detect_git_branch(&cwd);
-                    self.system_context.current_dir = Some(cwd);
-                    self.system_context.git_branch = branch;
+        for (idx, tab) in self.tabs.iter_mut().enumerate() {
+            if let Some(child_pid) = tab.pty.child_pid() {
+                let new_session = crate::system::detect_active_session(child_pid);
+                if new_session != tab.active_session {
+                    let was_ssh = tab.active_session.is_ssh();
+                    tab.active_session = new_session.clone();
+                    match &new_session {
+                        ActiveSession::Ssh { target, .. } => {
+                            if let Some(profile) = self.hosts_store.get(target) {
+                                tab.active_remote_profile = Some(profile.clone());
+                            } else {
+                                tab.active_remote_profile = None;
+                                probes_to_trigger.push(target.clone());
+                            }
+                        }
+                        _ => {
+                            tab.active_remote_profile = None;
+                        }
+                    }
+                    if idx == active_idx {
+                        active_session_changed = Some((was_ssh, new_session.clone()));
+                    }
+                }
+
+                // Also refresh PWD and Git branch on local sessions
+                if !tab.active_session.is_ssh() {
+                    if let Some(cwd) = crate::system::detect_current_working_dir(child_pid) {
+                        let branch = crate::system::detect_git_branch(&cwd);
+                        tab.current_dir = Some(cwd);
+                        tab.git_branch = branch;
+                    }
+                }
+            }
+        }
+
+        for target in probes_to_trigger {
+            self.trigger_background_host_probe(target);
+        }
+
+        // Sync system_context with active tab
+        self.sync_active_tab_system_context();
+
+        if let Some((was_ssh, new_session)) = active_session_changed {
+            match new_session {
+                ActiveSession::Ssh { target, .. } => {
+                    if let Some(profile) = self.hosts_store.get(&target) {
+                        self.set_toast(format!("🌐 SSH: {} ({})", target, profile.distro));
+                    } else {
+                        self.set_toast(format!("🌐 SSH: {}", target));
+                    }
+                }
+                ActiveSession::Container { runtime, container_id } => {
+                    self.set_toast(format!("📦 {}: {}", runtime, container_id));
+                }
+                ActiveSession::Local { .. } => {
+                    if was_ssh {
+                        self.set_toast("🖥️ Retour à l'environnement local".to_string());
+                    }
                 }
             }
         }
@@ -2291,7 +2653,7 @@ impl App {
             {
                 proc.as_str()
             }
-            _ => self.pty.shell(),
+            _ => self.pty().shell(),
         }
     }
 
@@ -2320,9 +2682,11 @@ impl App {
             });
             return false;
         }
+
+        // 2. Clear lingering state and inject command
         let proposals = self.all_command_proposals();
-        if let Some(cmd) = proposals.get(index).cloned() {
-            let clean_cmd = clean_multiline_command(&cmd);
+        if let Some(cmd) = proposals.get(index) {
+            let clean_cmd = cmd.trim().to_string();
 
             if auto_run {
                 self.last_injected_cmd = None;
@@ -2361,10 +2725,11 @@ impl App {
                     self.system_context.active_session,
                     crate::system::ActiveSession::Ssh { .. }
                 );
-                let pty_cmd = format_command_for_pty_with_session(&cmd, shell, is_remote, false);
+                let pty_cmd = format_command_for_pty_with_session(cmd, shell, is_remote, false);
+                self.pty_mut().reset_scroll();
                 // Clear any dirty prompt buffer cleanly without printing ^C
-                let _ = self.pty.write_all(b"\x15");
-                let _ = self.pty.write_all(pty_cmd.as_bytes());
+                let _ = self.pty_mut().write_all(b"\x15");
+                let _ = self.pty_mut().write_all(pty_cmd.as_bytes());
                 self.last_injected_cmd = Some(cmd.clone());
                 return true;
             }
@@ -2399,6 +2764,15 @@ impl App {
                         }
                     }
                     return;
+                } else if !input.is_empty() {
+                    // User typed a new prompt/question while a tool approval was pending:
+                    // decline the pending tool cleanly so the agent task unblocks, then
+                    // allow keypress to fall through to normal chat submission.
+                    if let Some(mut pending) = self.pending_tool_approval.take() {
+                        if let Some(tx) = pending.approval_tx.take() {
+                            let _ = tx.send(false);
+                        }
+                    }
                 }
             } else if key.code == KeyCode::Esc {
                 self.chat_input.clear();
@@ -2609,6 +2983,19 @@ impl App {
                     .find('\n')
                     .map(|i| base + i)
                     .unwrap_or(self.chat_input.len());
+            }
+            KeyCode::Char('w') | KeyCode::Char('W')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                // Ctrl+W: erase word before cursor in prompt input
+                if self.cursor_pos > 0 {
+                    let before = &self.chat_input[..self.cursor_pos];
+                    let trimmed = before.trim_end();
+                    let word_start = trimmed.rfind(' ').map(|p| p + 1).unwrap_or(0);
+                    self.chat_input.replace_range(word_start..self.cursor_pos, "");
+                    self.cursor_pos = word_start;
+                }
             }
             KeyCode::Char(c) => {
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2893,9 +3280,12 @@ impl App {
         );
         let formatted_cmd = format_command_for_pty_with_session(&command, shell, is_remote, true);
 
+        // Always reset terminal scroll so the live output is visible at the bottom
+        self.pty_mut().reset_scroll();
+
         // Clear any dirty prompt buffer cleanly without printing ^C
-        let _ = self.pty.write_all(b"\x15");
-        let _ = self.pty.write_all(formatted_cmd.as_bytes());
+        let _ = self.pty_mut().write_all(b"\x15");
+        let _ = self.pty_mut().write_all(formatted_cmd.as_bytes());
 
         let is_sudo = command.trim().starts_with("sudo") || command.contains(" sudo ");
         if is_sudo {
@@ -2906,8 +3296,8 @@ impl App {
         capture_debug(&format!(
             "ARMED cmd={:?} shell={} shell_name={} is_remote={} auto_prompt={}",
             command,
-            self.pty.shell(),
-            self.pty.shell_name(),
+            self.pty().shell(),
+            self.pty().shell_name(),
             is_remote,
             auto_prompt
         ));
@@ -2969,8 +3359,31 @@ impl App {
         );
     }
 
-    pub fn on_pty_output(&mut self, bytes: &[u8]) {
-        let mut password_prompt_detected = false;
+    pub fn on_pty_exit(&mut self, tab_id: usize) {
+        if self.tabs.len() <= 1 {
+            self.should_quit = true;
+            return;
+        }
+        if let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) {
+            self.close_tab(idx);
+        }
+    }
+
+    pub fn on_pty_output(&mut self, tab_id: usize, bytes: &[u8]) {
+        let is_active = self
+            .tabs
+            .get(self.active_tab_index)
+            .map(|t| t.id == tab_id)
+            .unwrap_or(false);
+
+        if !is_active {
+            if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                tab.unread_activity = true;
+            }
+            return;
+        }
+
+        let mut interaction_prompt_detected = None;
         if let Some(ref mut capture) = self.active_pty_tool {
             capture.last_output_time = std::time::Instant::now();
 
@@ -3024,13 +3437,12 @@ impl App {
                 capture.pending_utf8.extend_from_slice(bytes);
                 utf8_decode_incremental(&mut capture.decoded_text, &mut capture.pending_utf8);
 
-                // Password prompts always appear at the tail of the current output — a bounded
-                // window keeps the check O(1) instead of O(buffer).
-                if is_waiting_for_password(char_safe_tail(
+                // Interactive prompts (password, sudo, [y/n] confirmation, etc.) appear at the tail
+                if let Some(kind) = is_waiting_for_user_interaction(char_safe_tail(
                     &capture.decoded_text,
                     PASSWORD_WINDOW_BYTES,
                 )) {
-                    password_prompt_detected = true;
+                    interaction_prompt_detected = Some(kind);
                 }
 
                 // Locate the OSC 777 sentinel incrementally. Once seen (complete), its position
@@ -3135,14 +3547,26 @@ impl App {
             }
         }
 
-        if password_prompt_detected && self.focus != Focus::Terminal {
-            self.focus = Focus::Terminal;
-            let toast_msg = if self.config.get_language() == crate::i18n::Language::Fr {
-                "🔒 Saisie du mot de passe sudo requise dans le terminal".to_string()
-            } else {
-                "🔒 Sudo password required in terminal".to_string()
-            };
-            self.set_toast(toast_msg);
+        if let Some(kind) = interaction_prompt_detected {
+            if self.focus != Focus::Terminal {
+                self.focus = Focus::Terminal;
+                let lang = self.config.get_language();
+                let toast_msg = match (kind, lang) {
+                    (InteractionKind::Password, Language::Fr) => {
+                        "🔒 Saisie requise dans le terminal (mot de passe / sudo)".to_string()
+                    }
+                    (InteractionKind::Password, _) => {
+                        "🔒 Input required in terminal (password / sudo)".to_string()
+                    }
+                    (InteractionKind::Confirmation, Language::Fr) => {
+                        "⚡ Interaction requise dans le terminal ([o/n], confirmation...)".to_string()
+                    }
+                    (InteractionKind::Confirmation, _) => {
+                        "⚡ Interaction required in terminal ([y/n], confirmation...)".to_string()
+                    }
+                };
+                self.set_toast(toast_msg);
+            }
         }
 
         // Detect shell errors ONLY for manual user commands in the live terminal
@@ -3298,7 +3722,11 @@ impl App {
         if self.agent.is_generating {
             self.agent.stop_generation();
             self.pending_tool_approval = None;
-            self.active_pty_tool = None;
+            if self.active_pty_tool.is_some() {
+                self.active_pty_tool = None;
+                // Cleanly kill any active command still running in the PTY so the shell returns to prompt
+                let _ = self.pty_mut().write_all(b"\x03");
+            }
             if let Some(last_msg) = self.messages.last_mut() {
                 if last_msg.role == MessageRole::Assistant {
                     if last_msg.content.trim().is_empty() {
@@ -3590,10 +4018,21 @@ pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
         }
     }
 
+    if list.is_empty() {
+        if let Some(crate::agent::tools::ToolInvocation::RunCommand(cmd)) =
+            crate::agent::tools::parse_tool_call(text)
+        {
+            let cleaned = sanitize_proposed_command(&cmd);
+            if !cleaned.is_empty() {
+                list.push(cleaned);
+            }
+        }
+    }
+
     list
 }
 
-/// Extracts the first proposed shell command from markdown code blocks
+/// Extracts the first proposed shell command from markdown code blocks or tool calls
 pub fn extract_command_proposal(text: &str) -> Option<String> {
     extract_all_command_proposals(text).into_iter().next()
 }
@@ -3648,10 +4087,16 @@ pub fn sanitize_proposed_command(raw: &str) -> String {
 }
 
 pub fn is_natural_approval_phrase(text: &str) -> bool {
-    let clean = text.trim().to_lowercase();
-    // NOTE: an empty string must NOT be an approval phrase — pressing bare Enter while a
-    // permission card is displayed used to execute the pending command (even Risky ones).
-    matches!(
+    let clean = text
+        .trim()
+        .trim_end_matches(['.', '!', '…', '?', ' '])
+        .trim()
+        .to_lowercase();
+    if clean.is_empty() {
+        return false;
+    }
+
+    if matches!(
         clean.as_str(),
         "ok" | "oui"
             | "o"
@@ -3675,14 +4120,79 @@ pub fn is_natural_approval_phrase(text: &str) -> bool {
             | "proceed"
             | "yep"
             | "ouep"
-    )
+            | "oui vas y"
+            | "oui vas-y"
+            | "oui vazy"
+            | "ok vas y"
+            | "ok vas-y"
+            | "oui fais le"
+            | "oui fais-le"
+            | "oui go"
+            | "ok go"
+            | "oui lance"
+            | "ok lance"
+            | "oui continue"
+            | "ok continue"
+            | "oui stp"
+            | "ok stp"
+            | "oui merci"
+            | "ok merci"
+            | "oui s'il te plaît"
+            | "oui s'il te plait"
+            | "oui bien sur"
+            | "oui bien sûr"
+            | "bien sur"
+            | "bien sûr"
+            | "yes please"
+            | "yes go"
+            | "yes do it"
+            | "yes proceed"
+    ) {
+        return true;
+    }
+
+    // Prefix check for short affirmative expressions (e.g., "oui stp", "ok vas-y vite")
+    if clean.len() <= 30 {
+        let starts_affirmative = clean.starts_with("oui ")
+            || clean.starts_with("ok ")
+            || clean.starts_with("yes ");
+        let contains_negative = clean.contains("non")
+            || clean.contains("pas")
+            || clean.contains("ne ")
+            || clean.contains("mais")
+            || clean.contains("sauf")
+            || clean.contains("attends")
+            || clean.contains("wait")
+            || clean.contains("stop")
+            || clean.contains("cancel");
+        if starts_affirmative && !contains_negative {
+            return true;
+        }
+    }
+
+    false
 }
 
 pub fn is_natural_decline_phrase(text: &str) -> bool {
-    let clean = text.trim().to_lowercase();
+    let clean = text
+        .trim()
+        .trim_end_matches(['.', '!', '…', '?', ' '])
+        .trim()
+        .to_lowercase();
     matches!(
         clean.as_str(),
-        "non" | "no" | "n" | "stop" | "annule" | "cancel" | "refuse" | "non merci"
+        "non" | "no"
+            | "n"
+            | "stop"
+            | "annule"
+            | "cancel"
+            | "refuse"
+            | "non merci"
+            | "ne fais pas"
+            | "ne lance pas"
+            | "pas maintenant"
+            | "attends"
+            | "wait"
     )
 }
 
@@ -3696,12 +4206,7 @@ pub fn parse_command_execution_request(text: &str, num_proposals: usize) -> Opti
         return None;
     }
 
-    // Direct affirmative phrases when proposals exist -> run first proposal (index 0)
-    if is_natural_approval_phrase(&clean) {
-        return Some(0);
-    }
-
-    // Numbered requests: "1", "2", "cmd 1", "commande 2", "lance 1", "lance la 2", "alt 1", "la 1"
+    // 1. Numbered requests first: "1", "2", "cmd 1", "commande 2", "lance 1", "lance la 2", "alt 1", "la 1"
     let patterns = [
         "commande #",
         "commande ",
@@ -3739,6 +4244,11 @@ pub fn parse_command_execution_request(text: &str, num_proposals: usize) -> Opti
         if num >= 1 && num <= num_proposals {
             return Some(num - 1);
         }
+    }
+
+    // 2. Direct affirmative phrases when proposals exist -> run first proposal (index 0)
+    if is_natural_approval_phrase(&clean) {
+        return Some(0);
     }
 
     None
@@ -3938,17 +4448,25 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
     });
 }
 
-/// Checks if the raw terminal output indicates that sudo/doas/su is waiting for password entry.
-pub fn is_waiting_for_password(raw_text: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionKind {
+    Password,
+    Confirmation,
+}
+
+/// Checks if the raw terminal output indicates that a process is waiting for user interaction
+/// (sudo/doas/su password, ssh passphrase, [y/n] confirmation, press enter, etc.)
+pub fn is_waiting_for_user_interaction(raw_text: &str) -> Option<InteractionKind> {
     let clean = strip_ansi_sequences(raw_text);
     let trimmed = clean.trim_end();
     if trimmed.is_empty() {
-        return false;
+        return None;
     }
     let lower = trimmed.to_lowercase();
     let last_line = lower.lines().next_back().unwrap_or(&lower).trim();
 
-    last_line.contains("password for")
+    // 1. Password / Passphrase / Sudo / Authentication
+    if last_line.contains("password for")
         || last_line.contains("mot de passe de")
         || last_line.contains("mot de passe pour")
         || last_line.contains("mot de passe :")
@@ -3960,6 +4478,37 @@ pub fn is_waiting_for_password(raw_text: &str) -> bool {
         || last_line.contains("authenticating")
         || last_line.contains("doas password")
         || last_line.starts_with("[sudo]")
+    {
+        return Some(InteractionKind::Password);
+    }
+
+    // 2. Interactive confirmation prompts ([y/n], [o/n], continue connecting, etc.)
+    if last_line.contains("[y/n]")
+        || last_line.contains("[o/n]")
+        || last_line.contains("(y/n)")
+        || last_line.contains("(o/n)")
+        || last_line.contains("[yes/no]")
+        || last_line.contains("(yes/no")
+        || last_line.contains("continue connecting (yes/no")
+        || last_line.contains("voulez-vous continuer")
+        || last_line.contains("souhaitez-vous continuer")
+        || last_line.contains("do you want to continue")
+        || last_line.contains("proceed with installation")
+        || last_line.contains("press enter")
+        || last_line.contains("press [enter]")
+        || last_line.contains("appuyez sur entrée")
+        || last_line.contains("appuyez sur entree")
+        || last_line.contains("press any key")
+    {
+        return Some(InteractionKind::Confirmation);
+    }
+
+    None
+}
+
+/// Checks if the raw terminal output indicates that sudo/doas/su is waiting for password entry.
+pub fn is_waiting_for_password(raw_text: &str) -> bool {
+    matches!(is_waiting_for_user_interaction(raw_text), Some(InteractionKind::Password))
 }
 
 /// Cleans captured PTY output by stripping ANSI colors, CRs, and prompt echoes.
@@ -4612,19 +5161,25 @@ pub fn format_command_for_pty_with_session(
     }
 
     let is_fish = user_shell.contains("fish") && !is_remote;
-    // Local shells (zsh/bash/dash) keep an interactive line editor that mangles pasted
-    // multiline heredocs (`<<'EOF'` bodies split across physical lines get eaten —
-    // the recurring "cmdand heredoc> ="/`<<''EOF'>` corruption). Routing heredoc scripts
-    // through `bash -c '…'` inlines the whole block as ONE logical line, so the editor
-    // only ever sees a single terminal line and bash executes the script verbatim.
-    // Remote shells are left untouched (their own line editor handles multiline fine and
-    // wrapping risked changing semantics); bare bash-specific tokens stay native for bash.
+    // Multi-line scripts, heredocs (`<<`), and scripts containing `exit` or `set -e`
+    // must run in an isolated subshell (`bash -c '...'`) so that an `exit 1` or error
+    // cannot terminate the user's interactive login shell (which would kill the PTY and close the app).
+    // It also prevents the interactive line editor (ZLE / Readline) from corrupting multiline paste.
     let needs_bash = if is_remote {
-        false
+        clean.contains("<<")
+            || clean.contains('\n')
+            || clean.contains("exit")
+            || clean.contains("set -e")
     } else if is_fish {
         is_bash_specific_syntax(&clean)
+            || clean.contains('\n')
+            || clean.contains("exit")
+            || clean.contains("set -e")
     } else {
         clean.contains("<<")
+            || clean.contains('\n')
+            || clean.contains("exit")
+            || clean.contains("set -e")
     };
 
     if needs_bash {
@@ -4908,13 +5463,14 @@ mod tests {
         // be counted (truncated) and NOT buffered.
         let chunk = vec![b'x'; 4096];
         let full_chunks = MAX_CAPTURE_BYTES / chunk.len();
+        let tab_id = app.active_tab().id;
         for _ in 0..full_chunks {
-            app.on_pty_output(&chunk);
+            app.on_pty_output(tab_id, &chunk);
         }
         let capture = app.active_pty_tool.as_ref().unwrap();
         assert_eq!(capture.output_bytes.len(), MAX_CAPTURE_BYTES);
         assert!(!capture.truncated);
-        app.on_pty_output(&chunk);
+        app.on_pty_output(tab_id, &chunk);
         let capture = app.active_pty_tool.as_ref().unwrap();
         assert!(capture.truncated, "cap crossed: overflow mode expected");
         assert_eq!(capture.overflow_bytes, chunk.len() as u64);
@@ -4923,7 +5479,7 @@ mod tests {
         // The completion sentinel arrives after the cap and must conclude immediately.
         let mut sentinel = b"\x1b]777;spiritty_done;".to_vec();
         sentinel.extend_from_slice(b"3\x07");
-        app.on_pty_output(&sentinel);
+        app.on_pty_output(tab_id, &sentinel);
 
         assert!(app.active_pty_tool.is_none(), "sentinel must conclude");
         let summary = rx.await.expect("result sent");
@@ -5186,13 +5742,9 @@ mod tests {
             overflow_tail: Vec::new(),
             clean_cache: None,
         });
-        // One single PTY read coalescing echo + output + sentinel + next prompt: the
-        // sentinel sits mid-chunk, far outside any "last 20 chars" incremental window.
-        // Regression: the watermark scan only examined the tail of each chunk, so this
-        // exact byte layout hung the capture until the 45s hard timeout (local fast
-        // shells coalesce output into large reads depending on scheduling).
         let chunk = "\r\u{1b}[1;36mSpiritty\u{1b}[0m main ❯  uname -r\r\n\u{1b}[?2004l\r7.1.9-arch1-2\r\n\u{1b}]777;spiritty_done;0\u{7}\u{1b}]0;xorne@host:~\u{7}\u{1b}[?2004h\r\n\u{1b}[1;36mSpiritty\u{1b}[0m main ❯ ";
-        app.on_pty_output(chunk.as_bytes());
+        let tab_id = app.active_tab().id;
+        app.on_pty_output(tab_id, chunk.as_bytes());
         assert!(
             app.active_pty_tool.is_none(),
             "sentinel inside a single large chunk must conclude the capture immediately"

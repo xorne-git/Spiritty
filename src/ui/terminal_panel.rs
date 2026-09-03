@@ -25,155 +25,181 @@ impl<'a> TerminalPanel<'a> {
     pub fn render_panel(self, area: Rect, buf: &mut Buffer) -> Option<(u16, u16)> {
         let is_focused = self.app.focus == Focus::Terminal;
         let palette = self.app.theme.palette();
-        let (title_text, title_style) = match self.app.system_context.active_session {
-            crate::system::ActiveSession::Ssh { ref target, .. } => {
-                if let Some(ref profile) = self.app.system_context.active_remote_profile {
-                    (
-                        format!(
-                            "🌐 SSH: {} ({})",
-                            target,
-                            profile
-                                .distro
-                                .split_whitespace()
-                                .next()
-                                .unwrap_or(&profile.distro)
-                        ),
-                        Style::default()
-                            .fg(if is_focused {
-                                palette.warning
-                            } else {
-                                palette.border_unfocused
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    (
-                        format!("🌐 SSH: {}", target),
-                        Style::default()
-                            .fg(if is_focused {
-                                palette.warning
-                            } else {
-                                palette.border_unfocused
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    )
-                }
+
+        // Clear hit regions for this frame
+        self.app.terminal_tab_hits.borrow_mut().clear();
+
+        let top_y = area.top();
+        let right_bound = area.right().saturating_sub(18); // Leave space for line badge
+        let mut curr_x = area.left() + 1;
+
+        let num_tabs = self.app.tabs.len();
+        for (i, tab) in self.app.tabs.iter().enumerate() {
+            if curr_x >= right_bound {
+                break;
             }
-            crate::system::ActiveSession::Container {
-                ref runtime,
-                ref container_id,
-            } => (
-                format!("📦 {}: {}", runtime, container_id),
+
+            let is_active = i == self.app.active_tab_index;
+            let title = tab.display_title();
+            let unread = if tab.unread_activity && !is_active {
+                " ●"
+            } else {
+                ""
+            };
+
+            let max_tab_len = 20;
+            let clean_title = if title.len() > max_tab_len {
+                let cut = title.floor_char_boundary(max_tab_len - 1);
+                format!("{}…", &title[..cut])
+            } else {
+                title
+            };
+
+            let tab_num = i + 1;
+            let tab_label = if is_active && num_tabs > 1 {
+                format!(" {} {}{} × ", tab_num, clean_title, unread)
+            } else {
+                format!(" {} {}{} ", tab_num, clean_title, unread)
+            };
+
+            let tab_width = unicode_width::UnicodeWidthStr::width(tab_label.as_str()) as u16;
+            if curr_x + tab_width > right_bound && i > 0 {
+                break;
+            }
+
+            let tab_style = if is_active {
                 Style::default()
-                    .fg(if is_focused {
-                        palette.accent_secondary
-                    } else {
-                        palette.border_unfocused
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            crate::system::ActiveSession::Local {
-                ref foreground_process,
-            } => {
-                let base = if let Some(proc) = foreground_process {
-                    if proc != "fish" && proc != "bash" && proc != "zsh" && proc != "sh" {
-                        format!(
-                            "💻 {} ({})",
-                            self.app.system_context.terminal_emulator, proc
-                        )
-                    } else {
-                        format!("💻 {}", self.app.system_context.terminal_emulator)
-                    }
-                } else {
-                    format!("💻 {}", self.app.system_context.terminal_emulator)
-                };
-
-                let cwd_info = match (
-                    &self.app.system_context.current_dir,
-                    &self.app.system_context.git_branch,
-                ) {
-                    (Some(cwd), Some(branch)) => format!(" [ {} ] ( {})", cwd, branch),
-                    (Some(cwd), None) => format!(" [ {} ]", cwd),
-                    _ => String::new(),
-                };
-
-                let max_available = (area.width.saturating_sub(25)) as usize;
-                let full = format!("{}{}", base, cwd_info);
-                let text = if full.len() > max_available && !cwd_info.is_empty() {
-                    if let Some(ref cwd) = self.app.system_context.current_dir {
-                        let short_cwd = cwd.split('/').next_back().unwrap_or(cwd);
-                        if let Some(ref branch) = self.app.system_context.git_branch {
-                            format!("{} [{}] ( {})", base, short_cwd, branch)
-                        } else {
-                            format!("{} [{}]", base, short_cwd)
-                        }
-                    } else {
-                        base
-                    }
-                } else {
-                    full
-                };
-
-                let style = Style::default()
-                    .fg(if is_focused {
+                    .bg(if is_focused {
                         palette.accent_primary
                     } else {
                         palette.border_unfocused
                     })
-                    .add_modifier(Modifier::BOLD);
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD)
+            } else if tab.unread_activity {
+                Style::default()
+                    .fg(palette.warning)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.text_secondary)
+            };
 
-                // Resumed-SSH hint: the session was continued with `-c` and it WAS
-                // remote, but the PTY is currently local (user must reconnect). The
-                // live-SSH case already shows the 🌐 title above, so no hint there.
-                let lang = self.app.config.get_language();
-                let resumed_word = if lang == Language::Fr {
-                    "reprise"
-                } else {
-                    "resumed"
-                };
-                // Graded hint variants, widest first — the hint (transient, tells
-                // the user to reconnect) ranks ABOVE the cwd/branch info, and the
-                // fit is measured in TERMINAL CELLS (byte length lies for emojis).
-                let target_opt = self.app.current_session.last_ssh_target.clone();
-                // Display rule: the hint appears ONLY when this session has a known
-                // SSH history (resumed with -c). A None/empty target = never remote
-                // (or brand-new session) => NO hint at all. The live-SSH case shows
-                // the 🌐 title instead, so no hint there either.
-                let hints: Vec<String> = match target_opt.as_deref() {
-                    Some(t) if !t.is_empty() => vec![
-                        format!(" · 🔗 SSH {} ({})", t, resumed_word),
-                        format!(" · 🔗 {} ({})", t, resumed_word),
-                        format!(" · 🔗 SSH ({})", resumed_word),
-                        // Last-resort tier without the emoji: 3 cells saved, matters
-                        // on narrow splits where even the compact hint would overflow.
-                        format!(" · SSH ({})", resumed_word),
-                    ],
-                    _ => Vec::new(),
-                };
-                let cell_w = |s: &str| unicode_width::UnicodeWidthStr::width(s);
-                let base_part = text.split(" [").next().unwrap_or(&text).to_string();
-                let base_cell_w = cell_w(&base_part);
-                let text = hints
-                    .iter()
-                    .find(|h| cell_w(&text) + cell_w(h) <= max_available)
-                    .map(|h| format!("{}{}", text, h))
-                    .or_else(|| {
-                        // Drop the cwd part and retry with the widest hint that fits.
-                        hints
-                            .iter()
-                            .find(|h| base_cell_w + cell_w(h) <= max_available)
-                            .map(|h| format!("{}{}", base_part, h))
-                    })
-                    .unwrap_or(text);
+            buf.set_string(curr_x, top_y, &tab_label, tab_style);
 
-                (text, style)
+            let tab_end_x = curr_x
+                + tab_width.saturating_sub(if is_active && num_tabs > 1 { 3 } else { 0 });
+            self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
+                tab_index: i,
+                start_x: curr_x,
+                end_x: tab_end_x,
+                y: top_y,
+                is_close: false,
+                is_plus: false,
+            });
+
+            if is_active && num_tabs > 1 {
+                let close_start_x = tab_end_x;
+                let close_end_x = curr_x + tab_width;
+                self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
+                    tab_index: i,
+                    start_x: close_start_x,
+                    end_x: close_end_x,
+                    y: top_y,
+                    is_close: true,
+                    is_plus: false,
+                });
             }
-        };
 
-        // 1. Icon + Title on the LEFT of terminal panel (1 char padding)
-        buf.set_string(area.left() + 1, area.top(), &title_text, title_style);
+            curr_x += tab_width + 1;
+        }
 
-        let (scroll_offset, total_lines) = self.app.pty.scroll_info();
+        // Plus button [+]
+        if curr_x + 3 < right_bound {
+            let plus_str = " + ";
+            let plus_style = Style::default()
+                .fg(if is_focused {
+                    palette.accent_primary
+                } else {
+                    palette.text_secondary
+                })
+                .add_modifier(Modifier::BOLD);
+            buf.set_string(curr_x, top_y, plus_str, plus_style);
+            self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
+                tab_index: 0,
+                start_x: curr_x,
+                end_x: curr_x + 3,
+                y: top_y,
+                is_close: false,
+                is_plus: true,
+            });
+            curr_x += 3;
+        }
+
+        // Resumed-SSH hint: the session was continued with `-c` and it WAS
+        // remote, but the PTY is currently local (user must reconnect).
+        if !self.app.active_tab().active_session.is_ssh() {
+            if let Some(ref target) = self.app.current_session.last_ssh_target {
+                if !target.is_empty() {
+                    let lang = self.app.config.get_language();
+                    let resumed_word = if lang == Language::Fr {
+                        "reprise"
+                    } else {
+                        "resumed"
+                    };
+                    let max_hint_available = right_bound.saturating_sub(curr_x) as usize;
+                    let hints: Vec<String> = vec![
+                        format!(" · 🔗 SSH {} ({})", target, resumed_word),
+                        format!(" · 🔗 {} ({})", target, resumed_word),
+                        format!(" · 🔗 SSH ({})", resumed_word),
+                        format!(" · SSH ({})", resumed_word),
+                    ];
+                    let cell_w = |s: &str| unicode_width::UnicodeWidthStr::width(s);
+                    if let Some(hint) = hints.iter().find(|h| cell_w(h) <= max_hint_available) {
+                        let hint_style = Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD);
+                        buf.set_string(curr_x, top_y, hint, hint_style);
+                    }
+                }
+            }
+        }
+
+        // Active PTY tool running indicator with Shift+Tab hint
+        if self.app.active_pty_tool.is_some() {
+            let lang = self.app.config.get_language();
+            let max_running_available = right_bound.saturating_sub(curr_x) as usize;
+            let hints: Vec<String> = if is_focused {
+                vec![
+                    if lang == Language::Fr {
+                        " · ⚡ En cours"
+                    } else {
+                        " · ⚡ Running"
+                    }
+                    .to_string(),
+                    " · ⚡".to_string(),
+                ]
+            } else {
+                vec![
+                    if lang == Language::Fr {
+                        " · ⚡ En cours (Shift+Tab pour interagir)"
+                    } else {
+                        " · ⚡ Running (Shift+Tab to interact)"
+                    }
+                    .to_string(),
+                    " · ⚡ Shift+Tab".to_string(),
+                    " · ⚡".to_string(),
+                ]
+            };
+            let cell_w = |s: &str| unicode_width::UnicodeWidthStr::width(s);
+            if let Some(hint) = hints.iter().find(|h| cell_w(h) <= max_running_available) {
+                let hint_style = Style::default()
+                    .fg(palette.accent_primary)
+                    .add_modifier(Modifier::BOLD);
+                buf.set_string(curr_x, top_y, hint, hint_style);
+            }
+        }
+
+        let (scroll_offset, total_lines) = self.app.active_tab().pty.scroll_info();
 
         // 2. Line count badge on the RIGHT of terminal panel (1 char padding)
         if area.width > 25 {
@@ -217,7 +243,7 @@ impl<'a> TerminalPanel<'a> {
         self.app.update_terminal_size(inner_area);
 
         // Render VT100 screen buffer
-        self.app.pty.screen().render_to_buffer(inner_area, buf);
+        self.app.active_tab().pty.screen().render_to_buffer(inner_area, buf);
 
         // 3. Proactive Error Diagnosis floating modal in the terminal panel
         if let Some(ref diag) = self.app.proactive_error_diagnosis {
@@ -303,7 +329,8 @@ impl<'a> TerminalPanel<'a> {
 
         // Cursor calculation: only show live hardware cursor when on live screen
         if is_focused && scroll_offset == 0 {
-            let (cursor_col, cursor_row, visible) = self.app.pty.screen().cursor_position();
+            let (cursor_col, cursor_row, visible) =
+                self.app.active_tab().pty.screen().cursor_position();
             if visible {
                 let abs_x = inner_area.left() + cursor_col;
                 let abs_y = inner_area.top() + cursor_row;

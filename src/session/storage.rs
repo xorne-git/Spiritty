@@ -19,6 +19,8 @@ pub struct SessionHeader {
     pub prompt_tokens: usize,
     #[serde(default)]
     pub completion_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub auto_approve: Option<crate::config::AutoApproveLevel>,
 }
 
 pub struct SessionStorage;
@@ -71,6 +73,7 @@ impl SessionStorage {
                                 total_tokens: session.total_tokens,
                                 prompt_tokens: session.prompt_tokens,
                                 completion_tokens: session.completion_tokens,
+                                auto_approve: session.auto_approve,
                             });
                         }
                     }

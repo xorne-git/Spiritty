@@ -265,12 +265,26 @@ impl SessionModalState {
                         Style::default()
                     };
 
+                    let mut model_spans = vec![Span::styled(
+                        sess.model.clone(),
+                        Style::default().fg(Color::Cyan),
+                    )];
+                    if let Some(lvl) = sess.auto_approve {
+                        let (badge_color, badge_text) = match lvl {
+                            crate::config::AutoApproveLevel::Safe => (Color::Green, " 🛡️"),
+                            crate::config::AutoApproveLevel::Sudo => (Color::Yellow, " 🔐"),
+                            crate::config::AutoApproveLevel::Yolo => (Color::Red, " ⚡"),
+                            crate::config::AutoApproveLevel::Off => (Color::DarkGray, " ✋"),
+                        };
+                        model_spans.push(Span::styled(
+                            badge_text,
+                            Style::default().fg(badge_color),
+                        ));
+                    }
+
                     Row::new(vec![
                         Line::from(title_spans),
-                        Line::from(Span::styled(
-                            sess.model.clone(),
-                            Style::default().fg(Color::Cyan),
-                        )),
+                        Line::from(model_spans),
                         Line::from(Span::styled(
                             format!("{}", sess.message_count),
                             Style::default().fg(Color::Gray),

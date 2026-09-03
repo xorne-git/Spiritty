@@ -17,8 +17,13 @@ pub enum AppEvent {
     /// RGBA pixels for a compact TUI preview.
     PasteImage(crate::app::PendingImage),
     Resize(u16, u16),
-    PtyOutput(Vec<u8>),
-    PtyExit,
+    PtyOutput {
+        tab_id: usize,
+        data: Vec<u8>,
+    },
+    PtyExit {
+        tab_id: usize,
+    },
     Tick,
     AgentChunk(String),
     AgentDone,

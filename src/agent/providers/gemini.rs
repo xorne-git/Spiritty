@@ -97,6 +97,8 @@ struct GeminiCandidateContent {
 #[derive(Deserialize)]
 struct GeminiCandidatePart {
     text: Option<String>,
+    #[serde(default)]
+    thought: Option<bool>,
 }
 
 #[async_trait]
@@ -191,7 +193,7 @@ impl LlmProvider for GeminiProvider {
         );
 
         let send_res = timeout(
-            Duration::from_secs(12),
+            Duration::from_secs(45),
             self.client
                 .post(&url)
                 .header("x-goog-api-key", &self.api_key)
@@ -211,7 +213,7 @@ impl LlmProvider for GeminiProvider {
                 anyhow::bail!(err_msg);
             }
             Err(_) => {
-                let err_msg = "Délai d'attente dépassé (timeout 12s) lors de la connexion à Google Gemini API.".to_string();
+                let err_msg = "Délai d'attente dépassé (timeout 45s) lors de la connexion à Google Gemini API.".to_string();
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                 anyhow::bail!(err_msg);
             }
@@ -228,11 +230,12 @@ impl LlmProvider for GeminiProvider {
         let mut event_stream = response.bytes_stream().eventsource();
         let mut prompt_toks = 0usize;
         let mut comp_toks = 0usize;
+        let mut bracket = crate::agent::providers::openai::ReasoningBracket::default();
 
         loop {
             let next_res = tokio::select! {
                 _ = cancel.cancelled() => break,
-                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+                r = timeout(Duration::from_secs(90), event_stream.next()) => r,
             };
 
             match next_res {
@@ -253,8 +256,18 @@ impl LlmProvider for GeminiProvider {
                                             for part in parts {
                                                 if let Some(text) = part.text {
                                                     if !text.is_empty() {
-                                                        let _ = event_tx
-                                                            .send(AppEvent::AgentChunk(text));
+                                                        let is_thought =
+                                                            part.thought.unwrap_or(false);
+                                                        let folded = if is_thought {
+                                                            bracket.on_delta(Some(&text), None)
+                                                        } else {
+                                                            bracket.on_delta(None, Some(&text))
+                                                        };
+                                                        if !folded.is_empty() {
+                                                            let _ = event_tx.send(
+                                                                AppEvent::AgentChunk(folded),
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
@@ -273,12 +286,18 @@ impl LlmProvider for GeminiProvider {
                 Ok(None) => break,
                 Err(_) => {
                     let err_msg =
-                        "Délai d'inactivité de 25s dépassé sur le flux Gemini (timeout SSE)."
+                        "Délai d'inactivité de 90s dépassé sur le flux Gemini (timeout SSE)."
                             .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }
             }
+        }
+
+        // Flush any trailing thought closure if only reasoning was delivered
+        let trailing = bracket.on_delta(None, Some(""));
+        if !trailing.is_empty() {
+            let _ = event_tx.send(AppEvent::AgentChunk(trailing));
         }
 
         if prompt_toks > 0 || comp_toks > 0 {

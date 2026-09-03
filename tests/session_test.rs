@@ -298,3 +298,162 @@ async fn test_app_load_session_shortcut() {
     let _ = SessionStorage::delete("test_load_123");
     let _ = SessionStorage::delete(&initial_app_id);
 }
+
+#[tokio::test]
+async fn test_session_auto_approve_persistence_and_restoration() {
+    use spiritty::app::App;
+    use spiritty::config::AutoApproveLevel;
+    use spiritty::session::{Session, SessionStorage};
+
+    let session_id = "test_auto_approve_persist_999";
+    let mut saved_session = Session::new("DeepSeek", "deepseek-v4-pro");
+    saved_session.id = session_id.to_string();
+    saved_session.title = "Session avec mode YOLO".to_string();
+    saved_session.auto_approve = Some(AutoApproveLevel::Yolo);
+    saved_session.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "apt update".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    let save_res = SessionStorage::save(&saved_session);
+    assert!(save_res.is_ok());
+
+    // Verify storage roundtrip contains auto_approve
+    let loaded = SessionStorage::load(session_id).expect("load saved session");
+    assert_eq!(loaded.auto_approve, Some(AutoApproveLevel::Yolo));
+
+    // Verify list_sessions contains auto_approve
+    let list = SessionStorage::list_sessions().expect("list sessions");
+    let header = list.iter().find(|h| h.id == session_id).expect("found in list");
+    assert_eq!(header.auto_approve, Some(AutoApproveLevel::Yolo));
+
+    // Create App instance and test load_session
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 50, 100).expect("create app");
+    let init_id = app.current_session.id.clone();
+    app.config.auto_approve = AutoApproveLevel::Safe;
+
+    app.load_session(session_id);
+    assert_eq!(app.config.auto_approve, AutoApproveLevel::Yolo);
+    assert_eq!(app.current_session.auto_approve, Some(AutoApproveLevel::Yolo));
+
+    // Cycle auto approve (Yolo -> Off -> Safe -> Sudo -> Yolo)
+    let next = app.cycle_auto_approve();
+    assert_eq!(next, AutoApproveLevel::Off);
+    assert_eq!(app.config.auto_approve, AutoApproveLevel::Off);
+    assert_eq!(app.current_session.auto_approve, Some(AutoApproveLevel::Off));
+
+    // Cleanup
+    let _ = SessionStorage::delete(session_id);
+    let _ = SessionStorage::delete(&init_id);
+    let _ = SessionStorage::delete(&app.current_session.id);
+}
+
+#[tokio::test]
+async fn test_cli_auto_approve_override_precedence_on_session_continue() {
+    use spiritty::app::App;
+    use spiritty::config::AutoApproveLevel;
+    use spiritty::session::{Session, SessionStorage};
+
+    let session_id = "test_cli_override_yolo_session";
+    let mut saved_session = Session::new("OpenAI", "gpt-5.6-sol");
+    saved_session.id = session_id.to_string();
+    saved_session.title = "Session Yolo".to_string();
+    saved_session.auto_approve = Some(AutoApproveLevel::Yolo);
+    saved_session.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "uptime".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    let _ = SessionStorage::save(&saved_session);
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 50, 100).expect("create app");
+    let init_id = app.current_session.id.clone();
+
+    // 1. When no CLI override is given, loaded session keeps its Yolo level
+    app.load_session(session_id);
+    app.apply_cli_overrides(None, None, None, None);
+    assert_eq!(app.config.auto_approve, AutoApproveLevel::Yolo);
+
+    // 2. When CLI specifies --safe (or --auto-approve safe), CLI overrides session
+    app.apply_cli_overrides(None, None, Some("safe".to_string()), None);
+    assert_eq!(app.config.auto_approve, AutoApproveLevel::Safe);
+
+    // Cleanup
+    let _ = SessionStorage::delete(session_id);
+    let _ = SessionStorage::delete(&init_id);
+    let _ = SessionStorage::delete(&app.current_session.id);
+}
+
+#[test]
+fn test_compaction_filters_errors_and_bounds_giant_outputs() {
+    use spiritty::session::compact_chat_messages;
+
+    let mut messages = Vec::new();
+    for i in 1..=5 {
+        messages.push(ChatMessage {
+            role: MessageRole::User,
+            content: format!("Question {}", i),
+            command_proposal: None,
+            attachments: Vec::new(),
+        });
+        messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: format!("Réponse {}", i),
+            command_proposal: None,
+            attachments: Vec::new(),
+        });
+    }
+
+    // Add a transient timeout error
+    messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "⚠️ Erreur : Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE).".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Add a giant command output (10,000 chars)
+    let giant_content = "X".repeat(10000);
+    messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: format!("[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'grep -rn test']: {}", giant_content),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    let compacted = compact_chat_messages(&messages);
+    // Transient error was filtered out
+    assert!(!compacted.messages.iter().any(|m| m.content.contains("⚠️ Erreur")));
+
+    // Giant message was bounded (should not be 10,000 chars)
+    let last_msg = compacted.messages.last().unwrap();
+    assert!(last_msg.content.len() < 7000);
+    assert!(last_msg.content.contains("sortie tronquée pour le contexte LLM"));
+}
+
+#[tokio::test]
+async fn test_alt_1_on_resumed_session() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::App;
+
+    let (event_tx, mut _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 24, 80).expect("create app");
+
+    app.load_session("sess_20260830_172917_888963_001");
+    println!("Loaded messages count: {}", app.messages.len());
+    println!("Proposals: {:?}", app.all_command_proposals());
+
+    // Send Alt + 1
+    let alt_1 = KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT);
+    app.handle_key(alt_1);
+
+    println!("After Alt+1: should_quit={}", app.should_quit);
+    println!("Active pty tool: {:?}", app.active_pty_tool.is_some());
+    assert!(!app.should_quit);
+}
+
+

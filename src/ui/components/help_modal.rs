@@ -203,6 +203,41 @@ impl HelpModal {
             ));
             left_lines.push(Line::from(""));
 
+            // Ctrl T (Nouvel onglet)
+            let mut l_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
+            l_tab.push(Span::raw(" "));
+            l_tab.extend(key_pill("T", Color::Cyan));
+            left_lines.push(make_help_row(
+                l_tab,
+                lang.t(I18nKey::HelpDescNewTab),
+                key_col_w_left,
+            ));
+            left_lines.push(Line::from(""));
+
+            // Ctrl Tab (Changer d'onglet)
+            let mut l_next_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
+            l_next_tab.push(Span::raw(" "));
+            l_next_tab.extend(key_pill(lang.t(I18nKey::HelpKeyTab), Color::Cyan));
+            left_lines.push(make_help_row(
+                l_next_tab,
+                lang.t(I18nKey::HelpDescNextTab),
+                key_col_w_left,
+            ));
+            left_lines.push(Line::from(""));
+
+            // Ctrl Shift W (Fermer l'onglet)
+            let mut l_close_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
+            l_close_tab.push(Span::raw(" "));
+            l_close_tab.extend(key_pill(lang.t(I18nKey::HelpKeyShift), Color::Cyan));
+            l_close_tab.push(Span::raw(" "));
+            l_close_tab.extend(key_pill("W", Color::Cyan));
+            left_lines.push(make_help_row(
+                l_close_tab,
+                lang.t(I18nKey::HelpDescCloseTab),
+                key_col_w_left,
+            ));
+            left_lines.push(Line::from(""));
+
             // 2. Agent IA & Diagnostic
             left_lines.push(make_section_header(
                 lang.t(I18nKey::HelpSectionAgent),

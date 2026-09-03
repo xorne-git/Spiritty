@@ -15,6 +15,81 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+---
+
+## v0.7.0 — 2026-09-03
+
+### Ajouté
+
+- **Multi-onglets interactifs dans le terminal split-screen (`Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` / `Alt+1..9`)**
+  — prise en charge native de plusieurs sessions PTY et serveurs en parallèle dans le panneau droit :
+  - **Gestion des onglets** : création rapide avec `Ctrl+T` (ou clic sur `[+]`), fermeture avec `Ctrl+W` (ou clic sur `×`), navigation séquentielle `Ctrl+Tab` / `Ctrl+Shift+Tab` / `Ctrl+PgUp` / `Ctrl+PgDn`, et sélection directe `Alt+1..9`.
+  - **Barre d'onglets dynamique & indicateurs** : affichage de chaque onglet avec son titre contextuel (`1: 💻 local`, `2: 🌐 vps-prod`, etc.) et pastille `●` en cas d'activité ou de sortie en arrière-plan.
+  - **Synchronisation contextuelle avec l'agent IA** : le basculement d'onglet met à jour immédiatement le contexte système actif (`SSH`, `Docker`, `local`, dossier de travail, branche Git), assurant que l'agent IA assiste toujours l'environnement visible à l'écran.
+  - **Multi-tâches non-bloquant** : chaque onglet maintient son propre processus PTY et son écran virtuel VT100 en arrière-plan sans bloquer l'interface.
+
+- **Persistance et restauration du mode d'approbation (`auto_approve`) par session**
+  — le niveau d'approbation automatique actif (`Safe`, `Sudo`, `YOLO`, `Off`) est désormais sauvegardé avec la session (`~/.config/spiritty/sessions/`) et restauré fidèlement lors d'un `spiritty -c` ou du chargement d'une session via `Ctrl+H`. La modale des sessions affiche l'indicateur visuel associé et les options en ligne de commande (`--yolo`, `--safe`, `--auto-approve <lvl>`) conservent la priorité absolue en cas de reprise forcée.
+
+- **Prise en charge native du flux de réflexion Gemini 3.7 / 2.5 (`thought: true`)**
+  — encapsulation automatique des chunks de réflexion du fournisseur Google Gemini en blocs `<think>…</think>` pour un rendu visuel repliable et animé identique aux modèles DeepSeek / OpenAI.
+
+- **Journalisation automatique des plantages et paniques dans `~/.config/spiritty/crash.log`**
+  — enregistrement systématique des erreurs fatales avec horodatage et backtrace complet.
+
+- **Édition et gestion de fichiers distants en session SSH & conteneurs (`tool:read_file` / `edit_file` / `write_file`)**
+  — les outils de fichiers dédiés fonctionnent désormais de manière transparente et sécurisée
+  sur les machines distantes lors d'une session active `SSH`, `Docker` ou `Podman` :
+  - `tool:read_file` : lecture distante via pipeline `base64` silencieux dans le flux PTY avec
+    décodage mémoire et gestion du plafond de sécurité (100 Ko).
+  - `tool:edit_file` : lecture préalable du fichier distant, validation stricte de l'unicité
+    du fragment `old_string` en mémoire côté Rust, et réécriture atomique via `base64 -d | [sudo tee]`.
+  - `tool:write_file` : écriture/écrasement complet distant avec encodage Base64 et élévation `sudo tee`
+    automatique sur les chemins système (`/etc/`, `/var/`, `/usr/`, etc.).
+  - Préservation de la sécurité human-in-the-loop : classification des risques (`Safe`, `Standard`,
+    `Sudo`, `Risky`) et demande de confirmation utilisateur respectées sur tous les chemins distants.
+
+- **Détection automatique des invites interactives et bascule de focus (`[y/n]`, confirmation, mots de passe)**
+  — extension du détecteur de flux PTY pour identifier non seulement les demandes `sudo`/mots de passe, mais également les confirmations interactives courantes (`[y/n]`, `[o/n]`, `(yes/no)`, `Press [Enter] to continue`, `Are you sure you want to continue connecting`). Lorsque l'agent IA déclenche une commande nécessitant une réponse humaine, le focus clavier bascule automatiquement sur le terminal avec un toast explicite et le délai d'inactivité est augmenté à 120s pour laisser le temps à l'utilisateur de répondre.
+
+- **Indicateur d'exécution en cours et invite d'interaction (`⚡ En cours · Shift+Tab`) dans le terminal**
+  — lors de l'exécution d'un outil par l'agent IA, la barre d'en-tête du terminal affiche désormais un badge visible signalant qu'une commande est active et rappelant le raccourci universel `Shift+Tab` pour basculer instantanément dans le shell et interagir.
+
+### Corrigé
+
+- **Défilement automatique en bas du terminal lors de l'injection d'outils et commandes**
+  — si le terminal était défilé vers le haut (historique), l'affichage du terminal restait figé sur les anciennes lignes pendant l'exécution des commandes d'outils de l'agent. Le défilement est désormais automatiquement remis à zéro (`reset_scroll`) dès qu'une commande est injectée, rendant immédiatement visible la sortie en direct.
+
+- **Interruption propre des processus PTY suspendus lors de l'arrêt de génération (`Esc` / `Ctrl+C`)**
+  — lorsqu'une commande bloquait dans le terminal (par exemple un `ssh` en attente ou un script interactif), appuyer sur `Esc` ou arrêter la génération annulait la tâche dans Spiritty mais laissait le processus actif en arrière-plan dans le terminal. Spiritty injecte désormais un signal d'interruption `\x03` (SIGINT) au PTY pour tuer proprement la commande et rendre immédiatement le prompt à l'utilisateur.
+
+- **Correction du raccourci de fermeture d'onglet et préservation de l'effacement de mot (`Ctrl+W`)**
+  — dans le terminal et l'entrée de chat, la combinaison `Ctrl+W` sert traditionnellement à effacer le mot précédent (`werase`). L'interception globale de `Ctrl+W` provoquait la fermeture intempestive de Spiritty quand un seul onglet était actif. Le raccourci de fermeture d'onglet est désormais `Ctrl+Shift+W` (ou clic sur `×`), `Ctrl+W` assure l'effacement de mot, et la fermeture d'onglet ne quitte plus l'application lorsque le dernier onglet est actif.
+
+- **Isolation des scripts multi-lignes et commandes contenant `exit` / `set -e` dans un sous-shell (`bash -c '...'`)**
+  — lorsqu'une proposition de script IA contenait `exit 1` ou `set -e` (par exemple un script de test avec `if [ -z "$KEY" ]; then exit 1; fi`), son exécution directe dans le shell interactif tuait le processus racine du PTY (`$SHELL`), provoquant la fermeture subite de Spiritty. Ces scripts sont désormais automatiquement encapsulés dans un sous-shell isolé, préservant la session interactive et capturant proprement la sortie et le code de retour sans quitter Spiritty.
+
+- **Support complet du balisage d'outils DSML DeepSeek (`<skill>`, `<command>`)**
+  — les modèles DeepSeek émettant des appels d'outils XML personnalisés sont désormais correctement interprétés comme des propositions de commandes interactives et leurs balises techniques sont filtrées de la vue de chat.
+
+- **Robustesse du découpage des blocs de raisonnement et variantes de balises (`</thunk>`, `</thought>`, `</thinking`, `</th`)**
+  — certains modèles de raisonnement (DeepSeek, GLM, Grok) émettent parfois des variantes de balises de fin de pensée (typo `</thunk>`, `</thought>`, `</thinking` sans chevron fermant ou coupure partielle `</th`) tout en plaçant un `</think>` fermant à la toute fin du message après l'appel d'outil. L'analyseur considérait l'ensemble du message (y compris le texte de réponse et l'invocation d'outil DSML) comme faisant partie de la réflexion privée, masquant la réponse et laissant la TUI figée sur *Deep thinking*. L'extraction des pensées et le découpage des outils gèrent désormais toutes ces anomalies de formatage et garantissent l'extraction immédiate des propositions de commandes.
+
+- **Prise en charge des phrases d'approbation composées (`oui vas y`, `ok vas y`, `oui stp`) et déblocage des outils**
+  — lorsqu'une demande d'approbation d'outil était en attente, les expressions composées courantes comme `oui vas y` ou `ok vas y` n'étaient pas reconnues comme une validation, et l'envoi d'un nouveau message laissait la tâche d'arrière-plan bloquée sur l'attente du consentement. L'analyseur d'approbation naturelle gère désormais toutes les locutions courantes et libère proprement la tâche en cours si une nouvelle directive est saisie.
+
+- **Rétablissement de l'indicateur universel `💭 Deep thinking…` et du shimmer de réflexion active**
+  — l'animation de pensée et le chronomètre de réflexion en temps réel restent visibles pendant toute la durée du calcul du modèle (y compris avant la réception du premier token et pendant le déroulement de la réflexion).
+
+- **Résolution des timeouts SSE (passage à 45s connexion / 90s flux) pour les modèles de raisonnement**
+  — les modèles raisonneurs (DeepSeek-R1 / V3, Gemini 3.7 Thinking, Claude 3.7 Thinking, o3-mini) et les longues sessions sous forte charge provoquaient des erreurs prématurées `Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE)`. Les timeouts ont été portés à 45s pour la connexion et 90s pour le streaming de pensée sur tous les fournisseurs (OpenAI, DeepSeek, Gemini, Anthropic, Ollama).
+
+- **Optimisation du compactage de contexte LLM pour les très longues sessions (200+ tours)**
+  — les sessions volumineuses saturaient le budget de tokens et allongeaient le TTFT :
+  - **Filtrage des erreurs transitoires** : suppression automatique des messages d'erreur résiduels (`⚠️ Erreur : ...`) lors de la préparation de la conversation envoyée à l'API.
+  - **Écrêtage des sorties géantes de commandes** : les sorties brutes volumineuses (> 6 000 caractères) sont automatiquement résumées avec préservation du début et de la fin de la sortie (`[sortie tronquée pour le contexte LLM]`).
+  - **Plafonnement de la synthèse d'historique** : limitation du résumé des tours anciens à 25 points clés pour garantir une latence minimale.
+
 ## v0.6.4 — 2026-08-30
 
 ### Corrigé

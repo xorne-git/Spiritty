@@ -204,8 +204,9 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
 
     // 1. When agent runs a tool and gets an error output, proactive error diagnosis is NOT triggered
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
+    let tab_id = app.active_tab().id;
     app.on_agent_pty_tool_execute("ls /forbidden".to_string(), res_tx, false);
-    app.on_pty_output(b"ls: cannot open directory '/forbidden': Permission denied\n");
+    app.on_pty_output(tab_id, b"ls: cannot open directory '/forbidden': Permission denied\n");
     assert!(
         app.proactive_error_diagnosis.is_none(),
         "Agent tools should NOT trigger proactive error toast"
@@ -214,7 +215,7 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
     // 2. When user types a manual command in shell and gets an error, proactive error diagnosis triggers
     app.active_pty_tool = None;
     app.last_user_terminal_command = Some("mkdir -p /opt/app".to_string());
-    app.on_pty_output(b"mkdir: cannot create directory '/opt/app': Permission denied\n");
+    app.on_pty_output(tab_id, b"mkdir: cannot create directory '/opt/app': Permission denied\n");
     assert!(
         app.proactive_error_diagnosis.is_some(),
         "Manual user command errors SHOULD trigger proactive diagnosis"
@@ -259,7 +260,7 @@ async fn test_focus_preservation_on_chat_submit_and_execution() {
 
 #[tokio::test]
 async fn test_sudo_password_detection_and_focus_switch() {
-    use spiritty::app::{is_waiting_for_password, Focus};
+    use spiritty::app::{is_waiting_for_password, is_waiting_for_user_interaction, Focus, InteractionKind};
 
     // 1. Password detection variations
     assert!(is_waiting_for_password("[sudo] password for xorne: "));
@@ -268,11 +269,33 @@ async fn test_sudo_password_detection_and_focus_switch() {
     assert!(is_waiting_for_password(
         "Enter passphrase for key '/home/xorne/.ssh/id_ed25519': "
     ));
+    assert_eq!(
+        is_waiting_for_user_interaction("Enter passphrase for key: "),
+        Some(InteractionKind::Password)
+    );
     assert!(!is_waiting_for_password(
         "systemctl restart nginx\nSuccess\n[xorne@machine ~]$ "
     ));
 
-    // 2. When a sudo command is executed, focus automatically switches to Terminal for password entry
+    // 2. Interactive confirmation prompts ([y/n], continue connecting, etc.)
+    assert_eq!(
+        is_waiting_for_user_interaction("Proceed with installation? [Y/n] "),
+        Some(InteractionKind::Confirmation)
+    );
+    assert_eq!(
+        is_waiting_for_user_interaction("Voulez-vous continuer ? [O/n] "),
+        Some(InteractionKind::Confirmation)
+    );
+    assert_eq!(
+        is_waiting_for_user_interaction("Are you sure you want to continue connecting (yes/no/[fingerprint])? "),
+        Some(InteractionKind::Confirmation)
+    );
+    assert_eq!(
+        is_waiting_for_user_interaction("Press [Enter] to continue..."),
+        Some(InteractionKind::Confirmation)
+    );
+
+    // 3. When a sudo command is executed, focus automatically switches to Terminal for password entry
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
     let mut app = App::new(event_tx, 24, 80).unwrap();
 
@@ -284,6 +307,16 @@ async fn test_sudo_password_detection_and_focus_switch() {
         app.focus,
         Focus::Terminal,
         "Focus should switch to Terminal for sudo commands"
+    );
+
+    // 4. Output with [Y/n] switches focus to Terminal
+    let tab_id = app.active_tab().id;
+    app.focus = Focus::Chat;
+    app.on_pty_output(tab_id, b"Need to get 15.2 MB of archives.\nDo you want to continue? [Y/n] ");
+    assert_eq!(
+        app.focus,
+        Focus::Terminal,
+        "Focus should switch to Terminal when an interactive [Y/n] prompt is detected"
     );
 }
 
@@ -478,4 +511,111 @@ SPIRITTY_PROBE_END
     assert!(app.system_context.active_remote_profile.is_some());
     let active_prof = app.system_context.active_remote_profile.unwrap();
     assert_eq!(active_prof.distro, "Ubuntu 24.04 LTS");
+}
+
+#[tokio::test]
+async fn test_remote_file_tools_in_ssh_session() {
+    use spiritty::agent::safety::{classify_file_edit, CommandRisk};
+    use spiritty::agent::tools::{
+        build_remote_read_command, build_remote_write_command, decode_remote_read_output,
+        execute_remote_edit_logic,
+    };
+
+    // 1. Risk classification of remote paths
+    assert_eq!(classify_file_edit("/etc/nginx/nginx.conf"), CommandRisk::Sudo);
+    assert_eq!(classify_file_edit("/var/log/syslog"), CommandRisk::Sudo);
+    assert_eq!(classify_file_edit("~/.ssh/authorized_keys"), CommandRisk::Risky);
+    assert_eq!(classify_file_edit("/home/ubuntu/.bashrc"), CommandRisk::Risky);
+    assert_eq!(classify_file_edit("/home/ubuntu/app/server.js"), CommandRisk::Standard);
+
+    // 2. Command formatting
+    let read_cmd = build_remote_read_command("/etc/caddy/Caddyfile");
+    assert!(read_cmd.contains("/etc/caddy/Caddyfile"));
+
+    let write_cmd = build_remote_write_command("/etc/caddy/Caddyfile", "ZGF0YQo=", true);
+    assert!(write_cmd.contains("sudo tee \"/etc/caddy/Caddyfile\""));
+
+    // 3. Decoding and editing
+    let b64_input = spiritty::system::clipboard::base64_encode(b":80 {\n    respond \"Hello\"\n}\n");
+    let decoded = decode_remote_read_output(&b64_input, "/etc/caddy/Caddyfile");
+    assert!(decoded.contains("respond \"Hello\""));
+
+    let edited = execute_remote_edit_logic(&decoded, "/etc/caddy/Caddyfile", "respond \"Hello\"", "reverse_proxy localhost:3000").unwrap();
+    assert!(edited.contains("reverse_proxy localhost:3000"));
+}
+
+#[tokio::test]
+async fn test_multi_tabs_lifecycle_and_shortcuts() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::Focus;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
+    let mut app = App::new(event_tx, 24, 80).unwrap();
+
+    // 1. Initial state: 1 tab
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.active_tab_index, 0);
+
+    // 2. Open new tab via method
+    let tab2_idx = app.new_tab().unwrap();
+    assert_eq!(tab2_idx, 1);
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.active_tab_index, 1);
+
+    // 3. Open another tab via Ctrl + T key event
+    let ctrl_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
+    app.handle_key(ctrl_t);
+    assert_eq!(app.tabs.len(), 3);
+    assert_eq!(app.active_tab_index, 2);
+
+    // 4. Tab navigation: next_tab and previous_tab
+    app.next_tab();
+    assert_eq!(app.active_tab_index, 0); // wrap around
+
+    app.previous_tab();
+    assert_eq!(app.active_tab_index, 2); // wrap back
+
+    // 5. Direct tab selection with Alt + 2
+    app.focus = Focus::Terminal;
+    let alt_2 = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT);
+    app.handle_key(alt_2);
+    assert_eq!(app.active_tab_index, 1);
+
+    // 6. Background tab output marks unread_activity
+    let tab0_id = app.tabs[0].id;
+    let tab1_id = app.tabs[1].id;
+    assert!(!app.tabs[0].unread_activity);
+    app.on_pty_output(tab0_id, b"background job finished\n");
+    assert!(app.tabs[0].unread_activity);
+
+    // Active tab output does NOT mark unread
+    assert!(!app.tabs[1].unread_activity);
+    app.on_pty_output(tab1_id, b"active tab prompt\n");
+    assert!(!app.tabs[1].unread_activity);
+
+    // Switching to tab 0 clears unread flag
+    app.select_tab(0);
+    assert_eq!(app.active_tab_index, 0);
+    assert!(!app.tabs[0].unread_activity);
+
+    // 7. Closing tab via Ctrl + Shift + W
+    app.focus = Focus::Terminal;
+    let ctrl_shift_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    app.handle_key(ctrl_shift_w);
+    assert_eq!(app.tabs.len(), 2);
+
+    // 8. Close another tab
+    app.close_active_tab();
+    assert_eq!(app.tabs.len(), 1);
+    assert!(!app.should_quit);
+
+    // 9. Closing the last remaining tab via close_active_tab does NOT quit
+    app.close_active_tab();
+    assert_eq!(app.tabs.len(), 1);
+    assert!(!app.should_quit);
+
+    // 10. Actual shell process exit on the last tab exits the app
+    let last_tab_id = app.tabs[0].id;
+    app.on_pty_exit(last_tab_id);
+    assert!(app.should_quit);
 }

@@ -19,8 +19,9 @@ use prompt::build_system_prompt;
 use providers::{create_provider, LlmProvider};
 use safety::{classify_file_edit, should_auto_approve_command, CommandRisk};
 use tools::{
-    execute_edit_file, execute_read_file, execute_web_search, execute_write_file,
-    parse_tool_call, ToolInvocation,
+    build_remote_read_command, build_remote_write_command, decode_remote_read_output,
+    execute_edit_file, execute_read_file, execute_remote_edit_logic, execute_web_search,
+    execute_write_file, parse_tool_call, ToolInvocation,
 };
 
 /// Auto-approves a file-edit operation according to its pre-computed risk, without
@@ -47,6 +48,10 @@ fn should_auto_approve_risk(risk: CommandRisk, level: crate::config::AutoApprove
 fn prepare_conversation(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     messages
         .into_iter()
+        .filter(|m| {
+            let trimmed = m.content.trim();
+            !trimmed.starts_with("⚠️ Erreur") && !trimmed.starts_with("⚠️ Error")
+        })
         .map(|mut m| {
             if m.role == MessageRole::Assistant {
                 let mut clean_lines = Vec::new();
@@ -381,33 +386,25 @@ impl AgentEngine {
                                 }
                             }
                             ToolInvocation::ReadFile(path) => {
-                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::Assistant,
-                                        content: current_turn_text,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
+                                let (read_result, display_cmd) = if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("📖 Lecture distante de {}", path)));
+                                    let remote_cmd = build_remote_read_command(&path);
+                                    let (pty_result_tx, pty_result_rx) = tokio::sync::oneshot::channel::<String>();
+                                    let _ = forward_event_tx.send(AppEvent::AgentPtyToolExecute {
+                                        command: remote_cmd,
+                                        result_tx: pty_result_tx,
                                     });
-                                    let tool_msg = format!(
-                                        "[RÉSULTAT DE LA LECTURE DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:read_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Le fichier n'est pas accessible. Utilisez des commandes shell (cat, less, scp) a travers tool:run_command pour lire les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
-                                        path
-                                    );
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::User,
-                                        content: tool_msg,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
-                                    });
-                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
-                                    continue;
-                                }
-
-                                let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("📖 Lecture de {}", path)));
-
-                                let read_result = execute_read_file(&path).await;
+                                    let raw_output = pty_result_rx
+                                        .await
+                                        .unwrap_or_else(|_| "(Erreur lors de l'exécution dans le PTY)".to_string());
+                                    (decode_remote_read_output(&raw_output, &path), format!("📖 (distant) {}", path))
+                                } else {
+                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("📖 Lecture de {}", path)));
+                                    (execute_read_file(&path).await, format!("📖 {}", path))
+                                };
 
                                 let _ = forward_event_tx.send(AppEvent::AgentToolDone {
-                                    command: format!("📖 {}", path),
+                                    command: display_cmd,
                                     output: read_result.clone(),
                                 });
 
@@ -433,37 +430,24 @@ impl AgentEngine {
                                 continue;
                             }
                             ToolInvocation::EditFile { path, old_string, new_string } => {
-                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::Assistant,
-                                        content: current_turn_text,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
-                                    });
-                                    let tool_msg = format!(
-                                        "[RÉSULTAT DE L'ÉDITION DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:edit_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Annule l'operation. Utilisez des commandes shell (sed, tee, heredoc) a travers tool:run_command pour modifier les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
-                                        path
-                                    );
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::User,
-                                        content: tool_msg,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
-                                    });
-                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
-                                    continue;
-                                }
-
+                                let is_remote = is_remote_session.load(std::sync::atomic::Ordering::SeqCst);
                                 let risk = classify_file_edit(&path);
                                 let approved = if should_auto_approve_risk(risk, auto_approve) {
                                     true
                                 } else {
                                     let old_preview = old_string.lines().next().unwrap_or(old_string.as_str());
                                     let new_preview = new_string.lines().next().unwrap_or(new_string.as_str());
-                                    let preview = format!(
-                                        "Modifier le fichier `{}` en remplaçant \"{}\" par \"{}\"",
-                                        path, old_preview, new_preview
-                                    );
+                                    let preview = if is_remote {
+                                        format!(
+                                            "(Distant) Modifier le fichier `{}` en remplaçant \"{}\" par \"{}\"",
+                                            path, old_preview, new_preview
+                                        )
+                                    } else {
+                                        format!(
+                                            "Modifier le fichier `{}` en remplaçant \"{}\" par \"{}\"",
+                                            path, old_preview, new_preview
+                                        )
+                                    };
                                     let (approval_tx, approval_rx) = tokio::sync::oneshot::channel::<bool>();
                                     let _ = forward_event_tx.send(AppEvent::AgentToolRequest {
                                         command: preview,
@@ -473,12 +457,53 @@ impl AgentEngine {
                                 };
 
                                 if approved {
-                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("✏️ Édition de {}", path)));
+                                    let (edit_result, display_cmd) = if is_remote {
+                                        let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("✏️ Édition distante de {}", path)));
+                                        // 1. Read remote file first via PTY
+                                        let remote_read_cmd = build_remote_read_command(&path);
+                                        let (pty_result_tx, pty_result_rx) = tokio::sync::oneshot::channel::<String>();
+                                        let _ = forward_event_tx.send(AppEvent::AgentPtyToolExecute {
+                                            command: remote_read_cmd,
+                                            result_tx: pty_result_tx,
+                                        });
+                                        let raw_read = pty_result_rx
+                                            .await
+                                            .unwrap_or_else(|_| "(Erreur lors de l'exécution dans le PTY)".to_string());
+                                        let original_content = decode_remote_read_output(&raw_read, &path);
 
-                                    let edit_result = execute_edit_file(&path, &old_string, &new_string).await;
+                                        if original_content.starts_with("Erreur") {
+                                            (format!("Erreur lors de la lecture préalable de {} : {}", path, original_content), format!("✏️ (distant) {}", path))
+                                        } else {
+                                            match execute_remote_edit_logic(&original_content, &path, &old_string, &new_string) {
+                                                Ok(updated) => {
+                                                    let use_sudo = matches!(risk, CommandRisk::Sudo | CommandRisk::Risky);
+                                                    let b64 = crate::system::clipboard::base64_encode(updated.as_bytes());
+                                                    let remote_write_cmd = build_remote_write_command(&path, &b64, use_sudo);
+                                                    let (pty_write_tx, pty_write_rx) = tokio::sync::oneshot::channel::<String>();
+                                                    let _ = forward_event_tx.send(AppEvent::AgentPtyToolExecute {
+                                                        command: remote_write_cmd,
+                                                        result_tx: pty_write_tx,
+                                                    });
+                                                    let raw_write = pty_write_rx
+                                                        .await
+                                                        .unwrap_or_else(|_| "(Erreur lors de l'exécution dans le PTY)".to_string());
+                                                    let res = if raw_write.contains("Permission denied") || raw_write.contains("No such file") || raw_write.contains("cannot create") {
+                                                        format!("Erreur d'écriture distante de {} : {}", path, raw_write.trim())
+                                                    } else {
+                                                        format!("✅ Fichier distant modifié : {} ({} → {} octets)", path, original_content.len(), updated.len())
+                                                    };
+                                                    (res, format!("✏️ (distant) {}", path))
+                                                }
+                                                Err(err) => (err, format!("✏️ (distant) {}", path)),
+                                            }
+                                        }
+                                    } else {
+                                        let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("✏️ Édition de {}", path)));
+                                        (execute_edit_file(&path, &old_string, &new_string).await, format!("✏️ {}", path))
+                                    };
 
                                     let _ = forward_event_tx.send(AppEvent::AgentToolDone {
-                                        command: format!("✏️ {}", path),
+                                        command: display_cmd,
                                         output: edit_result.clone(),
                                     });
 
@@ -508,36 +533,16 @@ impl AgentEngine {
                                 }
                             }
                             ToolInvocation::WriteFile { path, content } => {
-                                if is_remote_session.load(std::sync::atomic::Ordering::SeqCst) {
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::Assistant,
-                                        content: current_turn_text,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
-                                    });
-                                    let tool_msg = format!(
-                                        "[RÉSULTAT DE L'ÉCRITURE DU FICHIER '{}']:\n⚠️ Session distante (SSH/container) : l'outil tool:write_file agit sur le systeme LOCAL de Spiritty, pas sur le serveur distant. Annule l'operation. Utilisez des commandes shell (cat heredoc, tee, scp) a travers tool:run_command pour ecrire les fichiers du serveur distant.\n[FIN DU RÉSULTAT]",
-                                        path
-                                    );
-                                    conversation.push(ChatMessage {
-                                        role: MessageRole::User,
-                                        content: tool_msg,
-                                        command_proposal: None,
-                                        attachments: Vec::new(),
-                                    });
-                                    let _ = forward_event_tx.send(AppEvent::AgentNewTurn);
-                                    continue;
-                                }
-
+                                let is_remote = is_remote_session.load(std::sync::atomic::Ordering::SeqCst);
                                 let risk = classify_file_edit(&path);
                                 let approved = if should_auto_approve_risk(risk, auto_approve) {
                                     true
                                 } else {
-                                    let preview = format!(
-                                        "Écrire dans `{}` ({} octets)",
-                                        path,
-                                        content.len()
-                                    );
+                                    let preview = if is_remote {
+                                        format!("(Distant) Écrire dans `{}` ({} octets)", path, content.len())
+                                    } else {
+                                        format!("Écrire dans `{}` ({} octets)", path, content.len())
+                                    };
                                     let (approval_tx, approval_rx) = tokio::sync::oneshot::channel::<bool>();
                                     let _ = forward_event_tx.send(AppEvent::AgentToolRequest {
                                         command: preview,
@@ -547,12 +552,32 @@ impl AgentEngine {
                                 };
 
                                 if approved {
-                                    let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("💾 Écriture de {}", path)));
-
-                                    let write_result = execute_write_file(&path, &content).await;
+                                    let (write_result, display_cmd) = if is_remote {
+                                        let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("💾 Écriture distante de {}", path)));
+                                        let use_sudo = matches!(risk, CommandRisk::Sudo | CommandRisk::Risky);
+                                        let b64 = crate::system::clipboard::base64_encode(content.as_bytes());
+                                        let remote_write_cmd = build_remote_write_command(&path, &b64, use_sudo);
+                                        let (pty_result_tx, pty_result_rx) = tokio::sync::oneshot::channel::<String>();
+                                        let _ = forward_event_tx.send(AppEvent::AgentPtyToolExecute {
+                                            command: remote_write_cmd,
+                                            result_tx: pty_result_tx,
+                                        });
+                                        let raw_output = pty_result_rx
+                                            .await
+                                            .unwrap_or_else(|_| "(Erreur lors de l'exécution dans le PTY)".to_string());
+                                        let res = if raw_output.contains("Permission denied") || raw_output.contains("No such file") || raw_output.contains("cannot create") {
+                                            format!("Erreur d'écriture distante de {} : {}", path, raw_output.trim())
+                                        } else {
+                                            format!("✅ Fichier distant écrit : {} ({} octets)", path, content.len())
+                                        };
+                                        (res, format!("💾 (distant) {}", path))
+                                    } else {
+                                        let _ = forward_event_tx.send(AppEvent::AgentToolStart(format!("💾 Écriture de {}", path)));
+                                        (execute_write_file(&path, &content).await, format!("💾 {}", path))
+                                    };
 
                                     let _ = forward_event_tx.send(AppEvent::AgentToolDone {
-                                        command: format!("💾 {}", path),
+                                        command: display_cmd,
                                         output: write_result.clone(),
                                     });
 

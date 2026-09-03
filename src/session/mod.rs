@@ -29,6 +29,8 @@ pub struct Session {
     /// before the user reconnects to the remote host.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub last_ssh_target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub auto_approve: Option<crate::config::AutoApproveLevel>,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,6 +62,7 @@ impl Session {
             messages: Vec::new(),
             prompt_history: Vec::new(),
             last_ssh_target: None,
+            auto_approve: None,
         }
     }
 
@@ -170,16 +173,28 @@ pub struct CompactedHistory {
 /// persisted session: the UI keeps scrolling the full history and the session
 /// JSON saves every message.
 pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
-    if messages.len() <= 8 {
+    // Filter out transient error messages from previous aborted turns
+    let cleaned_messages: Vec<ChatMessage> = messages
+        .iter()
+        .filter(|m| {
+            let t = m.content.trim();
+            !t.starts_with("⚠️ Erreur") && !t.starts_with("⚠️ Error")
+        })
+        .cloned()
+        .collect();
+
+    if cleaned_messages.len() <= 8 {
+        // Still truncate giant single messages in short history
+        let bounded = bound_recent_messages(&cleaned_messages);
         return CompactedHistory {
-            messages: messages.to_vec(),
+            messages: bounded,
             summary: None,
         };
     }
 
-    let split_idx = messages.len().saturating_sub(8);
-    let older_msgs = &messages[..split_idx];
-    let recent_msgs = &messages[split_idx..];
+    let split_idx = cleaned_messages.len().saturating_sub(8);
+    let older_msgs = &cleaned_messages[..split_idx];
+    let recent_msgs = &cleaned_messages[split_idx..];
 
     let mut summary_points = Vec::new();
     for msg in older_msgs {
@@ -198,6 +213,19 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
                     } else {
                         let snippet = clean_summary_snippet(trimmed, 120);
                         summary_points.push(format!("- 👤 Utilisateur : {}", snippet));
+                    }
+                } else if trimmed.starts_with("[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE '")
+                    || trimmed.starts_with("[RÉSULTAT DE L'OUTIL POUR LA COMMANDE '")
+                {
+                    if let Some(cmd_end) = trimmed.find("']:") {
+                        let prefix = "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE '".len();
+                        let cmd = if trimmed.len() > prefix && cmd_end > prefix {
+                            &trimmed[prefix..cmd_end]
+                        } else {
+                            "commande"
+                        };
+                        let snippet = clean_summary_snippet(cmd, 100);
+                        summary_points.push(format!("- 💻 Sortie reçue pour : `{}`", snippet));
                     }
                 } else {
                     let first_line = trimmed.lines().next().unwrap_or(trimmed);
@@ -234,16 +262,30 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
         }
     }
 
-    let summary_text = if summary_points.is_empty() {
+    // Bound summary points to avoid exploding token budget in 100+ turn sessions
+    let bounded_summary_points = if summary_points.len() > 25 {
+        let mut pts = Vec::new();
+        pts.extend(summary_points.iter().take(3).cloned());
+        pts.push(format!(
+            "- ... ({} points intermédiaires archivés) ...",
+            summary_points.len() - 23
+        ));
+        pts.extend(summary_points.iter().skip(summary_points.len() - 20).cloned());
+        pts
+    } else {
+        summary_points
+    };
+
+    let summary_text = if bounded_summary_points.is_empty() {
         "Contexte précédent archivé et compacté.".to_string()
     } else {
         format!(
             "Contexte précédent compacté :\n{}",
-            summary_points.join("\n")
+            bounded_summary_points.join("\n")
         )
     };
 
-    // Replace older messages with a single summary message, followed by recent messages
+    // Replace older messages with a single summary message, followed by bounded recent messages
     let mut new_messages = Vec::new();
     new_messages.push(ChatMessage {
         role: MessageRole::System,
@@ -251,12 +293,44 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
         command_proposal: None,
         attachments: Vec::new(),
     });
-    new_messages.extend_from_slice(recent_msgs);
+    new_messages.extend(bound_recent_messages(recent_msgs));
 
     CompactedHistory {
         messages: new_messages,
         summary: Some(summary_text),
     }
+}
+
+/// Bounds single giant messages in active LLM context to prevent token overflows and TTFT timeouts.
+fn bound_recent_messages(msgs: &[ChatMessage]) -> Vec<ChatMessage> {
+    const MAX_MSG_CHARS: usize = 6000;
+    const HEAD_CHARS: usize = 3000;
+    const TAIL_CHARS: usize = 2000;
+
+    msgs.iter()
+        .map(|m| {
+            if m.content.len() > MAX_MSG_CHARS {
+                let cut_head = m.content.floor_char_boundary(HEAD_CHARS);
+                let head = &m.content[..cut_head];
+                let tail_start = m.content.len().saturating_sub(TAIL_CHARS);
+                let cut_tail = m.content.ceil_char_boundary(tail_start);
+                let tail = &m.content[cut_tail..];
+                let masked = m.content.len().saturating_sub(cut_head + (m.content.len() - cut_tail));
+                let bounded_content = format!(
+                    "{}\n\n... [sortie tronquée pour le contexte LLM : {} caractères masqués] ...\n\n{}",
+                    head, masked, tail
+                );
+                ChatMessage {
+                    role: m.role.clone(),
+                    content: bounded_content,
+                    command_proposal: m.command_proposal.clone(),
+                    attachments: m.attachments.clone(),
+                }
+            } else {
+                m.clone()
+            }
+        })
+        .collect()
 }
 
 fn is_generic_or_default_title(title: &str) -> bool {

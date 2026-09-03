@@ -144,14 +144,122 @@ pub async fn execute_edit_file(path: &str, old_string: &str, new_string: &str) -
     }
 }
 
+/// Builds a shell command to read a remote file via base64 in the remote PTY.
+pub fn build_remote_read_command(path: &str) -> String {
+    let safe_path = path.replace('"', "\\\"");
+    format!("(base64 -w 0 \"{safe_path}\" 2>/dev/null || base64 \"{safe_path}\" 2>/dev/null || cat \"{safe_path}\")")
+}
+
+/// Builds a shell command to write content via base64 in the remote PTY.
+pub fn build_remote_write_command(path: &str, content_base64: &str, use_sudo: bool) -> String {
+    let safe_path = path.replace('"', "\\\"");
+    if use_sudo {
+        format!("printf '%s' '{content_base64}' | base64 -d | sudo tee \"{safe_path}\" > /dev/null")
+    } else {
+        format!("printf '%s' '{content_base64}' | base64 -d > \"{safe_path}\"")
+    }
+}
+
+/// Decodes base64 string bytes into Vec<u8> safely.
+pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input)
+        .ok()
+}
+
+/// Decodes the output captured from a remote base64 read command.
+pub fn decode_remote_read_output(output: &str, path: &str) -> String {
+    const MAX_BYTES: usize = 100 * 1024;
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return "(Fichier vide)".to_string();
+    }
+
+    // Check for common shell error patterns
+    if trimmed.contains("No such file or directory")
+        || trimmed.contains("Permission denied")
+        || trimmed.contains("Is a directory")
+        || trimmed.contains("cannot open")
+        || trimmed.contains("Aucun fichier ou dossier")
+    {
+        return format!("Erreur de lecture distante de {} : {}", path, trimmed);
+    }
+
+    // Try base64 decoding (strip whitespace/newlines that base64 command might output)
+    let clean_b64: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if !clean_b64.is_empty() {
+        if let Some(bytes) = base64_decode(&clean_b64) {
+            if bytes.is_empty() {
+                return "(Fichier vide)".to_string();
+            }
+            let shown = if bytes.len() > MAX_BYTES {
+                &bytes[..MAX_BYTES]
+            } else {
+                &bytes[..]
+            };
+            let text = String::from_utf8_lossy(shown);
+            let mut out = text.to_string();
+            if bytes.len() > MAX_BYTES {
+                out.push_str(&format!(
+                    "\n\n… [Sortie tronquée : {} octets affichés sur {}]",
+                    MAX_BYTES,
+                    bytes.len()
+                ));
+            }
+            return out;
+        }
+    }
+
+    // Fallback: treat as plain text if cat fallback was used
+    let bytes = trimmed.as_bytes();
+    let shown = if bytes.len() > MAX_BYTES {
+        &bytes[..MAX_BYTES]
+    } else {
+        bytes
+    };
+    let text = String::from_utf8_lossy(shown);
+    let mut out = text.to_string();
+    if bytes.len() > MAX_BYTES {
+        out.push_str(&format!(
+            "\n\n… [Sortie tronquée : {} octets affichés sur {}]",
+            MAX_BYTES,
+            bytes.len()
+        ));
+    }
+    out
+}
+
+/// Applies replacement logic on a string, verifying uniqueness.
+pub fn execute_remote_edit_logic(
+    original_content: &str,
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+) -> Result<String, String> {
+    let occurrences = original_content.matches(old_string).count();
+    if occurrences == 0 {
+        return Err(format!(
+            "Erreur : le texte à remplacer est introuvable dans {}. Vérifiez le contenu exact (lecture avec tool:read_file) avant de réessayer.",
+            path
+        ));
+    }
+    if occurrences > 1 {
+        return Err(format!(
+            "Erreur : le texte à remplacer apparaît {} fois dans {} (il doit être unique). Fournissez un fragment plus précis incluant son contexte.",
+            occurrences, path
+        ));
+    }
+    Ok(original_content.replace(old_string, new_string))
+}
+
 /// Checks if text contains an explicit tool execution block ```tool:...``` or explicit XML/JSON function tags
 pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
-    // Reasoning is not action: models stream their private deliberation as
-    // <think>…</think> (folded from reasoning_content), which may contain
-    // command *examples* (```bash blocks, hypothetical syntax). Never parse a
-    // tool call out of it — only the visible answer is actionable.
-    let text = strip_think_blocks(text);
+    let stripped = strip_think_blocks(text);
+    parse_tool_call_inner(&stripped)
+}
 
+fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
     // 1. Check for MCP tool call: ```tool:mcp:<server>:<tool_name>\n{...}\n```
     if let Some(start) = text.find("```tool:mcp:") {
         let after = &text[start + "```tool:mcp:".len()..];
@@ -275,14 +383,14 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
     }
 
     // 4. XML / Function tags and direct JSON (e.g. DeepSeek/Qwen <tool_call> or <|tool_calls|>)
-    if let Some(tool) = parse_json_or_xml_tool_call(&text) {
+    if let Some(tool) = parse_json_or_xml_tool_call(text) {
         return Some(tool);
     }
 
     // 5. GLM/Z.ai hybrid DSML scaffolding emitted as plain text, e.g.
     //    `<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="exec_command">…`
     //    (fullwidth pipes U+FF5C). Normalized then parsed as HTML-style tags.
-    let normalized = normalize_model_tool_markup(&text);
+    let normalized = normalize_model_tool_markup(text);
     if let Some(tool) = parse_html_style_tool_call(&normalized) {
         return Some(tool);
     }
@@ -341,26 +449,87 @@ fn parse_file_edit_fence(body: &str, kind: &str) -> Option<ToolInvocation> {
     }
 }
 
-/// Removes `<think>…</think>` reasoning regions so their content is never
-/// parsed as an actionable tool call. An unterminated `<think>` (stream cut
-/// mid-reasoning) strips everything to the end — nothing after it was visible
-/// to the user anyway.
-pub(crate) fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
-    const OPEN: &str = "<think>";
-    const CLOSE: &str = "</think>";
-    if !text.contains(OPEN) {
-        return std::borrow::Cow::Borrowed(text);
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(OPEN) {
-        out.push_str(&rest[..start]);
-        let after_open = &rest[start + OPEN.len()..];
-        match after_open.find(CLOSE) {
-            Some(end) => rest = &after_open[end + CLOSE.len()..],
-            None => return std::borrow::Cow::Owned(out), // stream cut mid-reasoning
+/// Finds the earliest occurrence of any tag in the slice, returning (byte_offset, tag_len).
+pub(crate) fn find_earliest_tag(text: &str, tags: &[&str]) -> Option<(usize, usize)> {
+    let mut earliest: Option<(usize, usize)> = None;
+    for tag in tags {
+        if let Some(pos) = text.find(tag) {
+            if earliest.is_none_or(|(ep, _)| pos < ep) {
+                earliest = Some((pos, tag.len()));
+            }
         }
     }
+    earliest
+}
+
+/// Removes reasoning regions (`<think>…</think>`, `<thought>…</thought>`, etc.) so
+/// their internal deliberation is never parsed as an actionable tool call. Handles
+/// typo variants emitted by real models (e.g. `</thunk>`, `</thinking>`, `</thought>`,
+/// `</th`) and transitions where tool calls follow directly without a closing tag.
+pub fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN_TAGS: &[&str] = &[
+        "<think>",
+        "<thought>",
+        "<thinking>",
+        "<reasoning>",
+        "<reflection>",
+        "<plan>",
+        "<thought_process>",
+    ];
+
+    const CLOSE_TAGS: &[&str] = &[
+        "</think>",
+        "</thunk>",
+        "</thought>",
+        "</thinking>",
+        "</thinking",
+        "</reasoning>",
+        "</reflection>",
+        "</plan>",
+        "</thought_process>",
+    ];
+
+    const TOOL_STARTS: &[&str] = &[
+        "<｜｜DSML｜｜",
+        "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}",
+        "<|DSML|",
+        "<|tool_calls|>",
+        "<tool_call>",
+        "<tool_calls>",
+        "<invoke",
+        "<command>",
+        "<tool:run_command>",
+        "<tool:execute_command>",
+        "```tool:",
+        "```bash",
+        "```sh",
+        "```zsh",
+    ];
+
+    if !OPEN_TAGS.iter().any(|op| text.contains(op)) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some((start, open_tag_len)) = find_earliest_tag(rest, OPEN_TAGS) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + open_tag_len..];
+
+        if let Some((close_rel, close_tag_len)) = find_earliest_tag(after_open, CLOSE_TAGS) {
+            rest = &after_open[close_rel + close_tag_len..];
+        } else if let Some((tool_rel, _)) = find_earliest_tag(after_open, TOOL_STARTS) {
+            rest = &after_open[tool_rel..];
+        } else if after_open.ends_with("</th") || after_open.ends_with("</thi") || after_open.ends_with("</thin") {
+            // Stream cut right as the closing tag was beginning at EOF
+            return std::borrow::Cow::Owned(out);
+        } else {
+            // Stream cut mid-reasoning: drop to end
+            return std::borrow::Cow::Owned(out);
+        }
+    }
+
     out.push_str(rest);
     std::borrow::Cow::Owned(out)
 }
@@ -377,10 +546,21 @@ fn normalize_model_tool_markup(text: &str) -> String {
 }
 
 /// Extracts HTML-style tool invocations: `<invoke name="…">` with
-/// `<parameter name="command" string="true">…</parameter>` children
-/// (GLM DSML scaffolding, Hermes/Mistral style). Returns the first
+/// `<parameter name="command" string="true">…</parameter>` or `<command>…</command>` children
+/// (GLM/DeepSeek DSML scaffolding, Hermes/Mistral style). Returns the first
 /// invocation that maps to a known tool; tolerates truncated streams.
 fn parse_html_style_tool_call(text: &str) -> Option<ToolInvocation> {
+    // 1. Direct <command>...</command> inside tool scaffolding
+    if let Some(p) = text.find("<command>") {
+        let after = &text[p + "<command>".len()..];
+        if let Some(end) = after.find("</command>") {
+            let val = after[..end].trim().to_string();
+            if !val.is_empty() {
+                return Some(ToolInvocation::RunCommand(val));
+            }
+        }
+    }
+
     let mut search_from = 0usize;
     while let Some(rel) = text[search_from..].find("<invoke") {
         let start = search_from + rel;
@@ -393,6 +573,7 @@ fn parse_html_style_tool_call(text: &str) -> Option<ToolInvocation> {
                 rest.find('"').map(|e| rest[..e].to_string())
             })
             .unwrap_or_default();
+        let name_lower = name.to_lowercase();
 
         let block_end = after_tag
             .find("</invoke>")
@@ -401,23 +582,43 @@ fn parse_html_style_tool_call(text: &str) -> Option<ToolInvocation> {
 
         let param_value = |param: &str| -> Option<String> {
             let open_tag = format!("<parameter name=\"{param}\"");
-            let p = block.find(&open_tag)?;
-            let after = &block[p..];
-            let gt = after.find('>')?;
-            let rest = &after[gt + 1..];
-            let end = rest.find("</parameter>")?;
-            let value = rest[..end].trim().to_string();
-            (!value.is_empty()).then_some(value)
+            if let Some(p) = block.find(&open_tag) {
+                if let Some(gt) = block[p..].find('>') {
+                    let rest = &block[p + gt + 1..];
+                    if let Some(end) = rest.find("</parameter>") {
+                        let value = rest[..end].trim().to_string();
+                        if !value.is_empty() {
+                            return Some(value);
+                        }
+                    }
+                }
+            }
+            // Also support direct <tag>...</tag> (e.g. <command>...</command>)
+            let direct_tag = format!("<{param}>");
+            if let Some(p) = block.find(&direct_tag) {
+                let after = &block[p + direct_tag.len()..];
+                let close_tag = format!("</{param}>");
+                if let Some(end) = after.find(&close_tag) {
+                    let value = after[..end].trim().to_string();
+                    if !value.is_empty() {
+                        return Some(value);
+                    }
+                }
+            }
+            None
         };
 
-        let tool = if name.contains("command")
-            || name == "bash"
-            || name == "sh"
-            || name == "execute_command"
-            || name == "run_command"
+        let tool = if name_lower.contains("command")
+            || name_lower == "bash"
+            || name_lower == "sh"
+            || name_lower == "execute_command"
+            || name_lower == "run_command"
+            || name_lower == "terminal"
         {
-            param_value("command").map(ToolInvocation::RunCommand)
-        } else if name.contains("search") || name.contains("web") {
+            param_value("command")
+                .or_else(|| param_value("cmd"))
+                .map(ToolInvocation::RunCommand)
+        } else if name_lower.contains("search") || name_lower.contains("web") {
             param_value("query")
                 .or_else(|| param_value("search_query"))
                 .map(ToolInvocation::WebSearch)
@@ -897,6 +1098,15 @@ mod tool_parse_tests {
     }
 
     #[test]
+    fn parses_deepseek_nested_dsml_skill_command() {
+        let text = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<invoke name=\"Bash\">\n<skill name=\"Bash\">\n<command>sed -n '625,660p' /tmp/file.qml</command>\n</skill>\n</invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("sed -n '625,660p' /tmp/file.qml".to_string()))
+        );
+    }
+
+    #[test]
     fn web_search_tool_call_parses() {
         let text = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"web_search\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"query\" string=\"true\">rust ratatui</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>";
         assert_eq!(
@@ -1040,5 +1250,61 @@ mod tool_parse_tests {
         // Missing old_string must be reported, not a silent no-op.
         let e3 = execute_edit_file(&path_str, "nope", "z").await;
         assert!(e3.contains("introuvable"), "missing edit: {}", e3);
+    }
+
+    #[test]
+    fn remote_file_commands_and_decode_tests() {
+        use super::{
+            build_remote_read_command, build_remote_write_command, decode_remote_read_output,
+            execute_remote_edit_logic,
+        };
+
+        // Read command formatting
+        let read_cmd = build_remote_read_command("/etc/nginx/nginx.conf");
+        assert!(read_cmd.contains("base64 -w 0 \"/etc/nginx/nginx.conf\""));
+        assert!(read_cmd.contains("cat \"/etc/nginx/nginx.conf\""));
+
+        // Write command formatting without sudo
+        let write_user = build_remote_write_command("/home/user/app.py", "cHJpbnQoMSkK", false);
+        assert_eq!(
+            write_user,
+            "printf '%s' 'cHJpbnQoMSkK' | base64 -d > \"/home/user/app.py\""
+        );
+
+        // Write command formatting with sudo
+        let write_sudo = build_remote_write_command("/etc/hosts", "MTI3LjAuMC4xIGxvY2FsaG9zdAo=", true);
+        assert_eq!(
+            write_sudo,
+            "printf '%s' 'MTI3LjAuMC4xIGxvY2FsaG9zdAo=' | base64 -d | sudo tee \"/etc/hosts\" > /dev/null"
+        );
+
+        // Decode valid base64 output
+        let decoded = decode_remote_read_output("aGVsbG8gd29ybGQ=", "/tmp/test.txt");
+        assert_eq!(decoded, "hello world");
+
+        // Decode empty output
+        let empty = decode_remote_read_output("", "/tmp/empty.txt");
+        assert_eq!(empty, "(Fichier vide)");
+
+        // Decode shell error
+        let err = decode_remote_read_output("cat: /etc/fake: No such file or directory", "/etc/fake");
+        assert!(err.contains("Erreur de lecture distante"));
+
+        // Remote edit logic
+        let orig = "server {\n    listen 80;\n    server_name example.com;\n}\n";
+        let edited = execute_remote_edit_logic(orig, "/etc/nginx/nginx.conf", "listen 80;", "listen 443 ssl;").unwrap();
+        assert!(edited.contains("listen 443 ssl;"));
+        assert!(!edited.contains("listen 80;"));
+
+        // Remote edit logic - not found
+        let err_missing = execute_remote_edit_logic(orig, "/etc/nginx/nginx.conf", "listen 8080;", "listen 443;");
+        assert!(err_missing.is_err());
+        assert!(err_missing.unwrap_err().contains("introuvable"));
+
+        // Remote edit logic - ambiguous
+        let orig_dup = "foo\nbar\nfoo\n";
+        let err_dup = execute_remote_edit_logic(orig_dup, "test.txt", "foo", "baz");
+        assert!(err_dup.is_err());
+        assert!(err_dup.unwrap_err().contains("apparaît 2 fois"));
     }
 }

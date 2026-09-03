@@ -202,7 +202,7 @@ impl LlmProvider for AnthropicProvider {
 
         let url = format!("{}/v1/messages", self.base_url);
         let send_res = timeout(
-            Duration::from_secs(12),
+            Duration::from_secs(45),
             self.client
                 .post(&url)
                 .header("x-api-key", &self.api_key)
@@ -224,7 +224,7 @@ impl LlmProvider for AnthropicProvider {
                 anyhow::bail!(err_msg);
             }
             Err(_) => {
-                let err_msg = "Délai d'attente dépassé (timeout 12s) lors de la connexion à Anthropic Claude API.".to_string();
+                let err_msg = "Délai d'attente dépassé (timeout 45s) lors de la connexion à Anthropic Claude API.".to_string();
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                 anyhow::bail!(err_msg);
             }
@@ -244,7 +244,7 @@ impl LlmProvider for AnthropicProvider {
         loop {
             let next_res = tokio::select! {
                 _ = cancel.cancelled() => break,
-                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+                r = timeout(Duration::from_secs(90), event_stream.next()) => r,
             };
 
             match next_res {
@@ -300,7 +300,7 @@ impl LlmProvider for AnthropicProvider {
                 Ok(None) => break,
                 Err(_) => {
                     let err_msg =
-                        "Délai d'inactivité de 25s dépassé sur le flux Anthropic (timeout SSE)."
+                        "Délai d'inactivité de 90s dépassé sur le flux Anthropic (timeout SSE)."
                             .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);

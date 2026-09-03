@@ -98,7 +98,7 @@ impl LlmProvider for OllamaProvider {
 
         let url = format!("{}/api/chat", self.base_url);
         let send_res = timeout(
-            Duration::from_secs(12),
+            Duration::from_secs(45),
             self.client.post(&url).json(&request_body).send(),
         )
         .await;
@@ -115,7 +115,7 @@ impl LlmProvider for OllamaProvider {
             }
             Err(_) => {
                 let err_msg = format!(
-                    "Délai d'attente dépassé (timeout 12s) pour joindre Ollama sur {}.",
+                    "Délai d'attente dépassé (timeout 45s) pour joindre Ollama sur {}.",
                     url
                 );
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
@@ -138,7 +138,7 @@ impl LlmProvider for OllamaProvider {
         loop {
             let next_res = tokio::select! {
                 _ = cancel.cancelled() => break,
-                r = timeout(Duration::from_secs(25), stream.next()) => r,
+                r = timeout(Duration::from_secs(90), stream.next()) => r,
             };
 
             let chunk_res = match next_res {
@@ -146,7 +146,7 @@ impl LlmProvider for OllamaProvider {
                 Ok(None) => break,
                 Err(_) => {
                     let err_msg =
-                        "Délai d'inactivité de 25s dépassé sur le flux Ollama (timeout SSE)."
+                        "Délai d'inactivité de 90s dépassé sur le flux Ollama (timeout SSE)."
                             .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);

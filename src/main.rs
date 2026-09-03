@@ -159,14 +159,18 @@ async fn run_loop(
                         .saturating_sub(1)
                         .max(1);
                     let split_rows = h.saturating_sub(3).max(1);
-                    let _ = app.pty.resize(split_rows, split_cols);
+                    for tab in &mut app.tabs {
+                        let _ = tab.pty.resize(split_rows, split_cols);
+                    }
                 }
-                AppEvent::PtyOutput(bytes) => {
-                    app.on_pty_output(&bytes);
+                AppEvent::PtyOutput { tab_id, data } => {
+                    app.on_pty_output(tab_id, &data);
                 }
-                AppEvent::PtyExit => {
-                    app.should_quit = true;
-                    should_render = false;
+                AppEvent::PtyExit { tab_id } => {
+                    app.on_pty_exit(tab_id);
+                    if app.should_quit {
+                        should_render = false;
+                    }
                 }
                 AppEvent::AgentChunk(chunk) => app.on_agent_chunk(chunk),
                 AppEvent::AgentDone => app.on_agent_done(),
@@ -243,6 +247,29 @@ fn setup_panic_hook() {
             DisableMouseCapture,
             SetCursorStyle::DefaultUserShape
         );
+
+        // Write panic details to ~/.config/spiritty/crash.log
+        if let Some(config_dir) = dirs::config_dir() {
+            let spiritty_dir = config_dir.join("spiritty");
+            let _ = std::fs::create_dir_all(&spiritty_dir);
+            let crash_file = spiritty_dir.join("crash.log");
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let payload = format!(
+                "=== Crash at {} ===\n{}\nBacktrace:\n{:?}\n\n",
+                timestamp,
+                panic_info,
+                std::backtrace::Backtrace::capture()
+            );
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(crash_file)
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "{}", payload);
+            }
+        }
+
         original_hook(panic_info);
     }));
 }

@@ -700,7 +700,7 @@ fn deep_thinking_shimmer_spans(wording: &str, frame: usize) -> Vec<Span<'static>
                 spans.push(Span::styled(
                     std::mem::take(&mut cur),
                     Style::default()
-                        .fg(cur_color.unwrap())
+                        .fg(cur_color.unwrap_or(Color::DarkGray))
                         .add_modifier(Modifier::ITALIC),
                 ));
             }
@@ -712,7 +712,7 @@ fn deep_thinking_shimmer_spans(wording: &str, frame: usize) -> Vec<Span<'static>
         spans.push(Span::styled(
             cur,
             Style::default()
-                .fg(cur_color.unwrap())
+                .fg(cur_color.unwrap_or(Color::DarkGray))
                 .add_modifier(Modifier::ITALIC),
         ));
     }
@@ -836,7 +836,9 @@ fn compose_assistant_message(
             let style = Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::ITALIC);
-            lines[0].spans.push(Span::styled(one_line, style));
+            if let Some(first) = lines.first_mut() {
+                first.spans.push(Span::styled(one_line, style));
+            }
         }
         push_blank_line(&mut lines);
 
@@ -845,11 +847,7 @@ fn compose_assistant_message(
         // right below the thought line (user request: « garder la ligne deep
         // thinking en dessous avec le timer pendant le déroulé du thinking »).
         if is_generating && is_last && !has_pending_approval && parsed.response.trim().is_empty() {
-            let wording = if lang == Language::Fr {
-                "💭 Réflexion profonde…"
-            } else {
-                "💭 Deep thinking…"
-            };
+            let wording = "💭 Deep thinking…";
             let timer_suffix = think_elapsed
                 .map(|e| format!(" {}", format_elapsed_min_sec(e)))
                 .unwrap_or_default();
@@ -890,11 +888,7 @@ fn compose_assistant_message(
         // with an explicit label and a cyan gradient shimmer sweeping the text,
         // so the user sees at a glance that the model is actively working. The
         // reflection timer rides on the SAME line, after the wording.
-        let wording = if lang == Language::Fr {
-            " 💭 Réflexion profonde…"
-        } else {
-            " 💭 Deep thinking…"
-        };
+        let wording = " 💭 Deep thinking…";
         let timer_suffix = think_elapsed
             .map(|e| format!(" {}", format_elapsed_min_sec(e)))
             .unwrap_or_default();
@@ -1837,8 +1831,18 @@ fn strip_residual_reasoning_tags(text: &str) -> String {
         "</think>",
         "<thought>",
         "</thought>",
+        "</thunk>",
+        "<thinking>",
+        "</thinking>",
+        "</thinking",
         "<reasoning>",
         "</reasoning>",
+        "<reflection>",
+        "</reflection>",
+        "<plan>",
+        "</plan>",
+        "<thought_process>",
+        "</thought_process>",
     ];
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -1864,54 +1868,126 @@ fn strip_residual_reasoning_tags(text: &str) -> String {
             }
         }
     }
-    out.trim().to_string()
+    // Clean trailing partial tag if truncated at end (e.g. `</th`)
+    let trimmed = out.trim();
+    if let Some(stripped) = trimmed.strip_suffix("</th") {
+        stripped.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Extracts <think>...</think>, <thought>...</thought>, or <reasoning>...</reasoning> reasoning blocks if present.
+/// Supports typo variants (</thunk>, </thinking>) and direct transitions into tool invocations.
 fn extract_thought_block(text: &str) -> ParsedThought {
-    let delimiters = [
-        ("<think>", "</think>"),
-        ("<thought>", "</thought>"),
-        ("<reasoning>", "</reasoning>"),
+    const OPEN_TAGS: &[&str] = &[
+        "<think>",
+        "<thought>",
+        "<thinking>",
+        "<reasoning>",
+        "<reflection>",
+        "<plan>",
+        "<thought_process>",
     ];
 
-    for (open_tag, close_tag) in delimiters {
-        if let Some(start) = text.find(open_tag) {
-            let before = &text[..start];
-            let after_start = &text[start + open_tag.len()..];
+    const CLOSE_TAGS: &[&str] = &[
+        "</think>",
+        "</thunk>",
+        "</thought>",
+        "</thinking>",
+        "</thinking",
+        "</reasoning>",
+        "</reflection>",
+        "</plan>",
+        "</thought_process>",
+    ];
 
-            if let Some(end) = after_start.find(close_tag) {
-                let thought = strip_residual_reasoning_tags(&after_start[..end]);
-                let after_end = after_start[end + close_tag.len()..].trim();
-                let remaining = if before.trim().is_empty() {
-                    clean_response(after_end)
-                } else {
-                    clean_response(&format!("{}\n\n{}", before.trim(), after_end))
-                };
-                let thought_opt = if thought.is_empty() {
-                    None
-                } else {
-                    Some(thought)
-                };
-                return ParsedThought {
-                    thought: thought_opt,
-                    is_completed: true,
-                    response: remaining,
-                };
+    const TOOL_STARTS: &[&str] = &[
+        "<｜｜DSML｜｜",
+        "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}",
+        "<|DSML|",
+        "<|tool_calls|>",
+        "<tool_call>",
+        "<tool_calls>",
+        "<invoke",
+        "<command>",
+        "<tool:run_command>",
+        "<tool:execute_command>",
+        "```tool:",
+        "```bash",
+        "```sh",
+        "```zsh",
+    ];
+
+    // Find earliest open tag
+    let earliest_open = crate::agent::tools::find_earliest_tag(text, OPEN_TAGS);
+
+    if let Some((start, open_len)) = earliest_open {
+        let before = &text[..start];
+        let after_start = &text[start + open_len..];
+
+        if let Some((end, close_len)) = crate::agent::tools::find_earliest_tag(after_start, CLOSE_TAGS) {
+            let thought = strip_residual_reasoning_tags(&after_start[..end]);
+            let after_end = after_start[end + close_len..].trim();
+            let remaining = if before.trim().is_empty() {
+                clean_response(after_end)
             } else {
-                // Still streaming inside thought block
-                let thought = strip_residual_reasoning_tags(after_start);
-                let thought_opt = if thought.is_empty() {
-                    None
-                } else {
-                    Some(thought)
-                };
-                return ParsedThought {
-                    thought: thought_opt,
-                    is_completed: false,
-                    response: clean_response(before.trim()),
-                };
-            }
+                clean_response(&format!("{}\n\n{}", before.trim(), after_end))
+            };
+            let thought_opt = if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            };
+            return ParsedThought {
+                thought: thought_opt,
+                is_completed: true,
+                response: remaining,
+            };
+        } else if let Some((tool_pos, _)) = crate::agent::tools::find_earliest_tag(after_start, TOOL_STARTS) {
+            let thought = strip_residual_reasoning_tags(&after_start[..tool_pos]);
+            let after_end = after_start[tool_pos..].trim();
+            let remaining = if before.trim().is_empty() {
+                clean_response(after_end)
+            } else {
+                clean_response(&format!("{}\n\n{}", before.trim(), after_end))
+            };
+            let thought_opt = if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            };
+            return ParsedThought {
+                thought: thought_opt,
+                is_completed: true,
+                response: remaining,
+            };
+        } else if after_start.ends_with("</th") || after_start.ends_with("</thi") || after_start.ends_with("</thin") {
+            let end = after_start.rfind("</th").unwrap_or(after_start.len());
+            let thought = strip_residual_reasoning_tags(&after_start[..end]);
+            let thought_opt = if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            };
+            return ParsedThought {
+                thought: thought_opt,
+                is_completed: true,
+                response: clean_response(before.trim()),
+            };
+        } else {
+            // Still streaming inside thought block
+            let thought = strip_residual_reasoning_tags(after_start);
+            let thought_opt = if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            };
+            return ParsedThought {
+                thought: thought_opt,
+                is_completed: false,
+                response: clean_response(before.trim()),
+            };
         }
     }
 
@@ -1973,17 +2049,30 @@ fn strip_tool_call_xml(text: &str) -> String {
         "<DSML",
         "<invoke",
         "<parameter",
+        "<skill",
+        "<command",
         "\u{ff5c}DSML",
         "\u{ff5c}tool_calls",
         "\u{ff5c}invoke",
         "\u{ff5c}parameter",
+        "\u{ff5c}skill",
+        "\u{ff5c}command",
         "<|tool_calls",
         "<|DSML",
         "<|invoke",
         "<|parameter",
+        "<|skill",
+        "<|command",
     ];
     // Outermost closing tag preferred (cuts after it, preserving trailing text).
-    const CLOSES: &[&str] = &["</tool_calls>", "</DSML>", "</invoke>", "</parameter>"];
+    const CLOSES: &[&str] = &[
+        "</tool_calls>",
+        "</DSML>",
+        "</invoke>",
+        "</parameter>",
+        "</skill>",
+        "</command>",
+    ];
 
     // Normalize the hybrid GLM/Z.ai DSML scaffolding first: every variant maps to
     // clean tags. A marker WITH a preceding bracket dissolves (`<｜｜DSML｜｜invoke …>`
@@ -2000,7 +2089,11 @@ fn strip_tool_call_xml(text: &str) -> String {
             .replace("||DSML||", "<")
             .replace("<|DSML|", "<")
             .replace("</|DSML|", "</")
-            .replace("|DSML|", "<");
+            .replace("|DSML|", "<")
+            .replace("<||", "<")
+            .replace("</||", "</")
+            .replace("||>", ">")
+            .replace("|>", ">");
         normalized.as_str()
     } else {
         text
@@ -2661,6 +2754,16 @@ mod recovered_regression_tests {
         assert_eq!(cleaned, "Je relance :");
         assert!(!cleaned.contains('\u{ff5c}'), "fullwidth pipe residue");
         assert!(!cleaned.contains('<'), "angle-bracket residue");
+    }
+
+    #[test]
+    fn strip_deepseek_nested_dsml_skill_leaves_no_residue() {
+        let msg = "Voici l'analyse :\n\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<invoke name=\"Bash\">\n<skill name=\"Bash\">\n<command>sed -n '625,660p' /tmp/file.qml</command>\n</skill>\n</invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
+        let cleaned = clean_response(msg);
+        assert_eq!(cleaned, "Voici l'analyse :");
+        assert!(!cleaned.contains("DSML"));
+        assert!(!cleaned.contains("Bash"));
+        assert!(!cleaned.contains('<'));
     }
 
     #[test]

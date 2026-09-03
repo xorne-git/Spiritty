@@ -160,6 +160,17 @@ impl ReasoningBracket {
         }
         out
     }
+
+    /// Closes any open reasoning bracket when the stream completes.
+    pub(crate) fn finish(&mut self) -> Option<&'static str> {
+        if self.in_reasoning {
+            self.in_reasoning = false;
+            self.closed = true;
+            Some("</think>")
+        } else {
+            None
+        }
+    }
 }
 
 #[async_trait]
@@ -262,7 +273,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
         }
 
-        let send_res = timeout(Duration::from_secs(12), req.send()).await;
+        let send_res = timeout(Duration::from_secs(45), req.send()).await;
 
         let response = match send_res {
             Ok(Ok(resp)) => resp,
@@ -283,7 +294,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
             Err(_) => {
                 let err_msg = format!(
-                    "Délai d'attente dépassé (timeout 12s) lors de la connexion à {} sur {}.",
+                    "Délai d'attente dépassé (timeout 45s) lors de la connexion à {} sur {}.",
                     self.name, self.base_url
                 );
                 let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
@@ -307,7 +318,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
         loop {
             let next_res = tokio::select! {
                 _ = cancel.cancelled() => break,
-                r = timeout(Duration::from_secs(25), event_stream.next()) => r,
+                r = timeout(Duration::from_secs(90), event_stream.next()) => r,
             };
 
             match next_res {
@@ -315,6 +326,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     Ok(event) => {
                         let data = event.data.trim();
                         if data == "[DONE]" {
+                            if let Some(close_tag) = reasoning_bracket.finish() {
+                                let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+                            }
                             let _ = event_tx.send(AppEvent::AgentDone);
                             return Ok(());
                         }
@@ -340,6 +354,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                 }
                                 if let Some(ref reason) = choice.finish_reason {
                                     if reason == "length" {
+                                        if let Some(close_tag) = reasoning_bracket.finish() {
+                                            let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+                                        }
                                         let _ = event_tx.send(AppEvent::AgentChunk(
                                             "\n\n[⚠️ Réponse interrompue : limite de tokens atteinte. Tapez 'continue' pour la suite.]".to_string(),
                                         ));
@@ -362,7 +379,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 }
                 Err(_) => {
                     let err_msg =
-                        "Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE)."
+                        "Délai d'inactivité de 90s dépassé sur le flux du modèle (timeout SSE)."
                             .to_string();
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
@@ -370,6 +387,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
         }
 
+        if let Some(close_tag) = reasoning_bracket.finish() {
+            let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+        }
         let _ = event_tx.send(AppEvent::AgentDone);
         Ok(())
     }

@@ -514,11 +514,11 @@ fn test_format_command_for_pty() {
         " echo $? > /tmp/rc\n"
     );
 
-    // 5d. Heredoc on a REMOTE shell is left untouched (the remote line editor handles
-    //     multiline fine; wrapping would risk changing semantics).
+    // 5d. Heredoc on a REMOTE shell is safely wrapped in `bash -c '…'` to prevent
+    //     an `exit` from closing the remote SSH session.
     assert_eq!(
         format_command_for_pty_with_session("printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE", "zsh", true, true),
-        " printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE\n"
+        " bash -c 'printf '\\''x'\\'' | sudo tee /etc/f.txt << '\\''E'\\''\nx\nE'\n"
     );
 
     // 6. Simple single line on remote SSH (tool capture -> clean command, no inline sentinel,
@@ -600,6 +600,11 @@ fn test_parse_command_execution_request() {
     // Direct affirmative phrases
     assert_eq!(parse_command_execution_request("ok", 3), Some(0));
     assert_eq!(parse_command_execution_request("oui", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui vas y", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui vas-y", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ok vas y", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui stp", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui bien sûr", 3), Some(0));
     assert_eq!(parse_command_execution_request("vas y", 3), Some(0));
     assert_eq!(parse_command_execution_request("fais le", 3), Some(0));
     assert_eq!(parse_command_execution_request("lance", 3), Some(0));
@@ -1081,4 +1086,47 @@ async fn test_f10_fast_track_approves_pending_command() {
     app.handle_key(KeyEvent::new(KeyCode::F(10), KeyModifiers::NONE));
     assert!(app.pending_tool_approval.is_none());
     assert!(rx2.await.expect("approval sent"));
+}
+
+#[test]
+fn test_reasoning_edge_cases_thunk_and_partial_th() {
+    use spiritty::agent::tools::{parse_tool_call, strip_think_blocks, ToolInvocation};
+
+    // Case 1: Message 362 repro — DeepSeek emits </thunk> instead of </think> followed by DSML tool calls
+    let msg_362 = "<think>Analysons la situation.\nIl faut modifier le fichier.\nAllons-y.</thunk>Modifions le main pour lire DEEPSEEK_API_KEY.\n\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"cmd\" string=\"true\">sed -n '1,25p' /tmp/fetch.py</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
+
+    let stripped = strip_think_blocks(msg_362);
+    assert!(!stripped.contains("<think>"));
+    assert!(stripped.contains("sed -n '1,25p' /tmp/fetch.py"));
+
+    let tool = parse_tool_call(msg_362);
+    assert_eq!(
+        tool,
+        Some(ToolInvocation::RunCommand(
+            "sed -n '1,25p' /tmp/fetch.py".to_string()
+        ))
+    );
+
+    // Case 2: Message 350 repro — Trailing partial </th tag cut off at token limit
+    let msg_350 = "<think>Voici ma réflexion.\nJe vais lancer ces commandes.\n\n</th";
+    let stripped_350 = strip_think_blocks(msg_350);
+    assert!(stripped_350.trim().is_empty());
+
+    // Case 3: Direct transition from <think> to tool call without any closing tag
+    let direct_transition = "<think>Je prépare la commande :\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"command\" string=\"true\">uptime</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>";
+    let tool_direct = parse_tool_call(direct_transition);
+    assert_eq!(
+        tool_direct,
+        Some(ToolInvocation::RunCommand("uptime".to_string()))
+    );
+
+    // Case 4: Real session repro — Model wrote malformed </thinking` followed by DSML and wrapped by trailing </think>
+    let msg_391 = "<think>Enfin, `grep _cookieFile` dans le QML pour voir les usages.</thinking`plugin_settings.json` référence bien `deepseekWidget`.\n\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke name=\"exec_command\">\n<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter name=\"cmd\" string=\"true\">cd ~/.config/DankMaterialShell/plugins && ls</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}parameter>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls></think>";
+    let tool_391 = parse_tool_call(msg_391);
+    assert_eq!(
+        tool_391,
+        Some(ToolInvocation::RunCommand(
+            "cd ~/.config/DankMaterialShell/plugins && ls".to_string()
+        ))
+    );
 }
