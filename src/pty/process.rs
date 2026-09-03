@@ -221,7 +221,27 @@ precmd_functions+=(__spiritty_done)
     /// Whether the child currently expects SS3 (application) cursor keys —
     /// see [`PtyProcess::app_cursor_mode`] field docs.
     pub fn app_cursor_mode(&self) -> bool {
-        self.app_cursor_mode.load(Ordering::SeqCst)
+        self.app_cursor_mode.load(Ordering::SeqCst) || self.screen.application_cursor()
+    }
+
+    /// Whether the child is currently using the alternate screen buffer (e.g. vim, htop, less).
+    pub fn is_alternate_screen(&self) -> bool {
+        self.screen.is_alternate_screen()
+    }
+
+    /// Active mouse tracking protocol mode (None, Press, PressRelease, ButtonMotion, AnyMotion).
+    pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
+        self.screen.mouse_protocol_mode()
+    }
+
+    /// Active mouse protocol encoding (Default, Utf8, Sgr).
+    pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
+        self.screen.mouse_protocol_encoding()
+    }
+
+    /// Whether the terminal child enabled bracketed paste mode (\x1b[?2004h).
+    pub fn bracketed_paste(&self) -> bool {
+        self.screen.bracketed_paste()
     }
 
     pub fn shell_name(&self) -> &str {

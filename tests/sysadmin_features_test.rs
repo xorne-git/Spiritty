@@ -619,3 +619,54 @@ async fn test_multi_tabs_lifecycle_and_shortcuts() {
     app.on_pty_exit(last_tab_id);
     assert!(app.should_quit);
 }
+
+#[tokio::test]
+async fn test_tab_renaming_and_session_persistence() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::ModalState;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
+    let mut app = App::new(event_tx, 24, 80).unwrap();
+
+    // 1. Initial tab display title is default
+    assert_eq!(app.active_tab().display_title(), "💻 local");
+
+    // 2. Alt + R opens the tab rename modal
+    let alt_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT);
+    app.handle_key(alt_r);
+    assert!(matches!(app.modal, ModalState::RenameTab { .. }));
+
+    // 3. Type new title "production-db" and press Enter
+    for c in "production-db".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(app.modal, ModalState::None));
+    assert_eq!(app.active_tab().custom_title.as_deref(), Some("production-db"));
+    assert_eq!(app.active_tab().display_title(), "production-db");
+
+    // 4. Test session persistence: save session with renamed tab
+    app.messages.push(spiritty::app::ChatMessage {
+        role: spiritty::app::MessageRole::User,
+        content: "Test persistence".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.save_current_session();
+
+    assert_eq!(app.current_session.tabs.len(), 1);
+    assert_eq!(
+        app.current_session.tabs[0].custom_title.as_deref(),
+        Some("production-db")
+    );
+
+    // 5. Reset custom title with empty input
+    app.handle_key(alt_r);
+    // Backspace everything
+    for _ in 0..20 {
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.active_tab().custom_title, None);
+    assert_eq!(app.active_tab().display_title(), "💻 local");
+}

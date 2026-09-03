@@ -238,6 +238,17 @@ impl HelpModal {
             ));
             left_lines.push(Line::from(""));
 
+            // Alt R (Renommer l'onglet)
+            let mut l_rename_tab = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Cyan);
+            l_rename_tab.push(Span::raw(" "));
+            l_rename_tab.extend(key_pill("R", Color::Cyan));
+            left_lines.push(make_help_row(
+                l_rename_tab,
+                lang.t(I18nKey::HelpDescRenameTab),
+                key_col_w_left,
+            ));
+            left_lines.push(Line::from(""));
+
             // 2. Agent IA & Diagnostic
             left_lines.push(make_section_header(
                 lang.t(I18nKey::HelpSectionAgent),

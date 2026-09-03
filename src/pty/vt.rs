@@ -91,6 +91,51 @@ impl VtScreen {
         }
     }
 
+    /// Whether the terminal child is currently using the alternate screen buffer (e.g. vim, htop, less).
+    pub fn is_alternate_screen(&self) -> bool {
+        if let Ok(parser) = self.parser.lock() {
+            parser.screen().alternate_screen()
+        } else {
+            false
+        }
+    }
+
+    /// Whether the terminal child expects application cursor keys (DECCKM).
+    pub fn application_cursor(&self) -> bool {
+        if let Ok(parser) = self.parser.lock() {
+            parser.screen().application_cursor()
+        } else {
+            false
+        }
+    }
+
+    /// Active mouse tracking protocol mode (None, Press, PressRelease, ButtonMotion, AnyMotion).
+    pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
+        if let Ok(parser) = self.parser.lock() {
+            parser.screen().mouse_protocol_mode()
+        } else {
+            vt100::MouseProtocolMode::None
+        }
+    }
+
+    /// Active mouse protocol encoding (Default, Utf8, Sgr).
+    pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
+        if let Ok(parser) = self.parser.lock() {
+            parser.screen().mouse_protocol_encoding()
+        } else {
+            vt100::MouseProtocolEncoding::Default
+        }
+    }
+
+    /// Whether the terminal child enabled bracketed paste mode (\x1b[?2004h).
+    pub fn bracketed_paste(&self) -> bool {
+        if let Ok(parser) = self.parser.lock() {
+            parser.screen().bracketed_paste()
+        } else {
+            false
+        }
+    }
+
     /// Renders the virtual VT100 screen buffer directly onto a Ratatui `Buffer`.
     pub fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {

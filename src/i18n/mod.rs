@@ -172,6 +172,10 @@ pub enum I18nKey {
     SshScanFailed,
     SshLocalRestored,
     HelpDescScanHost,
+    TabRenameTitle,
+    TabRenamePrompt,
+    TabRenameHelp,
+    HelpDescRenameTab,
 
     // Agent System Prompts
     AgentLanguageInstruction,

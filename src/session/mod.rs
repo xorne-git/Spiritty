@@ -31,6 +31,16 @@ pub struct Session {
     pub last_ssh_target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auto_approve: Option<crate::config::AutoApproveLevel>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub tabs: Vec<SavedTab>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SavedTab {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub custom_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ssh_target: Option<String>,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -63,6 +73,7 @@ impl Session {
             prompt_history: Vec::new(),
             last_ssh_target: None,
             auto_approve: None,
+            tabs: Vec::new(),
         }
     }
 

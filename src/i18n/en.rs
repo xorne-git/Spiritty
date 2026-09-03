@@ -109,6 +109,10 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SshScanFailed => "Failed to profile remote host.",
         I18nKey::SshLocalRestored => "Restored local environment.",
         I18nKey::HelpDescScanHost => "Scan and register remote SSH server environment",
+        I18nKey::TabRenameTitle => "Rename tab",
+        I18nKey::TabRenamePrompt => "New tab name:",
+        I18nKey::TabRenameHelp => "[Enter] Confirm · [Esc] Cancel (empty = reset)",
+        I18nKey::HelpDescRenameTab => "Rename active terminal tab",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => "Always respond in English concisely and technically.",

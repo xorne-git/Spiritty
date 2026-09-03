@@ -219,6 +219,11 @@ pub enum ModalState {
     SshReconnect {
         target: String,
     },
+    /// Modal allowing the user to set or reset the custom title of a terminal tab (Alt+R)
+    RenameTab {
+        tab_index: usize,
+        input: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -926,6 +931,20 @@ impl App {
             active_provider,
             &active_model,
         );
+        self.current_session.tabs = self
+            .tabs
+            .iter()
+            .map(|t| {
+                let ssh_target = match &t.active_session {
+                    crate::system::ActiveSession::Ssh { target, .. } => Some(target.clone()),
+                    _ => None,
+                };
+                crate::session::SavedTab {
+                    custom_title: t.custom_title.clone(),
+                    ssh_target,
+                }
+            })
+            .collect();
         // v0.5.2: the session JSON keeps the FULL history — no compaction on
         // save. The LLM context is compacted at request time instead (see
         // agent::send_prompt → compact_chat_messages), so reloading shows the
@@ -1056,6 +1075,14 @@ impl App {
                     let _ = self.config.save();
                     self.agent
                         .reload_config(self.config.clone(), Some(self.event_tx.clone()));
+                }
+
+                if !loaded.tabs.is_empty() {
+                    for (i, saved_tab) in loaded.tabs.iter().enumerate() {
+                        if i < self.tabs.len() {
+                            self.tabs[i].custom_title = saved_tab.custom_title.clone();
+                        }
+                    }
                 }
 
                 self.current_session = loaded;
@@ -1534,6 +1561,19 @@ impl App {
 
                     self.focus = Focus::Terminal;
                     self.is_dragging_split = false;
+
+                    let term_col = x.saturating_sub(self.terminal_area.left() + 1) + 1;
+                    let term_row = y.saturating_sub(self.terminal_area.top() + 1) + 1;
+                    let mouse_mode = self.pty().mouse_protocol_mode();
+                    let is_shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+
+                    if mouse_mode != vt100::MouseProtocolMode::None && !is_shift {
+                        let sgr = format!("\x1b[<0;{};{}M", term_col, term_row);
+                        let _ = self.pty_mut().write_all(sgr.as_bytes());
+                        self.mouse_selection = None;
+                        return;
+                    }
+
                     self.mouse_selection = Some(MouseSelection {
                         panel: SelectionPanel::Terminal,
                         start: (x, y),
@@ -1546,6 +1586,14 @@ impl App {
                 if self.is_dragging_split && total_width > 0 {
                     let pct = ((x as u32 * 100) / total_width as u32) as u16;
                     self.split_ratio = pct.clamp(15, 85);
+                } else if self.terminal_area.contains(ratatui::layout::Position { x, y })
+                    && self.pty().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+                    && !mouse.modifiers.contains(KeyModifiers::SHIFT)
+                {
+                    let term_col = x.saturating_sub(self.terminal_area.left() + 1) + 1;
+                    let term_row = y.saturating_sub(self.terminal_area.top() + 1) + 1;
+                    let sgr = format!("\x1b[<32;{};{}M", term_col, term_row);
+                    let _ = self.pty_mut().write_all(sgr.as_bytes());
                 } else if let Some(ref mut sel) = self.mouse_selection {
                     sel.end = (x, y);
                     sel.is_selecting = true;
@@ -1557,7 +1605,15 @@ impl App {
                     let _ = self.config.save();
                 }
                 self.is_dragging_split = false;
-                if let Some(ref mut sel) = self.mouse_selection {
+                if self.terminal_area.contains(ratatui::layout::Position { x, y })
+                    && self.pty().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+                    && !mouse.modifiers.contains(KeyModifiers::SHIFT)
+                {
+                    let term_col = x.saturating_sub(self.terminal_area.left() + 1) + 1;
+                    let term_row = y.saturating_sub(self.terminal_area.top() + 1) + 1;
+                    let sgr = format!("\x1b[<0;{};{}m", term_col, term_row);
+                    let _ = self.pty_mut().write_all(sgr.as_bytes());
+                } else if let Some(ref mut sel) = self.mouse_selection {
                     sel.end = (x, y);
                     sel.is_selecting = false;
                 }
@@ -1569,7 +1625,23 @@ impl App {
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
                 {
-                    self.pty_mut().scroll_up(2);
+                    let mouse_mode = self.pty().mouse_protocol_mode();
+                    let is_shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+                    if mouse_mode != vt100::MouseProtocolMode::None && !is_shift {
+                        let term_col = x.saturating_sub(self.terminal_area.left() + 1) + 1;
+                        let term_row = y.saturating_sub(self.terminal_area.top() + 1) + 1;
+                        let sgr = format!("\x1b[<64;{};{}M", term_col, term_row);
+                        let _ = self.pty_mut().write_all(sgr.as_bytes());
+                    } else if self.pty().is_alternate_screen() {
+                        let arrow = if self.pty().app_cursor_mode() {
+                            b"\x1bOA\x1bOA\x1bOA".as_slice()
+                        } else {
+                            b"\x1b[A\x1b[A\x1b[A".as_slice()
+                        };
+                        let _ = self.pty_mut().write_all(arrow);
+                    } else {
+                        self.pty_mut().scroll_up(2);
+                    }
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -1579,7 +1651,23 @@ impl App {
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
                 {
-                    self.pty_mut().scroll_down(2);
+                    let mouse_mode = self.pty().mouse_protocol_mode();
+                    let is_shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+                    if mouse_mode != vt100::MouseProtocolMode::None && !is_shift {
+                        let term_col = x.saturating_sub(self.terminal_area.left() + 1) + 1;
+                        let term_row = y.saturating_sub(self.terminal_area.top() + 1) + 1;
+                        let sgr = format!("\x1b[<65;{};{}M", term_col, term_row);
+                        let _ = self.pty_mut().write_all(sgr.as_bytes());
+                    } else if self.pty().is_alternate_screen() {
+                        let arrow = if self.pty().app_cursor_mode() {
+                            b"\x1bOB\x1bOB\x1bOB".as_slice()
+                        } else {
+                            b"\x1b[B\x1b[B\x1b[B".as_slice()
+                        };
+                        let _ = self.pty_mut().write_all(arrow);
+                    } else {
+                        self.pty_mut().scroll_down(2);
+                    }
                 }
             }
             _ => {}
@@ -1636,6 +1724,10 @@ impl App {
                 bm_state.handle_paste(text);
                 return;
             }
+            ModalState::RenameTab { ref mut input, .. } => {
+                input.push_str(&text);
+                return;
+            }
             ModalState::Help | ModalState::Sessions(_) => return,
             ModalState::None => {}
         }
@@ -1651,7 +1743,15 @@ impl App {
                 }
             }
             Focus::Terminal => {
-                let _ = self.pty_mut().write_all(text.as_bytes());
+                if self.pty().bracketed_paste() {
+                    let mut payload = Vec::with_capacity(text.len() + 12);
+                    payload.extend_from_slice(b"\x1b[200~");
+                    payload.extend_from_slice(text.as_bytes());
+                    payload.extend_from_slice(b"\x1b[201~");
+                    let _ = self.pty_mut().write_all(&payload);
+                } else {
+                    let _ = self.pty_mut().write_all(text.as_bytes());
+                }
             }
         }
     }
@@ -2051,6 +2151,34 @@ impl App {
                 }
                 return;
             }
+            ModalState::RenameTab { tab_index, ref mut input } => {
+                let tab_idx = *tab_index;
+                match key.code {
+                    KeyCode::Esc => {
+                        self.modal = ModalState::None;
+                    }
+                    KeyCode::Enter => {
+                        let new_title = if input.trim().is_empty() {
+                            None
+                        } else {
+                            Some(input.trim().to_string())
+                        };
+                        if tab_idx < self.tabs.len() {
+                            self.tabs[tab_idx].custom_title = new_title;
+                            self.save_current_session();
+                        }
+                        self.modal = ModalState::None;
+                    }
+                    KeyCode::Backspace => {
+                        input.pop();
+                    }
+                    KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                        input.push(c);
+                    }
+                    _ => {}
+                }
+                return;
+            }
             ModalState::Sessions(_)
             | ModalState::Bookmarks(_)
             | ModalState::Export(_)
@@ -2073,6 +2201,15 @@ impl App {
             ) && self.proactive_error_diagnosis.is_some()
             {
                 self.proactive_error_diagnosis = None;
+                return;
+            }
+
+            if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+                let current_title = self.active_tab().custom_title.clone().unwrap_or_default();
+                self.modal = ModalState::RenameTab {
+                    tab_index: self.active_tab_index,
+                    input: current_title,
+                };
                 return;
             }
 
@@ -2121,7 +2258,14 @@ impl App {
         // (PasteImage → half-block preview) and focus moves to chat; else the TEXT is pasted
         // into the active pane. Runs on a background thread so a hung clipboard manager can
         // never freeze the UI.
+        let is_term_alt = self.focus == Focus::Terminal && self.pty().is_alternate_screen();
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+            && is_term_alt
+        {
+            // Do not intercept: let vim / alternate screen receive Ctrl+V (^V)
+        } else if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
         {
             let paste_tx = self.event_tx.clone();
@@ -2159,17 +2303,20 @@ impl App {
     }
 
     fn handle_terminal_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::PageUp
-            || (key.code == KeyCode::Up && key.modifiers.contains(KeyModifiers::SHIFT))
-        {
-            self.pty_mut().scroll_up(15);
-            return;
-        }
-        if key.code == KeyCode::PageDown
-            || (key.code == KeyCode::Down && key.modifiers.contains(KeyModifiers::SHIFT))
-        {
-            self.pty_mut().scroll_down(15);
-            return;
+        let is_alt = self.pty().is_alternate_screen();
+        if !is_alt {
+            if key.code == KeyCode::PageUp
+                || (key.code == KeyCode::Up && key.modifiers.contains(KeyModifiers::SHIFT))
+            {
+                self.pty_mut().scroll_up(15);
+                return;
+            }
+            if key.code == KeyCode::PageDown
+                || (key.code == KeyCode::Down && key.modifiers.contains(KeyModifiers::SHIFT))
+            {
+                self.pty_mut().scroll_down(15);
+                return;
+            }
         }
 
         // Any regular keystroke resets scroll to 0 (live terminal)
@@ -3907,8 +4054,23 @@ pub fn parse_command_execution_request(text: &str, num_proposals: usize) -> Opti
     None
 }
 
+fn xterm_modifier_code(modifiers: KeyModifiers) -> u8 {
+    let mut code = 1u8;
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        code += 1;
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        code += 2;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        code += 4;
+    }
+    code
+}
+
 /// Converts a crossterm `KeyEvent` to standard ANSI / VT100 byte sequences for the PTY
 fn key_event_to_pty_bytes(key: KeyEvent, app_cursor_mode: bool) -> Vec<u8> {
+    let mod_code = xterm_modifier_code(key.modifiers);
     match key.code {
         KeyCode::Char(c) => {
             if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -3937,71 +4099,151 @@ fn key_event_to_pty_bytes(key: KeyEvent, app_cursor_mode: bool) -> Vec<u8> {
                 c.encode_utf8(&mut char_buf).as_bytes().to_vec()
             }
         }
-        KeyCode::Enter => vec![b'\r'],
-        KeyCode::Backspace => vec![0x7F],
-        KeyCode::Tab => vec![b'\t'],
+        KeyCode::Enter => {
+            if key.modifiers.contains(KeyModifiers::ALT) {
+                vec![0x1B, b'\r']
+            } else {
+                vec![b'\r']
+            }
+        }
+        KeyCode::Backspace => {
+            if key.modifiers.contains(KeyModifiers::ALT) {
+                vec![0x1B, 0x7F]
+            } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+                vec![0x08]
+            } else {
+                vec![0x7F]
+            }
+        }
+        KeyCode::Tab => {
+            if key.modifiers.contains(KeyModifiers::ALT) {
+                vec![0x1B, b'\t']
+            } else {
+                vec![b'\t']
+            }
+        }
         KeyCode::BackTab => vec![0x1B, b'[', b'Z'],
         KeyCode::Esc => vec![0x1B],
-        // Arrow / navigation keys: while the child runs an application that
-        // enabled DECCKM (vim via smkx), it expects SS3 sequences; otherwise CSI.
+        // Arrow / navigation keys: with modifiers, standard xterm format \x1b[1;<mod><A/B/C/D>
+        // Without modifiers: if DECCKM enabled (vim smkx), SS3 (\x1bO<A/B/C/D>), else CSI (\x1b[<A/B/C/D>).
         KeyCode::Up => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}A", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'A']
             } else {
                 vec![0x1B, b'[', b'A']
             }
         }
         KeyCode::Down => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}B", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'B']
             } else {
                 vec![0x1B, b'[', b'B']
             }
         }
         KeyCode::Right => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}C", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'C']
             } else {
                 vec![0x1B, b'[', b'C']
             }
         }
         KeyCode::Left => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}D", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'D']
             } else {
                 vec![0x1B, b'[', b'D']
             }
         }
         KeyCode::Home => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}H", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'H']
             } else {
                 vec![0x1B, b'[', b'H']
             }
         }
         KeyCode::End => {
-            if app_cursor_mode {
+            if mod_code > 1 {
+                format!("\x1b[1;{}F", mod_code).into_bytes()
+            } else if app_cursor_mode {
                 vec![0x1B, b'O', b'F']
             } else {
                 vec![0x1B, b'[', b'F']
             }
         }
-        KeyCode::PageUp => vec![0x1B, b'[', b'5', b'~'],
-        KeyCode::PageDown => vec![0x1B, b'[', b'6', b'~'],
-        KeyCode::Delete => vec![0x1B, b'[', b'3', b'~'],
-        KeyCode::Insert => vec![0x1B, b'[', b'2', b'~'],
-        KeyCode::F(1) => vec![0x1B, b'O', b'P'],
-        KeyCode::F(2) => vec![0x1B, b'O', b'Q'],
-        KeyCode::F(3) => vec![0x1B, b'O', b'R'],
-        KeyCode::F(4) => vec![0x1B, b'O', b'S'],
-        KeyCode::F(5) => vec![0x1B, b'[', b'1', b'5', b'~'],
-        KeyCode::F(6) => vec![0x1B, b'[', b'1', b'7', b'~'],
-        KeyCode::F(7) => vec![0x1B, b'[', b'1', b'8', b'~'],
-        KeyCode::F(8) => vec![0x1B, b'[', b'1', b'9', b'~'],
-        KeyCode::F(9) => vec![0x1B, b'[', b'2', b'0', b'~'],
-        KeyCode::F(10) => vec![0x1B, b'[', b'2', b'1', b'~'],
-        KeyCode::F(11) => vec![0x1B, b'[', b'2', b'3', b'~'],
-        KeyCode::F(12) => vec![0x1B, b'[', b'2', b'4', b'~'],
+        KeyCode::PageUp => {
+            if mod_code > 1 {
+                format!("\x1b[5;{}~", mod_code).into_bytes()
+            } else {
+                vec![0x1B, b'[', b'5', b'~']
+            }
+        }
+        KeyCode::PageDown => {
+            if mod_code > 1 {
+                format!("\x1b[6;{}~", mod_code).into_bytes()
+            } else {
+                vec![0x1B, b'[', b'6', b'~']
+            }
+        }
+        KeyCode::Delete => {
+            if mod_code > 1 {
+                format!("\x1b[3;{}~", mod_code).into_bytes()
+            } else {
+                vec![0x1B, b'[', b'3', b'~']
+            }
+        }
+        KeyCode::Insert => {
+            if mod_code > 1 {
+                format!("\x1b[2;{}~", mod_code).into_bytes()
+            } else {
+                vec![0x1B, b'[', b'2', b'~']
+            }
+        }
+        KeyCode::F(n @ 1..=4) => {
+            if mod_code > 1 {
+                let suffix = match n {
+                    1 => 'P',
+                    2 => 'Q',
+                    3 => 'R',
+                    _ => 'S',
+                };
+                format!("\x1b[1;{}{}", mod_code, suffix).into_bytes()
+            } else {
+                let suffix = match n {
+                    1 => b'P',
+                    2 => b'Q',
+                    3 => b'R',
+                    _ => b'S',
+                };
+                vec![0x1B, b'O', suffix]
+            }
+        }
+        KeyCode::F(n @ 5..=12) => {
+            let num = match n {
+                5 => 15,
+                6 => 17,
+                7 => 18,
+                8 => 19,
+                9 => 20,
+                10 => 21,
+                11 => 23,
+                _ => 24,
+            };
+            if mod_code > 1 {
+                format!("\x1b[{};{}~", num, mod_code).into_bytes()
+            } else {
+                format!("\x1b[{}~", num).into_bytes()
+            }
+        }
         _ => vec![],
     }
 }
@@ -5320,6 +5562,80 @@ mod tests {
         // Plain letters are unaffected by the mode.
         let a = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
         assert_eq!(key_event_to_pty_bytes(a, true), b"i".to_vec());
+    }
+
+    #[test]
+    fn pty_arrow_encoding_with_modifiers() {
+        let key = |code, m| KeyEvent::new(code, m);
+        // Ctrl+Left (word jumping): \x1b[1;5D
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Left, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5D".to_vec()
+        );
+        // Ctrl+Right (word jumping): \x1b[1;5C
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Right, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5C".to_vec()
+        );
+        // Shift+Up: \x1b[1;2A
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Up, KeyModifiers::SHIFT), false),
+            b"\x1b[1;2A".to_vec()
+        );
+        // Shift+Down: \x1b[1;2B
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Down, KeyModifiers::SHIFT), false),
+            b"\x1b[1;2B".to_vec()
+        );
+        // Alt+Left: \x1b[1;3D
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Left, KeyModifiers::ALT), false),
+            b"\x1b[1;3D".to_vec()
+        );
+        // Ctrl+Home / Ctrl+End: \x1b[1;5H / \x1b[1;5F
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Home, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5H".to_vec()
+        );
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::End, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5F".to_vec()
+        );
+        // Ctrl+Delete: \x1b[3;5~
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::Delete, KeyModifiers::CONTROL), false),
+            b"\x1b[3;5~".to_vec()
+        );
+        // PageUp / PageDown with Ctrl: \x1b[5;5~ / \x1b[6;5~
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::PageUp, KeyModifiers::CONTROL), false),
+            b"\x1b[5;5~".to_vec()
+        );
+        assert_eq!(
+            key_event_to_pty_bytes(key(KeyCode::PageDown, KeyModifiers::CONTROL), false),
+            b"\x1b[6;5~".to_vec()
+        );
+    }
+
+    #[test]
+    fn pty_alternate_screen_and_mouse_reporting() {
+        let vt = crate::pty::VtScreen::new(24, 80);
+        assert!(!vt.is_alternate_screen());
+        assert_eq!(vt.mouse_protocol_mode(), vt100::MouseProtocolMode::None);
+        assert!(!vt.bracketed_paste());
+
+        // Switch to alternate screen (\x1b[?1049h), enable mouse SGR (\x1b[?1000h\x1b[?1006h), and bracketed paste (\x1b[?2004h)
+        vt.process(b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h");
+        assert!(vt.is_alternate_screen());
+        assert_eq!(vt.mouse_protocol_mode(), vt100::MouseProtocolMode::PressRelease);
+        assert_eq!(vt.mouse_protocol_encoding(), vt100::MouseProtocolEncoding::Sgr);
+        assert!(vt.bracketed_paste());
+
+        // Restore screen (\x1b[?1049l) and disable modes
+        vt.process(b"\x1b[?1049l\x1b[?1000l\x1b[?2004l");
+        assert!(!vt.is_alternate_screen());
+        assert_eq!(vt.mouse_protocol_mode(), vt100::MouseProtocolMode::None);
+        assert!(!vt.bracketed_paste());
     }
 
     #[test]

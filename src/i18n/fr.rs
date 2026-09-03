@@ -115,6 +115,10 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescScanHost => {
             "Scanner et enregistrer l'environnement du serveur SSH distant"
         }
+        I18nKey::TabRenameTitle => "Renommer l'onglet",
+        I18nKey::TabRenamePrompt => "Nouveau nom de l'onglet :",
+        I18nKey::TabRenameHelp => "[Entrée] Valider · [Échap] Annuler (vide = réinitialiser)",
+        I18nKey::HelpDescRenameTab => "Renommer l'onglet actif du terminal",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => {

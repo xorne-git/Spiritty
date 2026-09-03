@@ -15,6 +15,18 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Ajouté
+
+- **Robustesse des applications interactives ncurses & plein écran (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`)** :
+  - **SGR Mouse Reporting natif** : détection dynamique du protocole souris xterm/SGR (`\x1b[?1000h` / `\x1b[?1006h`) et retransmission instantanée des clics, relâchements, glissés et molettes vers le processus PTY (`htop`, `vim` avec `:set mouse=a`, `fzf`). Le maintien de la touche `Shift` permet de contourner la souris applicative pour sélectionner et copier du texte localement.
+  - **Défilement molette intelligent dans l'alternate screen** : lorsqu'une application plein écran s'exécute sans protocole souris (`less`, `man`, `vim`), la molette de la souris émet automatiquement des touches fléchées vers le PTY au lieu de défiler un historique de scrollback vide.
+  - **Encodage étendu xterm des touches de navigation avec modificateurs** : support complet de `Ctrl+Flèches` (saut de mot dans readline/zsh/nano), `Shift+Flèches`, `Alt+Flèches`, `Ctrl+Home`/`End`, `Ctrl+Delete`, et touches de fonction `F1..F12` avec modificateurs.
+  - **Non-interception de `PageUp` / `PageDown` et `Ctrl+V` en alternate screen** : les touches `PageUp` et `PageDown` parviennent désormais directement à l'application active. `Ctrl+V` (sans Shift) est transmis à `vim` pour déclencher la sélection de bloc visuel (`^V`), tandis que `Ctrl+Shift+V` reste dédié au collage.
+  - **Support natif du Bracketed Paste (`\x1b[?2004h`)** : encadrement automatique du texte collé par les marqueurs VT (`\x1b[200~` ... `\x1b[201~`) évitant les effets d'escalier d'indentation dans `vim`/`nano` et l'exécution prématurée de commandes multilignes.
+- **Renommage d'onglets et persistance multi-onglets dans les sessions (`Alt+R`)** :
+  - **Modale de renommage dédiée (`Alt+R`)** : permet d'attribuer un libellé métier clair à chaque onglet (ex: `bdd-prod`, `logs-nginx`) avec i18n complète (FR/EN) ou de revenir au titre dynamique par défaut avec une saisie vide. Raccourci documenté dans la modale d'aide (`F1` / `?`).
+  - **Persistance des titres personnalisés et contextes SSH** : les onglets et leurs libellés sont sauvegardés de manière transparente au sein du fichier de session (`Session.tabs`) et fidèlement réappliqués lors du rechargement d'une session.
+
 ### Modifié
 
 - **Architecture : extraction et approfondissement du sous-système `ToolCapture` ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
