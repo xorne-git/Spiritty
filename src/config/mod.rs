@@ -97,7 +97,7 @@ impl ProviderType {
         match self {
             ProviderType::Ollama => "qwen2.5-coder:latest",
             ProviderType::LmStudio => "local-model",
-            ProviderType::Gemini => "gemini-3.7-flash",
+            ProviderType::Gemini => "gemini-3.8-flash",
             ProviderType::Grok => "grok-4.6",
             ProviderType::DeepSeek => "deepseek-v4-pro",
             ProviderType::Zai => "glm-5.3",
@@ -129,6 +129,7 @@ impl ProviderType {
                 "mistral-small-instruct",
             ],
             ProviderType::Gemini => &[
+                "gemini-3.8-flash",
                 "gemini-3.7-flash",
                 "gemini-3.1-pro",
                 "gemini-3.6-flash",
@@ -199,6 +200,68 @@ impl ProviderType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    #[default]
+    Default,
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub fn is_default(&self) -> bool {
+        matches!(self, ReasoningEffort::Default)
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            ReasoningEffort::Default => ReasoningEffort::Off,
+            ReasoningEffort::Off => ReasoningEffort::Low,
+            ReasoningEffort::Low => ReasoningEffort::Medium,
+            ReasoningEffort::Medium => ReasoningEffort::High,
+            ReasoningEffort::High => ReasoningEffort::Default,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            ReasoningEffort::Default => ReasoningEffort::High,
+            ReasoningEffort::Off => ReasoningEffort::Default,
+            ReasoningEffort::Low => ReasoningEffort::Off,
+            ReasoningEffort::Medium => ReasoningEffort::Low,
+            ReasoningEffort::High => ReasoningEffort::Medium,
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ReasoningEffort::Default => "Default",
+            ReasoningEffort::Off => "Off",
+            ReasoningEffort::Low => "Low",
+            ReasoningEffort::Medium => "Medium",
+            ReasoningEffort::High => "High",
+        }
+    }
+
+    pub fn description(&self, lang: crate::i18n::Language) -> &'static str {
+        match (self, lang) {
+            (ReasoningEffort::Default, Language::Fr) => "Défaut du modèle",
+            (ReasoningEffort::Default, Language::En) => "Model default",
+            (ReasoningEffort::Off, Language::Fr) => "Désactivé (Rapide)",
+            (ReasoningEffort::Off, Language::En) => "Disabled (Fast)",
+            (ReasoningEffort::Low, Language::Fr) => "Faible (~1k tokens)",
+            (ReasoningEffort::Low, Language::En) => "Low (~1k tokens)",
+            (ReasoningEffort::Medium, Language::Fr) => "Moyen (~4k tokens)",
+            (ReasoningEffort::Medium, Language::En) => "Medium (~4k tokens)",
+            (ReasoningEffort::High, Language::Fr) => "Élevé (~16k tokens)",
+            (ReasoningEffort::High, Language::En) => "High (~16k tokens)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub model: String,
@@ -210,6 +273,8 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
+    #[serde(default, skip_serializing_if = "ReasoningEffort::is_default")]
+    pub reasoning_effort: ReasoningEffort,
 }
 
 use crate::i18n::Language;
@@ -295,7 +360,7 @@ impl<'de> Deserialize<'de> for AutoApproveLevel {
                 E: serde::de::Error,
             {
                 if v {
-                    Ok(AutoApproveLevel::Yolo)
+                    Ok(AutoApproveLevel::Safe)
                 } else {
                     Ok(AutoApproveLevel::Off)
                 }
@@ -307,9 +372,11 @@ impl<'de> Deserialize<'de> for AutoApproveLevel {
             {
                 match v.to_lowercase().as_str() {
                     "off" | "false" | "none" | "disabled" => Ok(AutoApproveLevel::Off),
-                    "safe" | "read_only" | "readonly" => Ok(AutoApproveLevel::Safe),
+                    "safe" | "read_only" | "readonly" | "all" | "true" | "auto" => {
+                        Ok(AutoApproveLevel::Safe)
+                    }
                     "sudo" | "standard" | "write" => Ok(AutoApproveLevel::Sudo),
-                    "yolo" | "all" | "true" | "auto" => Ok(AutoApproveLevel::Yolo),
+                    "yolo" => Ok(AutoApproveLevel::Yolo),
                     _ => Ok(AutoApproveLevel::Safe),
                 }
             }
@@ -377,6 +444,7 @@ impl Default for Config {
                     base_url: p.default_base_url().map(|u| u.to_string()),
                     api_key,
                     context_window: None,
+                    reasoning_effort: ReasoningEffort::Default,
                 },
             );
         }
@@ -493,6 +561,13 @@ impl Config {
                                             && m != "deepseek-reasoner"
                                             && m != "deepseek-v4-pr"
                                     });
+                                    // Ensure popular models are included so new additions (e.g. gemini-3.8-flash)
+                                    // appear in the list for existing configs without overwriting custom models.
+                                    for dm in default_models.iter().rev() {
+                                        if !p_cfg.models.contains(dm) {
+                                            p_cfg.models.insert(0, dm.clone());
+                                        }
+                                    }
                                 }
                             } else {
                                 let api_key = p.default_env_var().map(|env| format!("ENV:{}", env));
@@ -504,6 +579,7 @@ impl Config {
                                         base_url: p.default_base_url().map(|u| u.to_string()),
                                         api_key,
                                         context_window: None,
+                                        reasoning_effort: ReasoningEffort::Default,
                                     },
                                 );
                             }
@@ -625,6 +701,7 @@ IMPORTANT RULES:
                     .default_env_var()
                     .map(|env| format!("ENV:{}", env)),
                 context_window: None,
+                reasoning_effort: ReasoningEffort::Default,
             })
     }
 

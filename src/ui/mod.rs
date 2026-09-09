@@ -249,8 +249,8 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
     let (left_spans, cost_range) = build_left_metrics(app, lang, max_left_width);
     let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
 
-    // 2. Compute available space for right shortcuts
-    let available_right_width = width.saturating_sub(left_width + 1);
+    // 2. Compute available space for right shortcuts (guaranteeing at least 2 spaces gap)
+    let available_right_width = width.saturating_sub(left_width + 2);
 
     // 3. Build Right Shortcuts adapting to remaining space (prioritizing F1 Help and Ctrl+P Config)
     let right_spans = build_right_shortcuts(app, lang, available_right_width);
@@ -641,6 +641,27 @@ fn build_left_metrics(
             current_width += s.width();
             spans.push(s);
         }
+    }
+
+    // 2b. Thinking Level (directly to the right of model)
+    let reasoning = app.get_active_reasoning_effort();
+    let (th_label, th_color) = match reasoning {
+        crate::config::ReasoningEffort::Default => ("Auto", Color::DarkGray),
+        crate::config::ReasoningEffort::Off => ("Off", Color::DarkGray),
+        crate::config::ReasoningEffort::Low => ("Low", Color::Green),
+        crate::config::ReasoningEffort::Medium => ("Med", Color::Yellow),
+        crate::config::ReasoningEffort::High => ("High", Color::Magenta),
+    };
+    let th_span = Span::styled(
+        format!(" 🧠 {}", th_label),
+        Style::default()
+            .fg(th_color)
+            .add_modifier(Modifier::BOLD),
+    );
+    let th_w = th_span.width();
+    if current_width + th_w <= max_width {
+        current_width += th_w;
+        spans.push(th_span);
     }
 
     // 3. Tokens & Speed

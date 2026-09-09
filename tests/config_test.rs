@@ -129,7 +129,7 @@ fn test_auto_approve_deserialization() {
 
     // Test bool backwards compatibility
     let cfg_true: Config = toml::from_str("auto_approve = true").unwrap();
-    assert_eq!(cfg_true.auto_approve, AutoApproveLevel::Yolo);
+    assert_eq!(cfg_true.auto_approve, AutoApproveLevel::Safe);
 
     let cfg_false: Config = toml::from_str("auto_approve = false").unwrap();
     assert_eq!(cfg_false.auto_approve, AutoApproveLevel::Off);
@@ -164,3 +164,95 @@ theme = "tokyo_night"
     let clamped_high: Config = toml::from_str("split_ratio = 99").unwrap();
     assert_eq!(clamped_high.get_split_ratio(), 85);
 }
+
+#[test]
+fn test_gemini_models_and_config_merging() {
+    // 1. Verify ProviderType::Gemini defaults
+    assert_eq!(ProviderType::Gemini.default_model(), "gemini-3.8-flash");
+    assert!(ProviderType::Gemini
+        .popular_models()
+        .contains(&"gemini-3.8-flash"));
+
+    // 2. Simulate existing config that only had gemini-3.7-flash
+    let legacy_toml = r#"
+default_provider = "gemini"
+
+[providers.gemini]
+model = "gemini-3.7-flash"
+models = ["gemini-3.7-flash", "gemini-2.0-flash"]
+"#;
+    let mut cfg: Config = toml::from_str(legacy_toml).unwrap();
+
+    // Replicate the load-time popular models synchronization
+    for p in ProviderType::all() {
+        let key = p.key_str();
+        let default_models: Vec<String> =
+            p.popular_models().iter().map(|s| s.to_string()).collect();
+        if let Some(p_cfg) = cfg.providers.get_mut(key) {
+            for dm in default_models.iter().rev() {
+                if !p_cfg.models.contains(dm) {
+                    p_cfg.models.insert(0, dm.clone());
+                }
+            }
+        }
+    }
+
+    let gemini_cfg = cfg.providers.get("gemini").unwrap();
+    assert!(gemini_cfg.models.contains(&"gemini-3.8-flash".to_string()));
+    assert_eq!(gemini_cfg.models[0], "gemini-3.8-flash");
+    assert_eq!(gemini_cfg.model, "gemini-3.7-flash"); // User's chosen active model is not clobbered
+}
+
+#[test]
+fn test_reasoning_effort_configuration_and_serialization() {
+    use spiritty::config::ReasoningEffort;
+
+    // 1. Next & Prev cycle
+    let eff = ReasoningEffort::Default;
+    assert_eq!(eff.next(), ReasoningEffort::Off);
+    assert_eq!(eff.next().next(), ReasoningEffort::Low);
+    assert_eq!(eff.next().next().next(), ReasoningEffort::Medium);
+    assert_eq!(eff.next().next().next().next(), ReasoningEffort::High);
+    assert_eq!(
+        eff.next().next().next().next().next(),
+        ReasoningEffort::Default
+    );
+
+    assert_eq!(eff.prev(), ReasoningEffort::High);
+    assert_eq!(eff.prev().prev(), ReasoningEffort::Medium);
+    assert_eq!(eff.prev().prev().prev(), ReasoningEffort::Low);
+    assert_eq!(eff.prev().prev().prev().prev(), ReasoningEffort::Off);
+    assert_eq!(
+        eff.prev().prev().prev().prev().prev(),
+        ReasoningEffort::Default
+    );
+
+    // 2. Deserialization from TOML
+    let toml_with_effort = r#"
+[providers.gemini]
+model = "gemini-3.8-flash"
+models = ["gemini-3.8-flash"]
+reasoning_effort = "medium"
+"#;
+    let cfg: Config = toml::from_str(toml_with_effort).unwrap();
+    let gemini = cfg.providers.get("gemini").unwrap();
+    assert_eq!(gemini.reasoning_effort, ReasoningEffort::Medium);
+
+    // 3. Absent defaults to Default
+    let toml_absent = r#"
+[providers.gemini]
+model = "gemini-3.8-flash"
+models = ["gemini-3.8-flash"]
+"#;
+    let cfg_absent: Config = toml::from_str(toml_absent).unwrap();
+    let gemini_absent = cfg_absent.providers.get("gemini").unwrap();
+    assert_eq!(gemini_absent.reasoning_effort, ReasoningEffort::Default);
+
+    // 4. Serialization skips Default but includes non-default
+    let serialized_absent = toml::to_string(&cfg_absent).unwrap();
+    assert!(!serialized_absent.contains("reasoning_effort"));
+
+    let serialized_with_effort = toml::to_string(&cfg).unwrap();
+    assert!(serialized_with_effort.contains("reasoning_effort = \"medium\""));
+}
+

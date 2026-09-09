@@ -13,15 +13,23 @@ use crate::{
     event::AppEvent,
 };
 
+use crate::config::ReasoningEffort;
+
 pub struct AnthropicProvider {
     base_url: String,
     model: String,
     api_key: String,
+    reasoning_effort: ReasoningEffort,
     client: reqwest::Client,
 }
 
 impl AnthropicProvider {
-    pub fn new(base_url: Option<String>, model: String, api_key: String) -> Self {
+    pub fn new(
+        base_url: Option<String>,
+        model: String,
+        api_key: String,
+        reasoning_effort: ReasoningEffort,
+    ) -> Self {
         let base_url = base_url
             .unwrap_or_else(|| "https://api.anthropic.com".to_string())
             .trim_end_matches('/')
@@ -31,6 +39,7 @@ impl AnthropicProvider {
             base_url,
             model,
             api_key,
+            reasoning_effort,
             client: reqwest::Client::new(),
         }
     }
@@ -72,6 +81,13 @@ struct AnthropicMessage<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(tag = "type")]
+enum AnthropicThinking {
+    #[serde(rename = "enabled")]
+    Enabled { budget_tokens: u32 },
+}
+
+#[derive(Serialize)]
 struct AnthropicRequest<'a> {
     model: &'a str,
     max_tokens: u32,
@@ -79,6 +95,8 @@ struct AnthropicRequest<'a> {
     system: &'a str,
     messages: Vec<AnthropicMessage<'a>>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
 }
 
 #[derive(Deserialize)]
@@ -125,6 +143,8 @@ struct AnthropicDeltaUsage {
 enum ContentDelta {
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
     #[serde(other)]
     Other,
 }
@@ -192,12 +212,35 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
+        let (thinking, max_tokens) = match self.reasoning_effort {
+            ReasoningEffort::Default | ReasoningEffort::Off => (None, 8192),
+            ReasoningEffort::Low => (
+                Some(AnthropicThinking::Enabled {
+                    budget_tokens: 1024,
+                }),
+                8192,
+            ),
+            ReasoningEffort::Medium => (
+                Some(AnthropicThinking::Enabled {
+                    budget_tokens: 4096,
+                }),
+                8192,
+            ),
+            ReasoningEffort::High => (
+                Some(AnthropicThinking::Enabled {
+                    budget_tokens: 16384,
+                }),
+                20480,
+            ),
+        };
+
         let request_body = AnthropicRequest {
             model: &self.model,
-            max_tokens: 8192,
+            max_tokens,
             system: system_prompt,
             messages: api_messages,
             stream: true,
+            thinking,
         };
 
         let url = format!("{}/v1/messages", self.base_url);
@@ -240,6 +283,7 @@ impl LlmProvider for AnthropicProvider {
 
         let mut event_stream = response.bytes_stream().eventsource();
         let mut prompt_toks = 0usize;
+        let mut reasoning_bracket = crate::agent::providers::openai::ReasoningBracket::default();
 
         loop {
             let next_res = tokio::select! {
@@ -259,10 +303,17 @@ impl LlmProvider for AnthropicProvider {
                                     }
                                 }
                                 AnthropicEvent::ContentBlockDelta { delta } => {
-                                    if let ContentDelta::TextDelta { text } = delta {
-                                        if !text.is_empty() {
-                                            let _ = event_tx.send(AppEvent::AgentChunk(text));
+                                    let folded = match delta {
+                                        ContentDelta::TextDelta { text } => {
+                                            reasoning_bracket.on_delta(None, Some(&text))
                                         }
+                                        ContentDelta::ThinkingDelta { thinking } => {
+                                            reasoning_bracket.on_delta(Some(&thinking), None)
+                                        }
+                                        ContentDelta::Other => String::new(),
+                                    };
+                                    if !folded.is_empty() {
+                                        let _ = event_tx.send(AppEvent::AgentChunk(folded));
                                     }
                                 }
                                 AnthropicEvent::MessageDelta { usage } => {
@@ -276,6 +327,10 @@ impl LlmProvider for AnthropicProvider {
                                     }
                                 }
                                 AnthropicEvent::MessageStop => {
+                                    if let Some(close_tag) = reasoning_bracket.finish() {
+                                        let _ = event_tx
+                                            .send(AppEvent::AgentChunk(close_tag.to_string()));
+                                    }
                                     let _ = event_tx.send(AppEvent::AgentDone);
                                     return Ok(());
                                 }
@@ -308,6 +363,9 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
+        if let Some(close_tag) = reasoning_bracket.finish() {
+            let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+        }
         let _ = event_tx.send(AppEvent::AgentDone);
         Ok(())
     }

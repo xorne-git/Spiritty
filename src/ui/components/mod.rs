@@ -32,6 +32,7 @@ pub enum ModalOutcome {
     McpServersChanged,
     SaveConfigAndClose,
     UpdatePricing,
+    RefreshProviderModels,
     SetTabTitle {
         tab_index: usize,
         title: Option<String>,
@@ -81,6 +82,7 @@ impl ModalState {
                 ConfigModalAction::SaveAndClose => ModalOutcome::SaveConfigAndClose,
                 ConfigModalAction::Close => ModalOutcome::Close,
                 ConfigModalAction::UpdatePricing => ModalOutcome::UpdatePricing,
+                ConfigModalAction::RefreshModelsAndPricing => ModalOutcome::RefreshProviderModels,
                 ConfigModalAction::None => ModalOutcome::None,
             },
             ModalState::Sessions(session_state) => match session_state.handle_key(key) {

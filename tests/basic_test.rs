@@ -901,7 +901,16 @@ async fn test_responsive_footer_rendering_at_various_widths() {
             footer_text
         );
 
-        // 3. Wide terminals show full powerline badges for all features
+        // 3. Wide terminals show thinking badge and full powerline badges for all features
+        if width >= 80 {
+            assert!(
+                footer_text.contains('🧠'),
+                "Width {} should contain thinking badge 🧠! Rendered: '{}'",
+                width,
+                footer_text
+            );
+        }
+
         if width >= 140 {
             assert!(
                 footer_text.contains("Hosts") || footer_text.contains("B"),

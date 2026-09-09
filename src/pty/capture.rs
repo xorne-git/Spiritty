@@ -37,6 +37,7 @@ pub fn capture_debug(msg: &str) {
 pub enum InteractionKind {
     Password,
     Confirmation,
+    Pager,
 }
 
 /// Outcome of ingesting newly arrived PTY output bytes into a capture session.
@@ -251,11 +252,14 @@ impl ToolCaptureSession {
     pub fn tick(&mut self, shell_has_hooks: bool) -> TickOutcome {
         let elapsed_since_start = self.start_time.elapsed();
         let elapsed_since_last_output = self.last_output_time.elapsed();
-        let is_waiting_interaction = is_waiting_for_user_interaction(char_safe_tail(
+        let interaction_opt = is_waiting_for_user_interaction(char_safe_tail(
             &self.decoded_text,
             PASSWORD_WINDOW_BYTES,
-        ))
-        .is_some();
+        ));
+        let is_waiting_interaction = matches!(
+            interaction_opt,
+            Some(InteractionKind::Password) | Some(InteractionKind::Confirmation)
+        );
 
         let mut timeout_secs = DEFAULT_CAPTURE_TIMEOUT_SECS;
         if is_waiting_interaction {
@@ -454,6 +458,21 @@ pub fn is_waiting_for_user_interaction(raw_text: &str) -> Option<InteractionKind
         return Some(InteractionKind::Confirmation);
     }
 
+    // 3. Interactive pagers (less, more, git/systemd pager waiting for 'q')
+    if (last_line.starts_with("lines ") && last_line.contains("(end)"))
+        || last_line.ends_with("(end)")
+        || last_line.ends_with("(end)>")
+        || last_line.ends_with("(end)>%")
+        || last_line.starts_with("--more--")
+        || last_line.starts_with("--plus--")
+        || last_line.contains("press 'q' to quit")
+        || last_line.contains("press q to quit")
+        || last_line.contains("(q to quit)")
+        || last_line.ends_with("press return to continue")
+    {
+        return Some(InteractionKind::Pager);
+    }
+
     None
 }
 
@@ -626,6 +645,9 @@ pub fn clean_pty_output(raw: &str, command: &str) -> String {
             && !lower.contains("mot de passe de")
             && !lower.contains("mot de passe pour")
             && !(lower.starts_with("[sudo]") && lower.contains("password"))
+            && !(lower.starts_with("lines ") && lower.contains("(end)"))
+            && lower != "(end)"
+            && !lower.starts_with("--more--")
     });
 
     if let Some(first) = lines.first() {
@@ -726,6 +748,14 @@ mod tests {
         assert_eq!(
             is_waiting_for_user_interaction("Press [Enter] to continue..."),
             Some(InteractionKind::Confirmation)
+        );
+        assert_eq!(
+            is_waiting_for_user_interaction("lines 1-25/25 (END)>%"),
+            Some(InteractionKind::Pager)
+        );
+        assert_eq!(
+            is_waiting_for_user_interaction("--More--(73%)"),
+            Some(InteractionKind::Pager)
         );
         assert_eq!(is_waiting_for_user_interaction("normal output line\n"), None);
     }

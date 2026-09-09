@@ -51,6 +51,10 @@ pub enum AppEvent {
         provider_key: String,
         models: Vec<String>,
     },
+    ModelsLoadFailed {
+        provider_key: String,
+        error: String,
+    },
     RemoteHostProbed {
         target: String,
         output: String,

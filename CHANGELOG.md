@@ -15,8 +15,29 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+---
+
+## v0.7.1 — 2026-09-09
+
 ### Ajouté
 
+- **Niveau de réflexion / raisonnement configurable par provider (`ReasoningEffort`)** :
+  - **Sélecteur interactif dans la modale de configuration (`F2`)** : nouveau champ `5. Réflexion IA ❯ [←] Badge [→]` permettant d'ajuster le niveau de réflexion du modèle à la volée parmi 5 crans : `Default` (défaut du modèle), `Off` (désactivé pour vitesse maximale), `Low` (faible, budget ~1k tokens), `Medium` (moyen, budget ~4k tokens) et `High` (élevé, budget ~16k tokens), avec couleurs dynamiques et descriptions localisées (FR/EN).
+  - **Intégration API multi-providers** :
+    - *Google Gemini* : transmission de `generationConfig.thinkingConfig.thinkingBudget` (0 pour désactiver, 1024, 4096, 16384 ou omis par défaut).
+    - *OpenAI / Compatible* : transmission du paramètre standard `reasoning_effort` (`low`, `medium`, `high`) dans les requêtes de complétion.
+    - *Anthropic Claude* : activation de `thinking: { type: "enabled", budget_tokens: ... }` avec calcul automatique du plafond `max_tokens` (jusqu'à 20480 tokens) et repliement transparent des blocs `thinking_delta` dans les balises de réflexion `<think>...</think>`.
+  - **Persistance par provider** : enregistrement propre dans `~/.config/spiritty/config.toml` sous chaque provider (`reasoning_effort = "..."`), omis automatiquement lorsque réglé sur `default`.
+  - **Indicateur visuel dans la barre d'état** : affichage en temps réel du niveau de réflexion directement à droite du nom du modèle (` 🧠 Auto `, ` 🧠 Off `, ` 🧠 Low `, ` 🧠 Med `, ` 🧠 High `) avec code couleur dédié et adaptation responsive selon la largeur du terminal.
+
+- **Actualisation dynamique des modèles et tarifs LLM en direct (`R` / `Ctrl+R` / `F5` dans la modale Configuration `F2`)** :
+  - **Découverte dynamique multi-providers** : interrogation asynchrone non-bloquante des API officielles de chaque provider (Google Gemini via `/v1beta/models`, Anthropic via `/v1/models`, Ollama via `/api/tags`, providers OpenAI-compatibles via `/v1/models`) avec prise en compte instantanée des clés API et URLs personnalisées saisies dans la modale.
+  - **Mise à jour et persistance automatique** : enregistrement immédiat des nouveaux modèles découverts dans la configuration de l'utilisateur (`~/.config/spiritty/config.toml`), mise à jour du sélecteur interactif de modèles et déclenchement simultané de la mise à jour des grilles tarifaires de tokens.
+  - **Retour d'état visuel et i18n complète** : badge interactif `[ R ] Actualiser modèles` dans le pied de la modale avec messages de statut dynamiques (interrogation en cours, succès avec nombre de modèles découverts, ou cause d'échec explicite en cas de clé API manquante ou d'erreur réseau) en français et anglais.
+  - **Affichage responsive et élargi du pied de modale** : élargissement de la largeur de la modale (`clamp(88, 130)` colonnes) et agencement réactif (mono-ligne aéré sur écran large, ou bi-lignes équilibré sur écran compact) garantissant la visibilité intégrale de l'ensemble des boutons et raccourcis (`Tab / ↑↓ Naviguer`, `Ctrl+S Enregistrer`, `R Actualiser modèles`, `U Tarifs en ligne`, `Échap Fermer`) sans aucun débordement ni troncature.
+- **Support du modèle `gemini-3.8-flash` pour Google Gemini** :
+  - Ajout de `gemini-3.8-flash` comme modèle par défaut et en tête de liste des modèles recommandés pour Google Gemini.
+  - Intégration de la grille tarifaire (0.75 $ entrée / 3.75 $ sortie par million de tokens) dans le registre dynamique et le fallback embarqué (`assets/pricing.json`).
 - **Robustesse des applications interactives ncurses & plein écran (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`)** :
   - **SGR Mouse Reporting natif** : détection dynamique du protocole souris xterm/SGR (`\x1b[?1000h` / `\x1b[?1006h`) et retransmission instantanée des clics, relâchements, glissés et molettes vers le processus PTY (`htop`, `vim` avec `:set mouse=a`, `fzf`). Le maintien de la touche `Shift` permet de contourner la souris applicative pour sélectionner et copier du texte localement.
   - **Défilement molette intelligent dans l'alternate screen** : lorsqu'une application plein écran s'exécute sans protocole souris (`less`, `man`, `vim`), la molette de la souris émet automatiquement des touches fléchées vers le PTY au lieu de défiler un historique de scrollback vide.
@@ -29,6 +50,9 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ### Modifié
 
+- **Affichage ultra-compact des sessions dans la barre d'état et espacement garanti** :
+  - Remplacement de l'ancien message verbeux de restauration de session (qui contenait le titre complet, le nombre de messages, le statut SSH et le rappel d'approbation `⚡ Sudo` redondant) par une étiquette ultra-courte : `📂 Session #151237` (~17 caractères au total).
+  - Élimination des collisions de texte dans le pied de page : réservation d'un espacement minimal garanti d'au moins 2 espaces entre les métriques de gauche et les raccourcis de droite (`build_right_shortcuts`), évitant tout chevauchement ou accolement de texte (`SudoApprobation`).
 - **Architecture : unification et approfondissement des modales TUI ([`src/ui/components/`](file:///home/xorne/Projets/Spiritty/src/ui/components/))** :
   - Centralisation de la gestion des frappes (`handle_key`), du collage presse-papier (`handle_paste`) et du rendu visuel (`render`) de l'ensemble des 7 modales (`Help`, `Config`, `Sessions`, `Bookmarks`, `Export`, `Mcp`, `RenameTab`, `SshReconnect`) au sein de l'enum unifiée `ModalState` et de la machine à états de transition `ModalOutcome`.
   - Élimination de plus de 280 lignes de logique dispersée entre `src/app.rs` et `src/ui/mod.rs`, réduisant les blocs ad-hoc à de simples délégations composables et testables de façon isolée.
@@ -37,6 +61,27 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
   - Découplage des onglets via le trait `InspectableTab` permettant de tester la détection de processus, l'état multi-onglets et le profilage système sans dépendance sur la boucle TUI ni le PTY réel. Déduplication active des sondes SSH en vol pour éviter toute saturation réseau.
 - **Architecture : extraction et approfondissement du sous-système `ToolCapture` ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
   — allègement substantiel de `src/app.rs` (-690 lignes) par l'encapsulation complète de la capture d'outils, du décodage UTF-8 incrémental avec carry buffer, du balayage de sentinelles (`OSC 777`), du plafond d'overflow 1 Mio, de la détection des invites interactives (`InteractionKind`) et de l'annulation propre `SIGINT` au sein d'une machine à états pure `ToolCaptureSession` 100% testable en mode headless.
+
+- **Élimination des blocages sur les pagers interactifs (`systemctl`, `journalctl`, `git`, `less`)** :
+  - **Injection automatique de `--no-pager` (`ensure_non_interactive_command`)** : détection et injection systématique de l'option `--no-pager` lors de l'exécution de commandes système (`systemctl`, `journalctl`, `git log/diff/show/branch`) aussi bien en local qu'en session SSH ou sous `sudo`. Évite que des commandes de statut ou d'inspection ne lancent `less` en arrière-plan et ne bloquent le terminal sur une invite `lines ... (END)`.
+  - **Détection et auto-acquittement des pagers (`InteractionKind::Pager`)** : extension de la détection d'invites interactives dans `src/pty/capture.rs` (`lines ... (END)`, `--More--`, etc.) et envoi automatique immédiat du caractère `q` au PTY afin de libérer le terminal sans requérir d'intervention manuelle de l'utilisateur.
+  - **Filtrage des résidus de statut dans les sorties PTY** : suppression des lignes de statut de pager (`lines 1-25/25 (END)`) dans `clean_pty_output` pour ne pas polluer le contexte renvoyé à l'agent IA.
+  - **Règle explicite dans le prompt système** : instruction formelle à l'agent IA d'éviter les commandes interactives et de toujours adjoindre `--no-pager` ou de rediriger vers `cat`/`head`.
+- **Affichage de la réflexion en streaming pour Google Gemini (`includeThoughts: true`)** :
+  - Transmission du paramètre `includeThoughts: true` au sein de `thinkingConfig` dans les requêtes vers l'API Google Gemini (lorsque `ReasoningEffort` est configuré sur `Low`, `Medium`, `High` ou `Default`). Sans ce drapeau explicite, l'API Gemini omettait les fragments de réflexion (`thought: true`) du flux SSE, empêchant l'affichage de la ligne animée `💭 Réflexion · ...` dans la fenêtre de chat.
+  - Clôture propre du bloc de réflexion via `bracket.finish()` en fin de flux lorsqu'une réponse se termine par une phase de raisonnement.
+- **Auto-approbation des commandes de diagnostic multi-lignes et enchaînées (`Safe` / `Sudo`)** :
+  - **Découpage intelligent des chaînes de commandes (`split_chained_commands`)** : prise en charge complète des retours à la ligne (`\n`), des opérateurs logiques `&&`, `||`, des points-virgules `;` ainsi que des parenthèses de sous-shell `(...)` couramment générées par les modèles LLM lors de diagnostics complexes.
+  - **Enrichissement du catalogue d'inspection sûre (`safe_prefixes`)** : classification automatique comme `Safe` des binaires et options de diagnostic usuels (`nproc`, `free`, `php -v/-m/-i`, `apache2 -v`, `apachectl -M/-S/-v`, `httpd`, `mysql --version`, `mariadb --version`, `dpkg -l/-s/--list`, `awk`, `sed` en lecture seule sans `-i`). Les audits système ne sont plus faussement dégradés en commandes soumises à validation manuelle.
+- **Sécurisation par défaut de l'auto-approbation à `Safe`** :
+  - Remplacement du comportement hérité où `auto_approve = true`, `all` ou `auto` activait le mode `Yolo`. La valeur booléenne `true` ou la chaîne `auto` bascule désormais strictement en `Safe` (commandes en lecture seule auto-approuvées, modifications système soumises à confirmation). Seule la valeur explicite `yolo` active le mode YOLO.
+  - La reprise d'une session contenant un niveau YOLO n'écrase plus le fichier de configuration global `config.toml`, protégeant le réglage utilisateur par défaut entre les sessions.
+- **Persistance et mémorisation du dernier modèle sélectionné** :
+  - L'actualisation des modèles (`R`) synchronise immédiatement le modèle actuellement saisi ou sélectionné dans la configuration avant écriture sur disque, évitant toute régression vers un modèle antérieur.
+  - La navigation entre différents fournisseurs (`←`/`→`) au sein de la modale `F2` conserve en mémoire tampon les modèles et paramètres choisis pour chaque fournisseur, persistant l'ensemble des modifications lors de la sauvegarde.
+- **Prise en compte des modifications manuelles dans `config.toml`** : suppression de la réattribution inconditionnelle du modèle/fournisseur depuis la dernière session au démarrage. `config.toml` redevient la source de vérité au lancement de Spiritty, la restauration d'une session étant réservée à l'option explicite `-c` / `--continue`.
+- **Synchronisation automatique des modèles recommandés** : `Config::load` fusionne désormais automatiquement les nouveaux modèles populaires (comme `gemini-3.8-flash`) en tête de liste dans les fichiers de configuration existants, tout en conservant les modèles personnalisés de l'utilisateur.
+- **Ajout de modèle personnalisé dans la modale de configuration (`F2`)** : la confirmation d'ajout (`Enter`) ferme proprement le sous-menu de saisie pour afficher directement le modèle sélectionné, et la sauvegarde (`Ctrl+S` / `F2`) enregistre automatiquement le modèle dans le tableau `models` du fournisseur.
 
 ---
 

@@ -51,6 +51,18 @@
     "prompt": 15.00,
     "completion": 75.00
   },
+  "gemini-3.8-flash": {
+    "prompt": 0.75,
+    "completion": 3.75
+  },
+  "gemini-3.7-flash": {
+    "prompt": 0.75,
+    "completion": 3.75
+  },
+  "gemini-2.5-flash": {
+    "prompt": 0.30,
+    "completion": 2.50
+  },
   "gemini-2.0-flash": {
     "prompt": 0.10,
     "completion": 0.40

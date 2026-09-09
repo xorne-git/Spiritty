@@ -203,6 +203,12 @@ async fn run_loop(
                 } => {
                     app.on_models_loaded(provider_key, models);
                 }
+                AppEvent::ModelsLoadFailed {
+                    provider_key,
+                    error,
+                } => {
+                    app.on_models_load_failed(provider_key, error);
+                }
                 AppEvent::RemoteHostProbed { target, output } => {
                     app.on_remote_host_probed(target, output);
                 }

@@ -57,6 +57,8 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
             || lower.contains(&format!(";{}", bin))
             || lower.contains(&format!("&&{}", bin))
             || lower.contains(&format!("|{}", bin))
+            || lower.contains(&format!("\n{}", bin))
+            || lower.contains(&format!("({}", bin))
         {
             return CommandRisk::Risky;
         }
@@ -122,13 +124,9 @@ pub fn classify_command(cmd: &str) -> CommandRisk {
         return CommandRisk::Sudo;
     }
 
-    // 6. Chained safe commands (e.g. cmd1 && cmd2 || cmd3)
-    if lower.contains("&&") || lower.contains(';') {
-        let parts: Vec<&str> = if lower.contains("&&") {
-            lower.split("&&").collect()
-        } else {
-            lower.split(';').collect()
-        };
+    // 6. Chained safe commands (e.g. cmd1 && cmd2 || cmd3, newlines, subshells)
+    let parts = split_chained_commands(&lower);
+    if parts.len() > 1 {
         let all_safe = parts.iter().all(|part| is_single_command_safe(part.trim()));
         if all_safe && !parts.is_empty() {
             return CommandRisk::Safe;
@@ -253,7 +251,85 @@ fn pacman_has_risky_flag(cmd: &str) -> bool {
     false
 }
 
+/// Splits a chained shell command string across separators (`\n`, `&&`, `;`, `||`)
+/// and strips enclosing subshell parentheses.
+pub fn split_chained_commands(cmd: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    // Split by newlines first
+    for line in cmd.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Split by ;, &&, ||
+        let mut current = String::new();
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\'' && !in_double_quote {
+                in_single_quote = !in_single_quote;
+                current.push(c);
+                i += 1;
+            } else if c == '"' && !in_single_quote {
+                in_double_quote = !in_double_quote;
+                current.push(c);
+                i += 1;
+            } else if !in_single_quote && !in_double_quote {
+                if c == ';' {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        parts.push(trimmed);
+                    }
+                    current.clear();
+                    i += 1;
+                } else if (c == '&' || c == '|') && i + 1 < chars.len() && chars[i + 1] == c {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        parts.push(trimmed);
+                    }
+                    current.clear();
+                    i += 2;
+                } else {
+                    current.push(c);
+                    i += 1;
+                }
+            } else {
+                current.push(c);
+                i += 1;
+            }
+        }
+        let trimmed = current.trim().to_string();
+        if !trimmed.is_empty() {
+            parts.push(trimmed);
+        }
+    }
+
+    // Strip enclosing parentheses from each part
+    parts
+        .into_iter()
+        .map(|p| {
+            let mut s = p.trim().to_string();
+            while s.starts_with('(') && s.ends_with(')') && s.len() >= 2 {
+                s = s[1..s.len() - 1].trim().to_string();
+            }
+            s
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 fn is_single_command_safe(lower: &str) -> bool {
+    // Strip enclosing subshell parentheses if any
+    let mut clean_lower = lower.trim();
+    while clean_lower.starts_with('(') && clean_lower.ends_with(')') && clean_lower.len() >= 2 {
+        clean_lower = clean_lower[1..clean_lower.len() - 1].trim();
+    }
+    let lower = clean_lower;
+
     // `psql` is a database client, not the `ps` process lister.
     if lower.starts_with("psql") {
         return false;
@@ -281,6 +357,43 @@ fn is_single_command_safe(lower: &str) -> bool {
         "systemctl --user cat",
         "systemctl show",
         "systemctl --user show",
+        // Web servers & CLI tools (inspection & version)
+        "apache2 -v",
+        "/usr/sbin/apache2 -v",
+        "apache2 -v",
+        "apache2 -t",
+        "apachectl -m",
+        "apachectl -s",
+        "apachectl -v",
+        "apachectl configtest",
+        "/usr/sbin/apachectl -m",
+        "/usr/sbin/apachectl -s",
+        "/usr/sbin/apachectl -v",
+        "/usr/sbin/apachectl configtest",
+        "apache2ctl -m",
+        "apache2ctl -s",
+        "apache2ctl -v",
+        "apache2ctl configtest",
+        "/usr/sbin/apache2ctl -m",
+        "/usr/sbin/apache2ctl -s",
+        "/usr/sbin/apache2ctl -v",
+        "/usr/sbin/apache2ctl configtest",
+        "httpd -v",
+        "httpd -m",
+        "httpd -s",
+        "httpd -t",
+        "nginx -v",
+        "nginx -t",
+        "php -v",
+        "php -m",
+        "php -i",
+        "php5.",
+        "php7.",
+        "php8.",
+        "mysql --version",
+        "mysql -v",
+        "mariadb --version",
+        "mariadb -v",
         // Containers (Docker / Podman) read-only
         "docker ps",
         "docker inspect",
@@ -346,6 +459,7 @@ fn is_single_command_safe(lower: &str) -> bool {
         "rg ",
         "ag ",
         "awk ",
+        "awk",
         "cut ",
         "sort ",
         "uniq ",
@@ -378,6 +492,8 @@ fn is_single_command_safe(lower: &str) -> bool {
         "apt list",
         "dpkg -l",
         "dpkg -s",
+        "dpkg -s ",
+        "dpkg --list",
         "rpm -qa",
         "dnf list",
         "zypper se",
@@ -397,6 +513,7 @@ fn is_single_command_safe(lower: &str) -> bool {
         "printenv",
         "locale",
         "timedatectl",
+        "nproc",
         "df",
         "df -",
         "du",
@@ -457,6 +574,12 @@ fn is_single_command_safe(lower: &str) -> bool {
         .replace("1>/dev/null", "")
         .replace("2>&1", "")
         .replace("1>&2", "");
+
+    // sed with -i / --in-place is modifying, sed without -i is read-only
+    let sed_in_place = lower.starts_with("sed ") && (lower.contains(" -i") || lower.contains("--in-place"));
+    if lower.starts_with("sed ") && !sed_in_place && !stripped_redirects.contains('>') {
+        return true;
+    }
 
     // curl/wget downloading to a file (`-o`/`--output`/`-O`) is a write operation.
     let curl_wget_write = (lower.starts_with("curl ") || lower.starts_with("wget "))
@@ -768,4 +891,31 @@ mod tests {
         // Empty path is conservative.
         assert_eq!(classify_file_edit("   "), CommandRisk::Risky);
     }
+
+    #[test]
+    fn test_classify_multiline_and_chained_safe_commands() {
+        // Multi-line inspection command with subshells, pipes, grep and awk
+        let cmd1 = "echo \"=== APACHE ===\" && (apache2 -v 2>/dev/null || httpd -v 2>/dev/null || echo \"Apache non trouvé\") && systemctl is-active apache2 2>/dev/null\n\
+echo -e \"\\n=== PHP ===\" && (php -v 2>/dev/null || echo \"CLI PHP non trouvé\") && dpkg -l | grep -E 'php[0-9]|php-fpm' | awk '{print $2, $3}'\n\
+echo -e \"\\n=== MYSQL / MARIADB ===\" && (mysql --version 2>/dev/null || mariadb --version 2>/dev/null || echo \"Client MySQL non trouvé\") && systemctl is-active mysql mariadb 2>/dev/null\n\
+echo -e \"\\n=== PORTS EN ÉCOUTE (Web & DB) ===\" && ss -tlpn | grep -E ':80|:443|:3306' || netstat -tlpn | grep -E ':80|:443|:3306'";
+
+        assert_eq!(classify_command(cmd1), CommandRisk::Safe);
+        assert!(should_auto_approve_command(cmd1, AutoApproveLevel::Safe));
+        assert!(should_auto_approve_command(cmd1, AutoApproveLevel::Sudo));
+
+        // Resources and Apache MPM
+        let cmd2 = "echo \"=== RESSOURCES SERVEUR ===\" && free -m && nproc && df -h /\n\
+echo -e \"\\n=== MPM APACHE ===\" && /usr/sbin/apachectl -M 2>/dev/null | grep mpm\n\
+cat /etc/apache2/mods-enabled/mpm_*.conf 2>/dev/null | grep -v '^\\s*#' | grep -v '^\\s*$'";
+
+        assert_eq!(classify_command(cmd2), CommandRisk::Safe);
+        assert!(should_auto_approve_command(cmd2, AutoApproveLevel::Safe));
+        assert!(should_auto_approve_command(cmd2, AutoApproveLevel::Sudo));
+
+        // Read-only sed vs sed -i
+        assert_eq!(classify_command("sed 's/foo/bar/' /tmp/test"), CommandRisk::Safe);
+        assert_eq!(classify_command("sed -i 's/foo/bar/' /tmp/test"), CommandRisk::Standard);
+    }
 }
+

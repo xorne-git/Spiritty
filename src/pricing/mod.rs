@@ -105,6 +105,18 @@ impl PricingRegistry {
 
         // Google Gemini
         m.insert(
+            "gemini-3.8-flash".to_string(),
+            ModelPricing::new(0.75, 3.75),
+        );
+        m.insert(
+            "gemini-3.7-flash".to_string(),
+            ModelPricing::new(0.75, 3.75),
+        );
+        m.insert(
+            "gemini-2.5-flash".to_string(),
+            ModelPricing::new(0.30, 2.50),
+        );
+        m.insert(
             "gemini-2.0-flash".to_string(),
             ModelPricing::new(0.10, 0.40),
         );

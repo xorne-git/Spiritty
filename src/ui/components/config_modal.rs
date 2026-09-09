@@ -10,7 +10,7 @@ use ratatui::{
 use std::collections::HashMap;
 
 use crate::{
-    config::{Config, ProviderConfig, ProviderType},
+    config::{Config, ProviderConfig, ProviderType, ReasoningEffort},
     i18n::{I18nKey, Language},
     ui::theme::ThemeId,
 };
@@ -21,6 +21,7 @@ pub enum ConfigField {
     AutoApprove,
     Theme,
     Model,
+    Reasoning,
     BaseUrl,
     ApiKey,
     SaveButton,
@@ -32,7 +33,8 @@ impl ConfigField {
             ConfigField::Provider => ConfigField::AutoApprove,
             ConfigField::AutoApprove => ConfigField::Theme,
             ConfigField::Theme => ConfigField::Model,
-            ConfigField::Model => ConfigField::BaseUrl,
+            ConfigField::Model => ConfigField::Reasoning,
+            ConfigField::Reasoning => ConfigField::BaseUrl,
             ConfigField::BaseUrl => ConfigField::ApiKey,
             ConfigField::ApiKey => ConfigField::SaveButton,
             ConfigField::SaveButton => ConfigField::Provider,
@@ -45,7 +47,8 @@ impl ConfigField {
             ConfigField::AutoApprove => ConfigField::Provider,
             ConfigField::Theme => ConfigField::AutoApprove,
             ConfigField::Model => ConfigField::Theme,
-            ConfigField::BaseUrl => ConfigField::Model,
+            ConfigField::Reasoning => ConfigField::Model,
+            ConfigField::BaseUrl => ConfigField::Reasoning,
             ConfigField::ApiKey => ConfigField::BaseUrl,
             ConfigField::SaveButton => ConfigField::ApiKey,
         }
@@ -65,6 +68,7 @@ pub enum ConfigModalAction {
     Close,
     SaveAndClose,
     UpdatePricing,
+    RefreshModelsAndPricing,
 }
 
 pub struct ConfigModalState {
@@ -85,7 +89,9 @@ pub struct ConfigModalState {
     /// `api_key_input`: the modal never echoes an existing key back to the screen.
     /// An empty input at save-time means "preserve what was there".
     pub api_key_saved: Option<String>,
+    pub reasoning_effort: ReasoningEffort,
     pub pricing_status: Option<(std::time::Instant, String, Color)>,
+    pub provider_edits: HashMap<String, (String, String, String, Option<String>, ReasoningEffort)>,
 }
 
 fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
@@ -100,6 +106,10 @@ fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
         ),
         Span::styled("", Style::default().fg(color)),
     ]
+}
+
+fn spans_visual_len(spans: &[Span]) -> usize {
+    spans.iter().map(|s| s.content.chars().count()).sum()
 }
 
 fn insert_char_at(s: &mut String, idx: usize, c: char) {
@@ -219,6 +229,11 @@ impl ConfigModalState {
         let url_len = base_url_input.chars().count();
         let key_len = api_key_input.chars().count();
         let theme = ThemeId::parse_or_default(config.theme.as_deref().unwrap_or("spiritty_dark"));
+        let reasoning_effort = config
+            .providers
+            .get(prov_key)
+            .map(|p| p.reasoning_effort)
+            .unwrap_or_default();
 
         Self {
             selected_provider,
@@ -231,19 +246,41 @@ impl ConfigModalState {
             url_cursor: url_len,
             api_key_cursor: key_len,
             api_key_saved,
+            reasoning_effort,
             is_dropdown_open: false,
             dropdown_selected_idx,
             dropdown_action: DropdownAction::None,
             models_per_provider,
             pricing_status: None,
+            provider_edits: HashMap::new(),
         }
     }
 
     pub fn set_provider(&mut self, provider: ProviderType, config: &Config) {
+        // 1. Stash current provider inputs
+        let old_key = self.selected_provider.key_str().to_string();
+        self.provider_edits.insert(
+            old_key,
+            (
+                self.model_input.clone(),
+                self.base_url_input.clone(),
+                self.api_key_input.clone(),
+                self.api_key_saved.clone(),
+                self.reasoning_effort,
+            ),
+        );
+
+        // 2. Switch provider
         self.selected_provider = provider;
         let prov_key = provider.key_str();
 
-        if let Some(p_cfg) = config.providers.get(prov_key) {
+        if let Some((m, u, k_in, k_saved, r_effort)) = self.provider_edits.get(prov_key).cloned() {
+            self.model_input = m;
+            self.base_url_input = u;
+            self.api_key_input = k_in;
+            self.api_key_saved = k_saved;
+            self.reasoning_effort = r_effort;
+        } else if let Some(p_cfg) = config.providers.get(prov_key) {
             self.model_input = p_cfg.model.clone();
             self.base_url_input = p_cfg.base_url.clone().unwrap_or_default();
             self.api_key_saved = p_cfg.api_key.clone();
@@ -252,11 +289,13 @@ impl ConfigModalState {
                 Some(k) if !k.starts_with("ENV:") => String::new(),
                 other => other.clone().unwrap_or_default(),
             };
+            self.reasoning_effort = p_cfg.reasoning_effort;
         } else {
             self.model_input = provider.default_model().to_string();
             self.base_url_input = String::new();
             self.api_key_input = String::new();
             self.api_key_saved = None;
+            self.reasoning_effort = ReasoningEffort::Default;
         }
 
         self.url_cursor = self.base_url_input.chars().count();
@@ -308,40 +347,57 @@ impl ConfigModalState {
         }
     }
 
-    pub fn save_config(&self, config: &mut Config) -> ConfigModalAction {
-        let key = self.selected_provider.key_str().to_string();
-        let base_url = if self.base_url_input.trim().is_empty() {
-            None
-        } else {
-            Some(self.base_url_input.trim().to_string())
-        };
+    pub fn save_config(&mut self, config: &mut Config) -> ConfigModalAction {
+        // 1. Stash current provider inputs
+        let cur_key = self.selected_provider.key_str().to_string();
+        self.provider_edits.insert(
+            cur_key,
+            (
+                self.model_input.clone(),
+                self.base_url_input.clone(),
+                self.api_key_input.clone(),
+                self.api_key_saved.clone(),
+                self.reasoning_effort,
+            ),
+        );
 
-        // An empty field preserves the previously stored key (secrets are intentionally
-        // not echoed back into the modal); a non-empty value replaces it wholesale.
-        let api_key = if self.api_key_input.trim().is_empty() {
-            self.api_key_saved.clone()
-        } else {
-            Some(self.api_key_input.trim().to_string())
-        };
+        // 2. Persist all edited providers into config
+        for (key, (model, base_url_str, api_key_in, api_key_saved, r_effort)) in &self.provider_edits {
+            let base_url = if base_url_str.trim().is_empty() {
+                None
+            } else {
+                Some(base_url_str.trim().to_string())
+            };
+            let api_key = if api_key_in.trim().is_empty() {
+                api_key_saved.clone()
+            } else {
+                Some(api_key_in.trim().to_string())
+            };
 
-        let models = self
-            .models_per_provider
-            .get(&key)
-            .cloned()
-            .unwrap_or_default();
-        let existing_ctx = config.providers.get(&key).and_then(|p| p.context_window);
-        let updated_provider = ProviderConfig {
-            model: self.model_input.trim().to_string(),
-            models,
-            base_url,
-            api_key,
-            context_window: existing_ctx,
-        };
+            let mut models = self
+                .models_per_provider
+                .get(key)
+                .cloned()
+                .unwrap_or_default();
+            let model_trimmed = model.trim().to_string();
+            if !model_trimmed.is_empty() && !models.contains(&model_trimmed) {
+                models.push(model_trimmed.clone());
+            }
+            let existing_ctx = config.providers.get(key).and_then(|p| p.context_window);
+            let updated_provider = ProviderConfig {
+                model: model_trimmed,
+                models,
+                base_url,
+                api_key,
+                context_window: existing_ctx,
+                reasoning_effort: *r_effort,
+            };
+            config.providers.insert(key.clone(), updated_provider);
+        }
 
         config.default_provider = self.selected_provider;
         config.auto_approve = self.auto_approve;
         config.theme = Some(self.theme.key_str().to_string());
-        config.providers.insert(key, updated_provider);
 
         let _ = config.save();
         ConfigModalAction::SaveAndClose
@@ -382,11 +438,35 @@ impl ConfigModalState {
 
         let prov_key = self.selected_provider.key_str().to_string();
 
+        let is_refresh_models = (key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')))
+            || key.code == KeyCode::F(5)
+            || (matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+                && self.active_field != ConfigField::BaseUrl
+                && self.active_field != ConfigField::ApiKey);
+
+        if is_refresh_models
+            && !self.is_dropdown_open
+            && !matches!(
+                self.dropdown_action,
+                DropdownAction::Adding(..) | DropdownAction::Editing(..)
+            )
+        {
+            let lang = config.get_language();
+            self.pricing_status = Some((
+                std::time::Instant::now(),
+                lang.t(crate::i18n::I18nKey::ConfigRefreshInProgress).to_string(),
+                Color::Cyan,
+            ));
+            return ConfigModalAction::RefreshModelsAndPricing;
+        }
+
         let is_update_pricing = (key
             .modifiers
             .contains(crossterm::event::KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U')))
-            || key.code == KeyCode::F(5)
             || (matches!(key.code, KeyCode::Char('u') | KeyCode::Char('U'))
                 && self.active_field != ConfigField::BaseUrl
                 && self.active_field != ConfigField::ApiKey);
@@ -442,6 +522,7 @@ impl ConfigModalState {
                             self.model_input = new_model;
                         }
                         self.dropdown_action = DropdownAction::None;
+                        self.is_dropdown_open = false;
                         return ConfigModalAction::None;
                     }
                     KeyCode::Esc => {
@@ -499,6 +580,7 @@ impl ConfigModalState {
                             }
                         }
                         self.dropdown_action = DropdownAction::None;
+                        self.is_dropdown_open = false;
                         return ConfigModalAction::None;
                     }
                     KeyCode::Esc => {
@@ -658,6 +740,9 @@ impl ConfigModalState {
                         }
                     }
                 }
+                ConfigField::Reasoning => {
+                    self.reasoning_effort = self.reasoning_effort.prev();
+                }
                 ConfigField::BaseUrl => {
                     self.url_cursor = self.url_cursor.saturating_sub(1);
                 }
@@ -695,6 +780,9 @@ impl ConfigModalState {
                         }
                     }
                 }
+                ConfigField::Reasoning => {
+                    self.reasoning_effort = self.reasoning_effort.next();
+                }
                 ConfigField::BaseUrl => {
                     let max_len = self.base_url_input.chars().count();
                     if self.url_cursor < max_len {
@@ -724,6 +812,10 @@ impl ConfigModalState {
                     self.is_dropdown_open = true;
                     return ConfigModalAction::None;
                 }
+                if self.active_field == ConfigField::Reasoning {
+                    self.reasoning_effort = self.reasoning_effort.next();
+                    return ConfigModalAction::None;
+                }
                 if self.active_field == ConfigField::AutoApprove {
                     self.auto_approve = self.auto_approve.next();
                     return ConfigModalAction::None;
@@ -745,6 +837,7 @@ impl ConfigModalState {
                     self.theme = all[(current_idx + 1) % all.len()];
                 }
                 ConfigField::Model => self.is_dropdown_open = true,
+                ConfigField::Reasoning => self.reasoning_effort = self.reasoning_effort.next(),
                 ConfigField::BaseUrl => {
                     insert_char_at(&mut self.base_url_input, self.url_cursor, ' ');
                     self.url_cursor += 1;
@@ -794,8 +887,10 @@ impl ConfigModalState {
     }
 
     pub fn render_modal(&self, area: Rect, buf: &mut Buffer, lang: Language) {
-        let modal_width = (area.width * 85 / 100).clamp(76, 110);
-        let modal_height = 20.min(area.height.saturating_sub(2));
+        let modal_width = (area.width * 94 / 100)
+            .clamp(88, 130)
+            .min(area.width.saturating_sub(2));
+        let modal_height = 23.min(area.height.saturating_sub(2));
 
         let x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
         let y = area.top() + (area.height.saturating_sub(modal_height)) / 2;
@@ -822,9 +917,11 @@ impl ConfigModalState {
         let f_auto = self.active_field == ConfigField::AutoApprove;
         let f_theme = self.active_field == ConfigField::Theme;
         let f_model = self.active_field == ConfigField::Model;
+        let f_reasoning = self.active_field == ConfigField::Reasoning;
         let f_url = self.active_field == ConfigField::BaseUrl;
         let f_key = self.active_field == ConfigField::ApiKey;
         let f_save = self.active_field == ConfigField::SaveButton;
+        let show_blank = modal_area.height >= 21;
 
         let mut lines = Vec::new();
 
@@ -857,7 +954,9 @@ impl ConfigModalState {
         ));
         l1.extend(key_pill("→", prov_color));
         lines.push(Line::from(l1));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
         // 2. Auto-Approve Policy Field
         let auto_badge_color = match self.auto_approve {
@@ -891,7 +990,9 @@ impl ConfigModalState {
         ));
         l_auto.extend(key_pill("→", auto_arrow_color));
         lines.push(Line::from(l_auto));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
         // 3. Theme Selector Field
         let theme_arrow_color = if f_theme { Color::Yellow } else { Color::Cyan };
@@ -911,9 +1012,11 @@ impl ConfigModalState {
         ));
         l_theme.extend(key_pill("→", theme_arrow_color));
         lines.push(Line::from(l_theme));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
-        // 3. Model Selection (with Dropdown trigger)
+        // 4. Model Selection (with Dropdown trigger)
         let placeholder_model = lang.t(I18nKey::ConfigPlaceholderSelectModel);
         lines.push(Line::from(vec![
             Span::styled(
@@ -940,7 +1043,54 @@ impl ConfigModalState {
                     }),
             ),
         ]));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
+
+        // 5. Reasoning Effort Field
+        let reasoning_badge_color = match self.reasoning_effort {
+            ReasoningEffort::Default => Color::DarkGray,
+            ReasoningEffort::Off => Color::DarkGray,
+            ReasoningEffort::Low => Color::Green,
+            ReasoningEffort::Medium => Color::Yellow,
+            ReasoningEffort::High => Color::Magenta,
+        };
+        let reasoning_arrow_color = if f_reasoning {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
+        let mut l_reasoning = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldReasoning),
+            Style::default()
+                .fg(if f_reasoning {
+                    Color::Cyan
+                } else {
+                    Color::White
+                })
+                .add_modifier(Modifier::BOLD),
+        )];
+        l_reasoning.extend(key_pill("←", reasoning_arrow_color));
+        let reasoning_desc = format!(
+            " {} ({}) ",
+            self.reasoning_effort.display_name(),
+            self.reasoning_effort.description(lang)
+        );
+        l_reasoning.push(Span::styled(
+            format!("{:^32}", reasoning_desc),
+            Style::default()
+                .fg(if f_reasoning {
+                    Color::Yellow
+                } else {
+                    reasoning_badge_color
+                })
+                .add_modifier(Modifier::BOLD),
+        ));
+        l_reasoning.extend(key_pill("→", reasoning_arrow_color));
+        lines.push(Line::from(l_reasoning));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
         // 4. Server URL (Editable with cursor & arrow navigation)
         let mut l3 = vec![Span::styled(
@@ -956,7 +1106,9 @@ impl ConfigModalState {
             lang.t(I18nKey::ConfigPlaceholderDefaultUrl),
         ));
         lines.push(Line::from(l3));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
         // 5. Clé d'API (masked while typing — same char count keeps the cursor in sync)
         let mut l4 = vec![Span::styled(
@@ -985,7 +1137,9 @@ impl ConfigModalState {
             ));
         }
         lines.push(Line::from(l4));
-        lines.push(Line::from(""));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
 
         // 5. Save Button with square corners, Cyan background, and Yellow rollover
         let save_style = if f_save {
@@ -1018,7 +1172,11 @@ impl ConfigModalState {
         p_top.render(inner_area, buf);
 
         // Full-Width Horizontal Separator Line (├─────────────────────────┤)
-        let sep_y = modal_area.bottom().saturating_sub(5);
+        let sep_y = if modal_area.height >= 23 {
+            modal_area.bottom().saturating_sub(5)
+        } else {
+            modal_area.bottom().saturating_sub(4)
+        };
         let border_style = Style::default().fg(Color::Cyan);
         if sep_y > modal_area.top() && sep_y < modal_area.bottom().saturating_sub(1) {
             buf.set_string(
@@ -1038,43 +1196,128 @@ impl ConfigModalState {
             );
         }
 
-        // Footer Guide below separator line (Vertically & Horizontally Centered with 1 row padding top and bottom)
-        let mut footer = Vec::new();
-        footer.extend(key_pill("Tab", Color::Cyan));
-        footer.push(Span::raw(" "));
-        footer.extend(key_pill("↑", Color::Cyan));
-        footer.push(Span::raw(" "));
-        footer.extend(key_pill("↓", Color::Cyan));
-        footer.push(Span::raw(format!(
-            " {}    ",
+        // Footer Guide below separator line
+        let mut nav_spans = Vec::new();
+        nav_spans.extend(key_pill("Tab", Color::Cyan));
+        nav_spans.push(Span::raw(" "));
+        nav_spans.extend(key_pill("↑", Color::Cyan));
+        nav_spans.push(Span::raw(" "));
+        nav_spans.extend(key_pill("↓", Color::Cyan));
+        nav_spans.push(Span::raw(format!(
+            " {}",
             lang.t(I18nKey::ConfigNavNavigate)
         )));
 
-        footer.extend(key_pill("Ctrl", Color::Yellow));
-        footer.push(Span::styled("+", Style::default().fg(Color::Yellow)));
-        footer.extend(key_pill("S", Color::Yellow));
-        footer.push(Span::raw(format!(
-            " {}    ",
+        let mut save_spans = Vec::new();
+        save_spans.extend(key_pill("Ctrl", Color::Yellow));
+        save_spans.push(Span::styled("+", Style::default().fg(Color::Yellow)));
+        save_spans.extend(key_pill("S", Color::Yellow));
+        save_spans.push(Span::raw(format!(
+            " {}",
             lang.t(I18nKey::ConfigButtonSave)
         )));
 
-        footer.extend(key_pill("U", Color::Rgb(140, 100, 240)));
-        footer.push(Span::raw(format!(
-            " {}    ",
+        let mut refresh_spans = Vec::new();
+        refresh_spans.extend(key_pill("R", Color::Rgb(80, 200, 120)));
+        refresh_spans.push(Span::raw(format!(
+            " {}",
+            lang.t(I18nKey::ConfigActionRefreshModels)
+        )));
+
+        let mut pricing_spans = Vec::new();
+        pricing_spans.extend(key_pill("U", Color::Rgb(140, 100, 240)));
+        pricing_spans.push(Span::raw(format!(
+            " {}",
             lang.t(I18nKey::ConfigActionUpdatePricing)
         )));
 
-        footer.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
-        footer.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigNavClose))));
+        let mut close_spans = Vec::new();
+        close_spans.extend(key_pill(lang.t(I18nKey::HelpKeyClose), Color::Red));
+        close_spans.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigNavClose))));
 
-        let footer_area = Rect::new(
-            modal_area.left() + 2,
-            sep_y + 2,
-            modal_area.width.saturating_sub(4),
-            1,
-        );
-        let p_bottom = Paragraph::new(Line::from(footer)).alignment(Alignment::Center);
-        p_bottom.render(footer_area, buf);
+        let footer_width = modal_area.width.saturating_sub(4) as usize;
+        let total_items_len = spans_visual_len(&nav_spans)
+            + spans_visual_len(&save_spans)
+            + spans_visual_len(&refresh_spans)
+            + spans_visual_len(&pricing_spans)
+            + spans_visual_len(&close_spans);
+
+        let gap_len = if footer_width >= total_items_len + 12 {
+            3
+        } else {
+            2
+        };
+        let is_multiline = footer_width < total_items_len + gap_len * 4;
+
+        if is_multiline {
+            let line1_len = spans_visual_len(&nav_spans)
+                + spans_visual_len(&save_spans)
+                + spans_visual_len(&close_spans);
+            let gap1 = if footer_width >= line1_len + 8 {
+                "    "
+            } else if footer_width >= line1_len + 4 {
+                "  "
+            } else {
+                " "
+            };
+
+            let mut line1 = Vec::new();
+            line1.extend(nav_spans);
+            line1.push(Span::raw(gap1));
+            line1.extend(save_spans);
+            line1.push(Span::raw(gap1));
+            line1.extend(close_spans);
+
+            let line2_len =
+                spans_visual_len(&refresh_spans) + spans_visual_len(&pricing_spans);
+            let gap2 = if footer_width >= line2_len + 8 {
+                "    "
+            } else if footer_width >= line2_len + 4 {
+                "  "
+            } else {
+                " "
+            };
+
+            let mut line2 = Vec::new();
+            line2.extend(refresh_spans);
+            line2.push(Span::raw(gap2));
+            line2.extend(pricing_spans);
+
+            let footer_area = Rect::new(
+                modal_area.left() + 2,
+                sep_y + 1,
+                modal_area.width.saturating_sub(4),
+                2,
+            );
+            let p_bottom = Paragraph::new(vec![Line::from(line1), Line::from(line2)])
+                .alignment(Alignment::Center);
+            p_bottom.render(footer_area, buf);
+        } else {
+            let gap_str = if gap_len == 3 { "   " } else { "  " };
+            let mut line = Vec::new();
+            line.extend(nav_spans);
+            line.push(Span::raw(gap_str));
+            line.extend(save_spans);
+            line.push(Span::raw(gap_str));
+            line.extend(refresh_spans);
+            line.push(Span::raw(gap_str));
+            line.extend(pricing_spans);
+            line.push(Span::raw(gap_str));
+            line.extend(close_spans);
+
+            let footer_area = Rect::new(
+                modal_area.left() + 2,
+                if modal_area.height >= 23 {
+                    sep_y + 2
+                } else {
+                    sep_y + 1
+                },
+                modal_area.width.saturating_sub(4),
+                1,
+            );
+            let p_bottom = Paragraph::new(Line::from(line)).alignment(Alignment::Center);
+            p_bottom.render(footer_area, buf);
+        }
 
         // 3. Render Dropdown Overlay if open
         if self.is_dropdown_open {

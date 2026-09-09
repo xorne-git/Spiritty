@@ -77,6 +77,11 @@ impl Session {
         }
     }
 
+    /// Returns a compact, user-friendly representation of the session ID (e.g. `#20260909_150054`).
+    pub fn short_id(&self) -> String {
+        format_short_session_id(&self.id)
+    }
+
     /// Best-effort detection of a SSH context from the conversation history — used
     /// when resuming a session saved by an older build without `last_ssh_target`.
     /// Scans the most recent messages for an explicit `ssh …` command or a remote
@@ -427,6 +432,20 @@ fn extract_ssh_target(content: &str) -> Option<String> {
     None
 }
 
+/// Formats a session ID into a compact display tag (e.g. `#150054` or `#custom`).
+pub fn format_short_session_id(id: &str) -> String {
+    if let Some(rest) = id.strip_prefix("sess_") {
+        let parts: Vec<&str> = rest.split('_').collect();
+        if parts.len() >= 2 {
+            format!("#{}", parts[1])
+        } else {
+            format!("#{}", rest)
+        }
+    } else {
+        format!("#{}", id)
+    }
+}
+
 #[cfg(test)]
 mod compaction_tests {
     use super::{compact_chat_messages, Session};
@@ -605,5 +624,16 @@ mod ssh_hint_tests {
         s.messages.push(msg("[RÉSULTAT]:\nxorne@new-host:~$ "));
         s.infer_last_ssh_target();
         assert_eq!(s.last_ssh_target.as_deref(), Some("xorne@new-host"));
+    }
+
+    #[test]
+    fn test_format_short_session_id() {
+        use super::format_short_session_id;
+        assert_eq!(
+            format_short_session_id("sess_20260909_150054_073084_001"),
+            "#150054"
+        );
+        assert_eq!(format_short_session_id("sess_custom"), "#custom");
+        assert_eq!(format_short_session_id("1234"), "#1234");
     }
 }

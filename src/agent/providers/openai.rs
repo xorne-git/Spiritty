@@ -14,11 +14,14 @@ use crate::{
     event::AppEvent,
 };
 
+use crate::config::ReasoningEffort;
+
 pub struct OpenAiCompatibleProvider {
     name: String,
     base_url: String,
     model: String,
     api_key: Option<String>,
+    reasoning_effort: ReasoningEffort,
     client: reqwest::Client,
 }
 
@@ -28,6 +31,7 @@ impl OpenAiCompatibleProvider {
         base_url: Option<String>,
         model: String,
         api_key: Option<String>,
+        reasoning_effort: ReasoningEffort,
     ) -> Self {
         let base_url = base_url
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
@@ -39,6 +43,7 @@ impl OpenAiCompatibleProvider {
             base_url,
             model,
             api_key,
+            reasoning_effort,
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(15))
                 .build()
@@ -80,6 +85,8 @@ struct ChatCompletionRequest<'a> {
     max_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -252,6 +259,13 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
         }
 
+        let reasoning_effort = match self.reasoning_effort {
+            ReasoningEffort::Low => Some("low"),
+            ReasoningEffort::Medium => Some("medium"),
+            ReasoningEffort::High => Some("high"),
+            _ => None,
+        };
+
         let request_body = ChatCompletionRequest {
             model: &self.model,
             messages: api_messages,
@@ -261,6 +275,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }),
             max_tokens: None,
             temperature: Some(0.2),
+            reasoning_effort,
         };
 
         let url = format!("{}/chat/completions", self.base_url);

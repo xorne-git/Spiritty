@@ -645,22 +645,7 @@ impl App {
         let active_tab_index = 0;
         let next_tab_id = 1;
 
-        let mut config = Config::load();
-
-        // Inherit the last used provider & model from the most recent saved session
-        if let Ok(sessions) = SessionStorage::list_sessions() {
-            if let Some(last_sess) = sessions.first() {
-                if let Some(p_type) = crate::config::ProviderType::from_key(&last_sess.provider) {
-                    config.default_provider = p_type;
-                    if !last_sess.model.is_empty() {
-                        let key = p_type.key_str();
-                        if let Some(p_cfg) = config.providers.get_mut(key) {
-                            p_cfg.model = last_sess.model.clone();
-                        }
-                    }
-                }
-            }
-        }
+        let config = Config::load();
 
         let agent = AgentEngine::new_with_event_tx(config.clone(), Some(event_tx.clone()));
         let detected_context_window = Arc::new(AtomicUsize::new(0));
@@ -820,33 +805,71 @@ impl App {
     }
 
     pub fn probe_provider_models(&self, provider: ProviderType) {
+        self.probe_provider_models_with_overrides(provider, None, None);
+    }
+
+    pub fn probe_provider_models_with_overrides(
+        &self,
+        provider: ProviderType,
+        custom_base_url: Option<String>,
+        custom_api_key: Option<String>,
+    ) {
         let key = provider.key_str().to_string();
         let p_cfg = self.config.providers.get(&key).cloned();
-        let base_url = p_cfg.as_ref().and_then(|c| c.base_url.clone());
-        let api_key = Config::resolve_api_key_for_provider(
-            provider,
-            p_cfg.as_ref().and_then(|c| c.api_key.as_deref()),
-        );
+        let base_url = custom_base_url.or_else(|| p_cfg.as_ref().and_then(|c| c.base_url.clone()));
+        let api_key = if let Some(k) = custom_api_key.filter(|s| !s.trim().is_empty()) {
+            Config::resolve_api_key(Some(&k))
+        } else {
+            Config::resolve_api_key_for_provider(
+                provider,
+                p_cfg.as_ref().and_then(|c| c.api_key.as_deref()),
+            )
+        };
         let event_tx = self.event_tx.clone();
 
         tokio::spawn(async move {
-            let fetched = crate::agent::providers::fetch_available_models(
+            let res = crate::agent::providers::fetch_available_models(
                 provider,
                 base_url.as_deref(),
                 api_key.as_deref(),
             )
             .await;
 
-            if !fetched.is_empty() {
-                let _ = event_tx.send(AppEvent::ModelsLoaded {
-                    provider_key: key,
-                    models: fetched,
-                });
+            match res {
+                Ok(fetched) if !fetched.is_empty() => {
+                    let _ = event_tx.send(AppEvent::ModelsLoaded {
+                        provider_key: key,
+                        models: fetched,
+                    });
+                }
+                Ok(_) => {
+                    let _ = event_tx.send(AppEvent::ModelsLoadFailed {
+                        provider_key: key,
+                        error: "aucun modèle trouvé".to_string(),
+                    });
+                }
+                Err(e) => {
+                    let _ = event_tx.send(AppEvent::ModelsLoadFailed {
+                        provider_key: key,
+                        error: e,
+                    });
+                }
             }
         });
     }
 
     pub fn on_models_loaded(&mut self, provider_key: String, models: Vec<String>) {
+        if let ModalState::Config(ref config_state) = self.modal {
+            if config_state.selected_provider.key_str() == provider_key {
+                self.config.default_provider = config_state.selected_provider;
+                if let Some(p_cfg) = self.config.providers.get_mut(&provider_key) {
+                    let m_trim = config_state.model_input.trim();
+                    if !m_trim.is_empty() {
+                        p_cfg.model = m_trim.to_string();
+                    }
+                }
+            }
+        }
         if let Some(p_cfg) = self.config.providers.get_mut(&provider_key) {
             for m in &models {
                 if !p_cfg.models.contains(m) {
@@ -854,7 +877,9 @@ impl App {
                 }
             }
         }
+        let _ = self.config.save();
 
+        let lang = self.config.get_language();
         if let ModalState::Config(ref mut config_state) = self.modal {
             let entry = config_state
                 .models_per_provider
@@ -874,6 +899,29 @@ impl App {
                         config_state.dropdown_selected_idx = pos;
                     }
                 }
+                config_state.pricing_status = Some((
+                    std::time::Instant::now(),
+                    format!("{} ({} {})", lang.t(crate::i18n::I18nKey::ConfigRefreshSuccess), models.len(), if lang == crate::i18n::Language::Fr { "modèles" } else { "models" }),
+                    ratatui::style::Color::Green,
+                ));
+            }
+        }
+    }
+
+    pub fn on_models_load_failed(&mut self, provider_key: String, error: String) {
+        let lang = self.config.get_language();
+        if let ModalState::Config(ref mut config_state) = self.modal {
+            if config_state.selected_provider.key_str() == provider_key {
+                let msg = if error == "missing_key" {
+                    lang.t(crate::i18n::I18nKey::ConfigRefreshMissingKey).to_string()
+                } else {
+                    format!("{}: {}", lang.t(crate::i18n::I18nKey::ConfigRefreshFailed), error)
+                };
+                config_state.pricing_status = Some((
+                    std::time::Instant::now(),
+                    msg,
+                    ratatui::style::Color::Yellow,
+                ));
             }
         }
     }
@@ -1034,6 +1082,10 @@ impl App {
                 self.agent
                     .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                 self.trigger_context_probe();
+                self.current_session.provider =
+                    self.config.default_provider.display_name().to_string();
+                self.current_session.model =
+                    self.config.get_active_provider_config().model.clone();
                 self.save_current_session();
                 self.modal = ModalState::None;
             }
@@ -1042,6 +1094,24 @@ impl App {
                     self.theme = config_state.theme;
                 }
                 self.trigger_pricing_update();
+            }
+            ModalOutcome::RefreshProviderModels => {
+                if let ModalState::Config(ref config_state) = self.modal {
+                    self.theme = config_state.theme;
+                    let p = config_state.selected_provider;
+                    let base_url = if config_state.base_url_input.trim().is_empty() {
+                        None
+                    } else {
+                        Some(config_state.base_url_input.trim().to_string())
+                    };
+                    let api_key = if config_state.api_key_input.trim().is_empty() {
+                        config_state.api_key_saved.clone()
+                    } else {
+                        Some(config_state.api_key_input.trim().to_string())
+                    };
+                    self.probe_provider_models_with_overrides(p, base_url, api_key);
+                }
+                self.trigger_pricing_update_announced(false);
             }
             ModalOutcome::SetTabTitle { tab_index, title } => {
                 if tab_index < self.tabs.len() {
@@ -1112,8 +1182,6 @@ impl App {
 
         match loaded_res {
             Ok(mut loaded) => {
-                let title = loaded.title.clone();
-                let count = loaded.messages.len();
                 // Resumed-SSH hint: prefer the persisted target; fall back to a
                 // best-effort scan of the history for sessions saved by older builds.
                 loaded.infer_last_ssh_target();
@@ -1164,7 +1232,6 @@ impl App {
                 let auto_level = loaded.auto_approve;
                 if let Some(lvl) = auto_level {
                     self.config.auto_approve = lvl;
-                    let _ = self.config.save();
                     self.agent
                         .reload_config(self.config.clone(), Some(self.event_tx.clone()));
                 }
@@ -1181,19 +1248,8 @@ impl App {
                 self.chat_input.clear();
                 self.cursor_pos = 0;
                 self.reset_chat_scroll();
-                let ssh_note = match resumed_ssh.as_deref() {
-                    Some(t) if !t.is_empty() => format!(" · 🔗 SSH ({})", t),
-                    Some(_) => " · 🔗 SSH".to_string(),
-                    None => String::new(),
-                };
-                let auto_note = match auto_level {
-                    Some(lvl) => format!(" · ⚡ {}", lvl.display_name()),
-                    None => String::new(),
-                };
-                self.set_toast(format!(
-                    "📂 Session '{}' restaurée ({} messages){}{}",
-                    title, count, ssh_note, auto_note
-                ));
+                let short_id = self.current_session.short_id();
+                self.set_toast(format!("📂 Session {}", short_id));
                 self.maybe_offer_ssh_reconnect(resumed_ssh);
             }
             Err(e) => {
@@ -1225,6 +1281,7 @@ impl App {
         if let Some(prov_str) = provider {
             if let Some(p_type) = crate::config::ProviderType::from_key(&prov_str) {
                 self.config.default_provider = p_type;
+                self.current_session.provider = p_type.display_name().to_string();
                 self.agent
                     .reload_config(self.config.clone(), Some(self.event_tx.clone()));
             }
@@ -1232,21 +1289,22 @@ impl App {
         if let Some(model_str) = model {
             let p_key = self.config.default_provider.key_str().to_string();
             if let Some(p_conf) = self.config.providers.get_mut(&p_key) {
-                p_conf.model = model_str;
+                p_conf.model = model_str.clone();
                 self.agent
                     .reload_config(self.config.clone(), Some(self.event_tx.clone()));
             }
+            self.current_session.model = model_str;
         }
         if let Some(lvl_str) = auto_approve {
             match lvl_str.to_lowercase().as_str() {
                 "off" | "none" => self.config.auto_approve = crate::config::AutoApproveLevel::Off,
-                "safe" | "read_only" | "readonly" => {
+                "safe" | "read_only" | "readonly" | "all" | "auto" | "true" => {
                     self.config.auto_approve = crate::config::AutoApproveLevel::Safe
                 }
                 "sudo" | "standard" => {
                     self.config.auto_approve = crate::config::AutoApproveLevel::Sudo
                 }
-                "yolo" | "all" | "auto" => {
+                "yolo" => {
                     self.config.auto_approve = crate::config::AutoApproveLevel::Yolo
                 }
                 _ => {}
@@ -1480,6 +1538,10 @@ impl App {
 
     pub fn get_active_provider_name(&self) -> &'static str {
         self.config.default_provider.display_name()
+    }
+
+    pub fn get_active_reasoning_effort(&self) -> crate::config::ReasoningEffort {
+        self.config.get_active_provider_config().reasoning_effort
     }
 
     pub fn get_context_window_limit(&self) -> usize {
@@ -3141,7 +3203,10 @@ impl App {
             match capture.ingest(bytes) {
                 IngestOutcome::Continuing => {}
                 IngestOutcome::InteractionRequired(kind) => {
-                    if self.focus != Focus::Terminal {
+                    if kind == InteractionKind::Pager {
+                        // Automatically dismiss interactive pager (less/more) so tool capture can conclude cleanly
+                        let _ = self.pty_mut().write_all(b"q");
+                    } else if self.focus != Focus::Terminal {
                         self.focus = Focus::Terminal;
                         let lang = self.config.get_language();
                         let toast_msg = match (kind, lang) {
@@ -3157,6 +3222,7 @@ impl App {
                             (InteractionKind::Confirmation, _) => {
                                 "⚡ Interaction required in terminal ([y/n], confirmation...)".to_string()
                             }
+                            (InteractionKind::Pager, _) => unreachable!(),
                         };
                         self.set_toast(toast_msg);
                     }
@@ -4607,7 +4673,8 @@ pub fn format_command_for_pty_with_session(
     is_remote: bool,
     _is_tool_capture: bool,
 ) -> String {
-    let clean = clean_multiline_command(command);
+    let non_interactive = ensure_non_interactive_command(command);
+    let clean = clean_multiline_command(&non_interactive);
     if clean.is_empty() {
         return String::new();
     }
@@ -4644,6 +4711,78 @@ pub fn format_command_for_pty_with_session(
 
 pub fn format_command_for_pty(command: &str, user_shell: &str) -> String {
     format_command_for_pty_with_session(command, user_shell, false, false)
+}
+
+/// Injects non-interactive flags (e.g. `--no-pager`) into commands like `systemctl`, `journalctl`, and `git`
+/// so they never stall the PTY by launching interactive pagers (such as `less` or `more`).
+pub fn ensure_non_interactive_command(cmd: &str) -> String {
+    let mut result = String::with_capacity(cmd.len() + 16);
+    let mut rest = cmd;
+
+    while !rest.is_empty() {
+        let targets = [("systemctl", true), ("journalctl", true), ("git", false)];
+        let mut earliest_idx = None;
+        let mut target_word = "";
+        let mut is_systemd = false;
+
+        for (target, sysd) in targets {
+            let mut search_from = 0;
+            while let Some(idx) = rest[search_from..].find(target) {
+                let actual_idx = search_from + idx;
+                let prefix_ok = if actual_idx == 0 {
+                    true
+                } else {
+                    let prev_char = rest[..actual_idx].chars().last().unwrap();
+                    prev_char.is_whitespace() || prev_char == ';' || prev_char == '&' || prev_char == '|' || prev_char == '('
+                };
+                let next_idx = actual_idx + target.len();
+                let suffix_ok = if next_idx == rest.len() {
+                    true
+                } else {
+                    let next_char = rest[next_idx..].chars().next().unwrap();
+                    next_char.is_whitespace()
+                };
+
+                if prefix_ok && suffix_ok {
+                    if earliest_idx.is_none() || actual_idx < earliest_idx.unwrap() {
+                        earliest_idx = Some(actual_idx);
+                        target_word = target;
+                        is_systemd = sysd;
+                    }
+                    break;
+                }
+                search_from = actual_idx + target.len();
+            }
+        }
+
+        if let Some(idx) = earliest_idx {
+            result.push_str(&rest[..idx + target_word.len()]);
+            rest = &rest[idx + target_word.len()..];
+
+            let end_of_segment = rest.find([';', '&', '|', '\n']).unwrap_or(rest.len());
+            let segment = &rest[..end_of_segment];
+
+            if is_systemd {
+                if !segment.contains("--no-pager") {
+                    result.push_str(" --no-pager");
+                }
+            } else if target_word == "git" {
+                let trimmed_seg = segment.trim_start();
+                let needs_pager_flag = trimmed_seg.starts_with("log")
+                    || trimmed_seg.starts_with("diff")
+                    || trimmed_seg.starts_with("show")
+                    || trimmed_seg.starts_with("branch");
+                if needs_pager_flag && !segment.contains("--no-pager") {
+                    result.push_str(" --no-pager");
+                }
+            }
+        } else {
+            result.push_str(rest);
+            break;
+        }
+    }
+
+    result
 }
 
 /// Expands `~` or `~/...` to the user's home directory.
@@ -5661,5 +5800,54 @@ mod tests {
         assert!(is_natural_approval_phrase("oui"));
         // Decline phrases were never empty-matching; keep it that way.
         assert!(!is_natural_decline_phrase(""));
+    }
+
+    #[test]
+    fn test_ensure_non_interactive_command() {
+        use super::ensure_non_interactive_command;
+
+        // systemctl injection
+        assert_eq!(
+            ensure_non_interactive_command("sudo systemctl status systemd-journald"),
+            "sudo systemctl --no-pager status systemd-journald"
+        );
+        assert_eq!(
+            ensure_non_interactive_command("systemctl status nginx"),
+            "systemctl --no-pager status nginx"
+        );
+        assert_eq!(
+            ensure_non_interactive_command("systemctl --no-pager status nginx"),
+            "systemctl --no-pager status nginx"
+        );
+
+        // journalctl injection
+        assert_eq!(
+            ensure_non_interactive_command("journalctl -u nginx"),
+            "journalctl --no-pager -u nginx"
+        );
+        assert_eq!(
+            ensure_non_interactive_command("sudo journalctl --no-pager -xe"),
+            "sudo journalctl --no-pager -xe"
+        );
+
+        // Chained systemd commands
+        assert_eq!(
+            ensure_non_interactive_command("systemctl status a && journalctl -u b"),
+            "systemctl --no-pager status a && journalctl --no-pager -u b"
+        );
+
+        // git commands
+        assert_eq!(
+            ensure_non_interactive_command("git log -n 5"),
+            "git --no-pager log -n 5"
+        );
+        assert_eq!(
+            ensure_non_interactive_command("git diff HEAD~1"),
+            "git --no-pager diff HEAD~1"
+        );
+        assert_eq!(
+            ensure_non_interactive_command("git commit -m 'update'"),
+            "git commit -m 'update'"
+        );
     }
 }
