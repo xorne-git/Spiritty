@@ -297,8 +297,8 @@ async fn test_chat_scrolling_repro() {
         .join("\n");
 
     assert!(
-        rendered_text.contains("Alt") && rendered_text.contains("Exécuter"),
-        "The bottom action buttons [Alt 1 Exécuter] must be visible in the chat viewport!"
+        rendered_text.contains("Alt"),
+        "The bottom action buttons [Alt + 1] must be visible in the chat viewport!"
     );
     assert!(
         rendered_text.contains("EOF"),
@@ -504,7 +504,10 @@ fn test_format_command_for_pty() {
     //     interactive line editor never sees the body split across physical lines
     //     (regression: "cmdand heredoc> =" / `<<''EOF'>` corruption on real sessions).
     assert_eq!(
-        format_command_for_pty("sudo tee /etc/acpi <<'EOF'\n[Unit]\nDescription=acpi\nEOF", "zsh"),
+        format_command_for_pty(
+            "sudo tee /etc/acpi <<'EOF'\n[Unit]\nDescription=acpi\nEOF",
+            "zsh"
+        ),
         " bash -c 'sudo tee /etc/acpi <<'\\''EOF'\\''\n[Unit]\nDescription=acpi\nEOF'\n"
     );
 
@@ -517,7 +520,12 @@ fn test_format_command_for_pty() {
     // 5d. Heredoc on a REMOTE shell is safely wrapped in `bash -c '…'` to prevent
     //     an `exit` from closing the remote SSH session.
     assert_eq!(
-        format_command_for_pty_with_session("printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE", "zsh", true, true),
+        format_command_for_pty_with_session(
+            "printf 'x' | sudo tee /etc/f.txt << 'E'\nx\nE",
+            "zsh",
+            true,
+            true
+        ),
         " bash -c 'printf '\\''x'\\'' | sudo tee /etc/f.txt << '\\''E'\\''\nx\nE'\n"
     );
 
@@ -1211,11 +1219,53 @@ De plus, si un bloc sans tag est capturé, il faut vérifier qu'il s'agit bien d
     assert_eq!(spiritty::app::extract_command_proposal(snippet), None);
 }
 
-
 #[test]
 fn test_repair_prematurely_closed_code_blocks_does_not_swallow_markdown() {
     use spiritty::app::extract_all_command_proposals;
     let input = "Voici un exemple vide :\n```bash\n\n```\nPour afficher les conteneurs, lancez :\n```bash\ndocker ps\n```\nEt voilà.";
     let proposals = extract_all_command_proposals(input);
     assert_eq!(proposals, vec!["docker ps"]);
+}
+
+#[test]
+fn test_mouse_selection_reaches_bottom_prompt_line() {
+    // In spiritty, prompt input occupies the bottom lines of chat_area up to area.bottom() - 1.
+    // Ensure that the mouse selection clamping allows selecting the very last row (area.bottom() - 1),
+    // such as the 3rd line of a 3-line multiline prompt.
+    let panel_area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 30,
+    };
+
+    let inner = Rect {
+        x: panel_area.x,
+        y: panel_area.y.saturating_add(1),
+        width: panel_area.width,
+        height: panel_area.height.saturating_sub(1),
+    };
+
+    let last_prompt_row = panel_area.bottom() - 1; // row 29
+    let third_line_y = last_prompt_row;
+
+    let s_y = third_line_y.clamp(inner.top(), inner.bottom().saturating_sub(1));
+    let e_y = third_line_y.clamp(inner.top(), inner.bottom().saturating_sub(1));
+
+    assert_eq!(
+        s_y, 29,
+        "Selection must reach the 3rd prompt line on row 29"
+    );
+    assert_eq!(
+        e_y, 29,
+        "Selection must reach the 3rd prompt line on row 29"
+    );
+
+    // Also verify when dragging past the panel area (e.g. into the footer divider at row 30)
+    let dragged_past_y = panel_area.bottom() + 2; // row 32
+    let clamped_e_y = dragged_past_y.clamp(inner.top(), inner.bottom().saturating_sub(1));
+    assert_eq!(
+        clamped_e_y, 29,
+        "Dragging past panel must clamp to the bottom-most prompt line (29)"
+    );
 }

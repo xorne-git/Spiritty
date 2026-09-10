@@ -49,9 +49,7 @@ impl GeminiProvider {
 #[serde(untagged)]
 enum GeminiPart<'a> {
     Text { text: &'a str },
-    InlineData {
-        inline_data: InlineData<'a>,
-    },
+    InlineData { inline_data: InlineData<'a> },
 }
 
 #[derive(Serialize)]
@@ -323,9 +321,8 @@ impl LlmProvider for GeminiProvider {
                                                             bracket.on_delta(None, Some(&text))
                                                         };
                                                         if !folded.is_empty() {
-                                                            let _ = event_tx.send(
-                                                                AppEvent::AgentChunk(folded),
-                                                            );
+                                                            let _ = event_tx
+                                                                .send(AppEvent::AgentChunk(folded));
                                                         }
                                                     }
                                                 }
@@ -410,14 +407,15 @@ mod tests {
     #[test]
     fn test_gemini_candidate_part_thought_deserialization() {
         let raw_thought = r#"{"text": "I am thinking", "thought": true}"#;
-        let part: GeminiCandidatePart = serde_json::from_str(raw_thought).expect("deserialize thought");
+        let part: GeminiCandidatePart =
+            serde_json::from_str(raw_thought).expect("deserialize thought");
         assert_eq!(part.thought, Some(true));
         assert_eq!(part.text.as_deref(), Some("I am thinking"));
 
         let raw_content = r#"{"text": "Final answer"}"#;
-        let part_content: GeminiCandidatePart = serde_json::from_str(raw_content).expect("deserialize content");
+        let part_content: GeminiCandidatePart =
+            serde_json::from_str(raw_content).expect("deserialize content");
         assert_eq!(part_content.thought, None);
         assert_eq!(part_content.text.as_deref(), Some("Final answer"));
     }
 }
-

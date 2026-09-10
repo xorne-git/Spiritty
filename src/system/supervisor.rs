@@ -288,7 +288,8 @@ prod.corp.net
 SPIRITTY_PROBE_END
 "#;
 
-        let profile = supervisor.on_remote_host_probed("prod.corp.net", sample_output, &mut sys_ctx);
+        let profile =
+            supervisor.on_remote_host_probed("prod.corp.net", sample_output, &mut sys_ctx);
         assert!(profile.is_some());
         let prof = profile.unwrap();
         assert_eq!(prof.distro, "Ubuntu 24.04 LTS");
@@ -315,15 +316,15 @@ SPIRITTY_PROBE_END
         assert!(local_scan_res.is_err());
 
         // Test scan_tabs with MockTab
-        let mut mock_tabs = vec![
-            MockTab {
-                pid: None,
-                session: ActiveSession::Local { foreground_process: None },
-                remote_profile: None,
-                current_dir: None,
-                git_branch: None,
-            }
-        ];
+        let mut mock_tabs = vec![MockTab {
+            pid: None,
+            session: ActiveSession::Local {
+                foreground_process: None,
+            },
+            remote_profile: None,
+            current_dir: None,
+            git_branch: None,
+        }];
         let toast = supervisor.scan_tabs(&mut mock_tabs, 0, &mut sys_ctx, &tx);
         assert!(toast.is_none());
     }

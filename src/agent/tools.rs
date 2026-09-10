@@ -86,7 +86,11 @@ pub async fn execute_read_file(path: &str) -> String {
             if bytes.is_empty() {
                 return "(Fichier vide)".to_string();
             }
-            let shown = if bytes.len() > MAX_BYTES { &bytes[..MAX_BYTES] } else { &bytes[..] };
+            let shown = if bytes.len() > MAX_BYTES {
+                &bytes[..MAX_BYTES]
+            } else {
+                &bytes[..]
+            };
             let text = String::from_utf8_lossy(shown);
             let mut out = text.to_string();
             if bytes.len() > MAX_BYTES {
@@ -163,9 +167,7 @@ pub fn build_remote_write_command(path: &str, content_base64: &str, use_sudo: bo
 /// Decodes base64 string bytes into Vec<u8> safely.
 pub fn base64_decode(input: &str) -> Option<Vec<u8>> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(input)
-        .ok()
+    base64::engine::general_purpose::STANDARD.decode(input).ok()
 }
 
 /// Decodes the output captured from a remote base64 read command.
@@ -267,7 +269,10 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
         mcp_search_from = start + "```tool:mcp:".len();
 
         let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
-        if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+        if !text[line_start..start]
+            .chars()
+            .all(|c| c == ' ' || c == '\t')
+        {
             continue;
         }
 
@@ -312,7 +317,10 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
             search_from = start + prefix.len();
 
             let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
-            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+            if !text[line_start..start]
+                .chars()
+                .all(|c| c == ' ' || c == '\t')
+            {
                 continue;
             }
 
@@ -345,7 +353,10 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
             search_from = start + prefix.len();
 
             let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
-            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+            if !text[line_start..start]
+                .chars()
+                .all(|c| c == ' ' || c == '\t')
+            {
                 continue;
             }
 
@@ -386,7 +397,10 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
             search_from = start + prefix.len();
 
             let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
-            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+            if !text[line_start..start]
+                .chars()
+                .all(|c| c == ' ' || c == '\t')
+            {
                 continue;
             }
 
@@ -627,7 +641,10 @@ pub fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
             rest = &after_open[close_rel + close_tag_len..];
         } else if let Some((tool_rel, _)) = find_earliest_tag(after_open, TOOL_STARTS) {
             rest = &after_open[tool_rel..];
-        } else if after_open.ends_with("</th") || after_open.ends_with("</thi") || after_open.ends_with("</thin") {
+        } else if after_open.ends_with("</th")
+            || after_open.ends_with("</thi")
+            || after_open.ends_with("</thin")
+        {
             // Stream cut right as the closing tag was beginning at EOF
             return std::borrow::Cow::Owned(out);
         } else {
@@ -1208,7 +1225,9 @@ mod tool_parse_tests {
         let text = "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>\n<invoke name=\"Bash\">\n<skill name=\"Bash\">\n<command>sed -n '625,660p' /tmp/file.qml</command>\n</skill>\n</invoke>\n</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}tool_calls>";
         assert_eq!(
             parse_tool_call(text),
-            Some(ToolInvocation::RunCommand("sed -n '625,660p' /tmp/file.qml".to_string()))
+            Some(ToolInvocation::RunCommand(
+                "sed -n '625,660p' /tmp/file.qml".to_string()
+            ))
         );
     }
 
@@ -1284,7 +1303,9 @@ mod tool_parse_tests {
         assert_eq!(
             parse_tool_call(text),
             Some(ToolInvocation::ReadFile(
-                home.join(".config/niri/config.kdl").to_string_lossy().into_owned()
+                home.join(".config/niri/config.kdl")
+                    .to_string_lossy()
+                    .into_owned()
             ))
         );
     }
@@ -1378,7 +1399,8 @@ mod tool_parse_tests {
         );
 
         // Write command formatting with sudo
-        let write_sudo = build_remote_write_command("/etc/hosts", "MTI3LjAuMC4xIGxvY2FsaG9zdAo=", true);
+        let write_sudo =
+            build_remote_write_command("/etc/hosts", "MTI3LjAuMC4xIGxvY2FsaG9zdAo=", true);
         assert_eq!(
             write_sudo,
             "printf '%s' 'MTI3LjAuMC4xIGxvY2FsaG9zdAo=' | base64 -d | sudo tee \"/etc/hosts\" > /dev/null"
@@ -1393,17 +1415,25 @@ mod tool_parse_tests {
         assert_eq!(empty, "(Fichier vide)");
 
         // Decode shell error
-        let err = decode_remote_read_output("cat: /etc/fake: No such file or directory", "/etc/fake");
+        let err =
+            decode_remote_read_output("cat: /etc/fake: No such file or directory", "/etc/fake");
         assert!(err.contains("Erreur de lecture distante"));
 
         // Remote edit logic
         let orig = "server {\n    listen 80;\n    server_name example.com;\n}\n";
-        let edited = execute_remote_edit_logic(orig, "/etc/nginx/nginx.conf", "listen 80;", "listen 443 ssl;").unwrap();
+        let edited = execute_remote_edit_logic(
+            orig,
+            "/etc/nginx/nginx.conf",
+            "listen 80;",
+            "listen 443 ssl;",
+        )
+        .unwrap();
         assert!(edited.contains("listen 443 ssl;"));
         assert!(!edited.contains("listen 80;"));
 
         // Remote edit logic - not found
-        let err_missing = execute_remote_edit_logic(orig, "/etc/nginx/nginx.conf", "listen 8080;", "listen 443;");
+        let err_missing =
+            execute_remote_edit_logic(orig, "/etc/nginx/nginx.conf", "listen 8080;", "listen 443;");
         assert!(err_missing.is_err());
         assert!(err_missing.unwrap_err().contains("introuvable"));
 

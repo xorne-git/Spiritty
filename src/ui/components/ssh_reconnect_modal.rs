@@ -7,8 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
 };
 
-use crossterm::event::{KeyCode, KeyEvent};
 use crate::i18n::{I18nKey, Language};
+use crossterm::event::{KeyCode, KeyEvent};
 
 pub enum SshReconnectAction {
     Connect(String),

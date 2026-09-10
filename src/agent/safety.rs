@@ -576,7 +576,8 @@ fn is_single_command_safe(lower: &str) -> bool {
         .replace("1>&2", "");
 
     // sed with -i / --in-place is modifying, sed without -i is read-only
-    let sed_in_place = lower.starts_with("sed ") && (lower.contains(" -i") || lower.contains("--in-place"));
+    let sed_in_place =
+        lower.starts_with("sed ") && (lower.contains(" -i") || lower.contains("--in-place"));
     if lower.starts_with("sed ") && !sed_in_place && !stripped_redirects.contains('>') {
         return true;
     }
@@ -877,15 +878,36 @@ mod tests {
     #[test]
     fn test_classify_file_edit_by_path() {
         // User-level config/home files: normal change.
-        assert_eq!(classify_file_edit("~/.config/niri/config.kdl"), CommandRisk::Standard);
-        assert_eq!(classify_file_edit("/home/x/project/src/main.rs"), CommandRisk::Standard);
-        assert_eq!(classify_file_edit("/mnt/data/backup.txt"), CommandRisk::Standard);
+        assert_eq!(
+            classify_file_edit("~/.config/niri/config.kdl"),
+            CommandRisk::Standard
+        );
+        assert_eq!(
+            classify_file_edit("/home/x/project/src/main.rs"),
+            CommandRisk::Standard
+        );
+        assert_eq!(
+            classify_file_edit("/mnt/data/backup.txt"),
+            CommandRisk::Standard
+        );
         // System / service locations: elevated.
-        assert_eq!(classify_file_edit("/etc/systemd/system/acpi.service"), CommandRisk::Sudo);
-        assert_eq!(classify_file_edit("/usr/share/applications/x.desktop"), CommandRisk::Sudo);
-        assert_eq!(classify_file_edit("/var/www/site/index.html"), CommandRisk::Sudo);
+        assert_eq!(
+            classify_file_edit("/etc/systemd/system/acpi.service"),
+            CommandRisk::Sudo
+        );
+        assert_eq!(
+            classify_file_edit("/usr/share/applications/x.desktop"),
+            CommandRisk::Sudo
+        );
+        assert_eq!(
+            classify_file_edit("/var/www/site/index.html"),
+            CommandRisk::Sudo
+        );
         // Sensitive / conservative: never auto-approved below YOLO.
-        assert_eq!(classify_file_edit("/home/x/.ssh/authorized_keys"), CommandRisk::Risky);
+        assert_eq!(
+            classify_file_edit("/home/x/.ssh/authorized_keys"),
+            CommandRisk::Risky
+        );
         assert_eq!(classify_file_edit("/home/x/.zshrc"), CommandRisk::Risky);
         assert_eq!(classify_file_edit("/etc/fstab"), CommandRisk::Risky);
         // Empty path is conservative.
@@ -914,8 +936,13 @@ cat /etc/apache2/mods-enabled/mpm_*.conf 2>/dev/null | grep -v '^\\s*#' | grep -
         assert!(should_auto_approve_command(cmd2, AutoApproveLevel::Sudo));
 
         // Read-only sed vs sed -i
-        assert_eq!(classify_command("sed 's/foo/bar/' /tmp/test"), CommandRisk::Safe);
-        assert_eq!(classify_command("sed -i 's/foo/bar/' /tmp/test"), CommandRisk::Standard);
+        assert_eq!(
+            classify_command("sed 's/foo/bar/' /tmp/test"),
+            CommandRisk::Safe
+        );
+        assert_eq!(
+            classify_command("sed -i 's/foo/bar/' /tmp/test"),
+            CommandRisk::Standard
+        );
     }
 }
-

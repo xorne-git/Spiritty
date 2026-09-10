@@ -17,27 +17,6 @@ pub struct ChatPanel<'a> {
     app: &'a App,
 }
 
-fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key.to_string(),
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
-}
-
-fn key_combo_pills(mod_key: &str, key: &str, color: Color) -> Vec<Span<'static>> {
-    let mut spans = key_pill(mod_key, color);
-    spans.push(Span::raw(" "));
-    spans.extend(key_pill(key, color));
-    spans
-}
-
 impl<'a> ChatPanel<'a> {
     pub fn new(app: &'a App) -> Self {
         Self { app }
@@ -52,8 +31,7 @@ impl<'a> ChatPanel<'a> {
         let palette = self.app.theme.palette();
         let is_focused = self.app.focus == Focus::Chat;
         // (spinner glyph resolved inside compose_assistant_message from the frame)
-        let title_text =
-            crate::brand::brand_title(env!("CARGO_PKG_VERSION"));
+        let title_text = crate::brand::brand_title(env!("CARGO_PKG_VERSION"));
 
         // 1. Dynamic prompt input sizing & line wrapping (2 lines minimum, with padding top/bot)
         let prompt_pad_x = area.left() + 2;
@@ -99,7 +77,9 @@ impl<'a> ChatPanel<'a> {
 
         // 3. Define content areas (no left, right or bottom borders)
         let preview_zone = preview_rows.saturating_add(1); // preview rows + status caption
-        let prompt_total_zone = needed_input_height.saturating_add(1).saturating_add(preview_zone);
+        let prompt_total_zone = needed_input_height
+            .saturating_add(1)
+            .saturating_add(preview_zone);
         let messages_box_height = area.height.saturating_sub(prompt_total_zone + 1);
 
         let messages_area = Rect {
@@ -109,8 +89,12 @@ impl<'a> ChatPanel<'a> {
             height: messages_box_height,
         };
 
-        let preview_sep_y = area.bottom().saturating_sub(needed_input_height + 1 + preview_zone);
-        let preview_y = area.bottom().saturating_sub(needed_input_height + 1 + preview_rows);
+        let preview_sep_y = area
+            .bottom()
+            .saturating_sub(needed_input_height + 1 + preview_zone);
+        let preview_y = area
+            .bottom()
+            .saturating_sub(needed_input_height + 1 + preview_rows);
         let preview_area = Rect {
             x: prompt_pad_x,
             y: preview_y,
@@ -248,11 +232,10 @@ impl<'a> ChatPanel<'a> {
                     } else {
                         content_top.saturating_add(2)
                     };
-                    self.app.chat_thought_hits.borrow_mut().push((
-                        idx,
-                        content_top,
-                        hit_bottom,
-                    ));
+                    self.app
+                        .chat_thought_hits
+                        .borrow_mut()
+                        .push((idx, content_top, hit_bottom));
                 }
 
                 msg_geo.push((content_top, rows_now));
@@ -268,7 +251,7 @@ impl<'a> ChatPanel<'a> {
             .pending_tool_approval
             .as_ref()
             .map_or_else(Vec::new, |pending| {
-                compose_approval_card(&pending.command, lang)
+                compose_approval_card(&pending.command, messages_area.width, lang)
             });
         let approval_rows = compute_wrapped_lines_count(&approval_lines, messages_area.width);
 
@@ -867,6 +850,7 @@ fn compose_assistant_message(
         if !parsed.response.is_empty() {
             render_markdown_blocks(
                 &parsed.response,
+                panel_width,
                 lang,
                 &mut lines,
                 Some(&ghost_prefix),
@@ -877,6 +861,7 @@ fn compose_assistant_message(
     } else if !parsed.response.is_empty() {
         render_markdown_blocks(
             &parsed.response,
+            panel_width,
             lang,
             &mut lines,
             Some(&ghost_prefix),
@@ -950,7 +935,7 @@ fn compose_single_message(
 
 /// Composes the ⚡ permission-request card shown above the input while an
 /// execution awaits consent (dynamic segment, never part of the cache).
-fn compose_approval_card(command: &str, lang: Language) -> Vec<Line<'static>> {
+fn compose_approval_card(command: &str, panel_width: u16, lang: Language) -> Vec<Line<'static>> {
     // The badge comes from the single source of truth (`safety::classify_command`):
     // ad-hoc substring heuristics used to label `kill -9` / `chmod` / systemctl
     // restarts as a green "Safe" exactly when the user had to consent.
@@ -971,69 +956,203 @@ fn compose_approval_card(command: &str, lang: Language) -> Vec<Line<'static>> {
     };
 
     let req_title = if lang == Language::Fr {
-        "⚡ DEMANDE D'AUTORISATION "
+        "DEMANDE D'AUTORISATION "
     } else {
-        "⚡ PERMISSION REQUEST "
+        "PERMISSION "
     };
+
+    // Calculate dimensions matching the full available width of the chat panel:
+    let card_total_w = (panel_width as usize).max(64);
+    let outer_inner_w = card_total_w.saturating_sub(2);
+    let inner_code_w = outer_inner_w.saturating_sub(6);
+
+    let outer_border_color = Color::Rgb(40, 56, 80);
+    let inner_border_color = Color::Rgb(28, 42, 62);
+
     let mut lines: Vec<Line<'static>> = Vec::new();
-    let mut title_spans = vec![Span::styled(
-        req_title,
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )];
-    title_spans.extend(key_pill(badge_text, badge_color));
-
     push_blank_line(&mut lines);
-    lines.push(Line::from(title_spans));
 
-    for l in command.lines() {
-        if l.is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(vec![Span::styled(
-                format!("  {}", l),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+    // 1. Top border of outer card: ╭─...─╮
+    lines.push(Line::from(vec![Span::styled(
+        format!("╭{}╮", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
+    // 2. Header line inside outer card: │  ⚡ DEMANDE D'AUTORISATION  [ SAFE ]     │
+    let title_str = req_title.to_string();
+    let badge_upper = badge_text.to_uppercase();
+    // "│  " (3) + "⚡ " (3 cols: 2 for ⚡ emoji in terminal + 1 for space) + title_str + "[ " (2) + badge_upper + " ]" (2) + "  │" (3) = 13 + title + badge
+    let header_fixed_len = 13 + title_str.chars().count() + badge_upper.chars().count();
+    let header_pad = card_total_w.saturating_sub(header_fixed_len);
+
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            "⚡ ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            title_str,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("[ ", Style::default().fg(badge_color)),
+        Span::styled(
+            badge_upper,
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(badge_color)),
+        Span::raw(" ".repeat(header_pad)),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 3. Subtle spacing row inside outer card: │                                  │
+    lines.push(Line::from(vec![
+        Span::styled("│", Style::default().fg(outer_border_color)),
+        Span::raw(" ".repeat(outer_inner_w)),
+        Span::styled("│", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 4. Inner box top border: │  ╭─...─╮  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╭{}╮", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 5. Code lines inside inner box: │  │  cmd  │  │
+    for raw_line in command.lines() {
+        if raw_line.is_empty() {
+            let pad = " ".repeat(inner_code_w.saturating_sub(2));
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
+            continue;
+        }
+
+        let chars: Vec<char> = raw_line.chars().collect();
+        let max_chunk_w = inner_code_w.saturating_sub(2);
+        for chunk in chars.chunks(max_chunk_w) {
+            let chunk_str: String = chunk.iter().collect();
+            let pad_len = max_chunk_w.saturating_sub(chunk.len());
+            let pad = " ".repeat(pad_len);
+
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::styled(
+                    chunk_str,
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
         }
     }
 
-    let mut footer_spans = vec![Span::raw("  ")];
-    // Deliberately NOT "↵ Enter Autoriser": an accidental bare Enter must never
-    // execute the pending command — approval requires a confirmation word or F10.
-    footer_spans.extend(key_pill("F10", Color::Green));
-    footer_spans.push(Span::styled(
-        if lang == Language::Fr {
-            " Autoriser · "
-        } else {
-            " Approve · "
-        },
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD),
-    ));
-    footer_spans.extend(key_pill(
-        if lang == Language::Fr {
-            "oui/ok + ↵"
-        } else {
-            "yes/ok + ↵"
-        },
-        Color::Green,
-    ));
-    footer_spans.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
-    footer_spans.extend(key_pill("Esc", Color::Red));
-    footer_spans.push(Span::styled(
-        if lang == Language::Fr {
-            " Refuser"
-        } else {
-            " Decline"
-        },
-        Style::default().fg(Color::White),
-    ));
+    // 6. Inner box bottom border: │  ╰─...─╯  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╰{}╯", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 7. Subtle spacing row inside outer card: │                                  │
+    lines.push(Line::from(vec![
+        Span::styled("│", Style::default().fg(outer_border_color)),
+        Span::raw(" ".repeat(outer_inner_w)),
+        Span::styled("│", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 8. Footer line inside outer card
+    let approve_label = if lang == Language::Fr {
+        " Autoriser"
+    } else {
+        " Approve"
+    };
+    let prompt_label = if lang == Language::Fr {
+        "oui/ok + Enter"
+    } else {
+        "yes/ok + Enter"
+    };
+    let decline_label = if lang == Language::Fr {
+        " Refuser"
+    } else {
+        " Decline"
+    };
+
+    let f10_len = 7; // "[ F10 ]"
+    let esc_len = 7; // "[ Esc ]"
+    let prompt_btn_len = 4 + prompt_label.chars().count(); // "[ " + prompt + " ]"
+    let footer_fixed_len = 3
+        + f10_len
+        + approve_label.chars().count()
+        + 2
+        + prompt_btn_len
+        + 5
+        + esc_len
+        + decline_label.chars().count()
+        + 3;
+    let footer_gap = card_total_w.saturating_sub(footer_fixed_len);
+
+    let footer_spans = vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled("[ ", Style::default().fg(Color::Green)),
+        Span::styled(
+            "F10",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(Color::Green)),
+        Span::styled(
+            approve_label,
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("[ ", Style::default().fg(Color::Green)),
+        Span::styled(prompt_label, Style::default().fg(Color::Green)),
+        Span::styled(" ]", Style::default().fg(Color::Green)),
+        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
+        Span::styled("[ ", Style::default().fg(Color::Red)),
+        Span::styled(
+            "Esc",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(Color::Red)),
+        Span::styled(decline_label, Style::default().fg(Color::White)),
+        Span::raw(" ".repeat(footer_gap)),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ];
 
     lines.push(Line::from(footer_spans));
+
+    // 9. Bottom border of outer card: ╰─...─╯
+    lines.push(Line::from(vec![Span::styled(
+        format!("╰{}╯", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
     push_blank_line(&mut lines);
     lines
 }
@@ -1044,6 +1163,7 @@ fn compose_approval_card(command: &str, lang: Language) -> Vec<Line<'static>> {
 /// actionable surface (Alt+N on the duplicate would even bypass the pending authorization).
 fn render_markdown_blocks(
     text: &str,
+    panel_width: u16,
     lang: Language,
     lines: &mut Vec<Line<'static>>,
     mut leading_prefix: Option<&str>,
@@ -1079,7 +1199,14 @@ fn render_markdown_blocks(
                     // snippet so the command has exactly ONE actionable surface.
                     render_code_snippet_box(code_content, fence_tag, lines);
                 } else {
-                    render_command_card(*card_counter, code_content, fence_tag, lang, lines);
+                    render_command_card(
+                        *card_counter,
+                        code_content,
+                        fence_tag,
+                        panel_width,
+                        lang,
+                        lines,
+                    );
                 }
             } else {
                 render_code_snippet_box(code_content, fence_tag, lines);
@@ -1744,11 +1871,12 @@ fn render_code_snippet_box(code: &str, tag: &str, lines: &mut Vec<Line<'static>>
     push_blank_line(lines);
 }
 
-/// Renders a command proposal with sleek key pills (consistent with Help/Config modals)
+/// Renders a command proposal with modern rounded boxed presentation and action pill matching Screenshot 2
 fn render_command_card(
     card_idx: usize,
     cmd: &str,
     _tag: &str,
+    panel_width: u16,
     lang: Language,
     lines: &mut Vec<Line<'static>>,
 ) {
@@ -1772,42 +1900,159 @@ fn render_command_card(
         ),
     };
 
-    let mut title_spans = vec![Span::styled(
-        format!("⚡ COMMANDE #{} ", card_idx),
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    )];
-    title_spans.extend(key_pill(badge_text, badge_color));
+    // Calculate dimensions matching the full available width of the chat panel:
+    let card_total_w = (panel_width as usize).max(64);
+    let outer_inner_w = card_total_w.saturating_sub(2);
+    let inner_code_w = outer_inner_w.saturating_sub(6);
+
+    let outer_border_color = Color::Rgb(40, 56, 80);
+    let inner_border_color = Color::Rgb(28, 42, 62);
 
     push_blank_line(lines);
-    lines.push(Line::from(title_spans));
 
-    for l in cmd.lines() {
-        if l.is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(vec![Span::styled(
-                format!("  {}", l),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+    // 1. Top border of outer card: ╭─...─╮
+    lines.push(Line::from(vec![Span::styled(
+        format!("╭{}╮", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
+    // 2. Header line inside outer card: │  ⚡ COMMANDE #1  [ SAFE ]     │
+    let title_str = format!("COMMANDE #{} ", card_idx);
+    let badge_upper = badge_text.to_uppercase();
+    // "│  " (3) + "⚡ " (3 cols: 2 for ⚡ emoji in terminal + 1 for space) + title_str + "[ " (2) + badge_upper + " ]" (2) + "  │" (3) = 13 + title + badge
+    let header_fixed_len = 13 + title_str.chars().count() + badge_upper.chars().count();
+    let header_pad = card_total_w.saturating_sub(header_fixed_len);
+
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            "⚡ ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            title_str,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("[ ", Style::default().fg(badge_color)),
+        Span::styled(
+            badge_upper,
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(badge_color)),
+        Span::raw(" ".repeat(header_pad)),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 3. Subtle spacing row inside outer card: │                                  │
+    lines.push(Line::from(vec![
+        Span::styled("│", Style::default().fg(outer_border_color)),
+        Span::raw(" ".repeat(outer_inner_w)),
+        Span::styled("│", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 4. Inner box top border: │  ╭─...─╮  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╭{}╮", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 5. Code lines inside inner box: │  │  cmd  │  │
+    for raw_line in cmd.lines() {
+        if raw_line.is_empty() {
+            let pad = " ".repeat(inner_code_w.saturating_sub(2));
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
+            continue;
+        }
+
+        let chars: Vec<char> = raw_line.chars().collect();
+        let max_chunk_w = inner_code_w.saturating_sub(2);
+        for chunk in chars.chunks(max_chunk_w) {
+            let chunk_str: String = chunk.iter().collect();
+            let pad_len = max_chunk_w.saturating_sub(chunk.len());
+            let pad = " ".repeat(pad_len);
+
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::styled(
+                    chunk_str,
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
         }
     }
 
-    let mut footer_spans = vec![Span::raw("  ")];
-    footer_spans.extend(key_combo_pills("Alt", &card_idx.to_string(), Color::Cyan));
-    footer_spans.push(Span::styled(
-        if lang == Language::Fr {
-            " Exécuter"
-        } else {
-            " Run"
-        },
-        Style::default().fg(Color::White),
-    ));
+    // 6. Inner box bottom border: │  ╰─...─╯  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╰{}╯", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
 
-    lines.push(Line::from(footer_spans));
+    // 7. Subtle spacing row inside outer card: │                                  │
+    lines.push(Line::from(vec![
+        Span::styled("│", Style::default().fg(outer_border_color)),
+        Span::raw(" ".repeat(outer_inner_w)),
+        Span::styled("│", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 8. Footer line inside outer card: │  Validation requise...   [ Alt + 1 ]  │
+    let hint_text = if lang == Language::Fr {
+        "Validation requise avant exécution"
+    } else {
+        "Confirmation required before execution"
+    };
+
+    let btn_text = format!("Alt + {}", card_idx);
+    let btn_border_color = Color::Rgb(180, 130, 30);
+    let footer_fixed_len = 3 + hint_text.chars().count() + 4 + btn_text.chars().count() + 3; // "│  " (3) + hint + "[ " (2) + btn + " ]" (2) + "  │" (3)
+    let footer_gap = card_total_w.saturating_sub(footer_fixed_len);
+
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(hint_text, Style::default().fg(Color::DarkGray)),
+        Span::raw(" ".repeat(footer_gap)),
+        Span::styled("[ ", Style::default().fg(btn_border_color)),
+        Span::styled(
+            btn_text,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(btn_border_color)),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 9. Bottom border of outer card: ╰─...─╯
+    lines.push(Line::from(vec![Span::styled(
+        format!("╰{}╯", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
     push_blank_line(lines);
 }
 
@@ -1925,7 +2170,9 @@ fn extract_thought_block(text: &str) -> ParsedThought {
         let before = &text[..start];
         let after_start = &text[start + open_len..];
 
-        if let Some((end, close_len)) = crate::agent::tools::find_earliest_tag(after_start, CLOSE_TAGS) {
+        if let Some((end, close_len)) =
+            crate::agent::tools::find_earliest_tag(after_start, CLOSE_TAGS)
+        {
             let thought = strip_residual_reasoning_tags(&after_start[..end]);
             let after_end = after_start[end + close_len..].trim();
             let remaining = if before.trim().is_empty() {
@@ -1943,7 +2190,9 @@ fn extract_thought_block(text: &str) -> ParsedThought {
                 is_completed: true,
                 response: remaining,
             };
-        } else if let Some((tool_pos, _)) = crate::agent::tools::find_earliest_tag(after_start, TOOL_STARTS) {
+        } else if let Some((tool_pos, _)) =
+            crate::agent::tools::find_earliest_tag(after_start, TOOL_STARTS)
+        {
             let thought = strip_residual_reasoning_tags(&after_start[..tool_pos]);
             let after_end = after_start[tool_pos..].trim();
             let remaining = if before.trim().is_empty() {
@@ -1961,7 +2210,10 @@ fn extract_thought_block(text: &str) -> ParsedThought {
                 is_completed: true,
                 response: remaining,
             };
-        } else if after_start.ends_with("</th") || after_start.ends_with("</thi") || after_start.ends_with("</thin") {
+        } else if after_start.ends_with("</th")
+            || after_start.ends_with("</thi")
+            || after_start.ends_with("</thin")
+        {
             let end = after_start.rfind("</th").unwrap_or(after_start.len());
             let thought = strip_residual_reasoning_tags(&after_start[..end]);
             let thought_opt = if thought.is_empty() {
@@ -2020,9 +2272,14 @@ fn clean_response(text: &str) -> String {
     let mut remaining = cleaned;
     while let Some(start) = remaining.find("```tool:") {
         let line_start = remaining[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
-        let is_at_line_start = remaining[line_start..start].chars().all(|c| c == ' ' || c == '\t');
+        let is_at_line_start = remaining[line_start..start]
+            .chars()
+            .all(|c| c == ' ' || c == '\t');
         let after = &remaining[start + 8..];
-        let has_newline = after.find('\n').map(|nl| after[..nl].trim().is_empty() || after[..nl].contains(':')).unwrap_or(false);
+        let has_newline = after
+            .find('\n')
+            .map(|nl| after[..nl].trim().is_empty() || after[..nl].contains(':'))
+            .unwrap_or(false);
 
         if is_at_line_start && has_newline {
             if let Some(end) = after.find("```") {
@@ -2180,13 +2437,7 @@ pub(crate) fn str_visual_width(s: &str) -> usize {
 /// nearest-neighbour downsampled (letterboxed, aspect preserved) to fit the area, so a
 /// 64×16-pixel screenshot becomes ~32×8 cells without pulling an image widget or a new
 /// dependency. Alpha is flattened over an assumed dark background.
-fn render_halfblock_preview(
-    rgba: &[u8],
-    src_w: usize,
-    src_h: usize,
-    area: Rect,
-    buf: &mut Buffer,
-) {
+fn render_halfblock_preview(rgba: &[u8], src_w: usize, src_h: usize, area: Rect, buf: &mut Buffer) {
     if area.width == 0 || area.height == 0 || src_w == 0 || src_h == 0 {
         return;
     }
@@ -2217,8 +2468,8 @@ fn render_halfblock_preview(
         for cx in 0..out_w {
             // Source pixel rows for top/bottom halves of this output cell.
             let src_y_top = ((cy * 2) as f64 * src_h as f64 / out_px_h as f64) as usize;
-            let src_y_bot = (((cy * 2 + 1) as f64 * src_h as f64 / out_px_h as f64) as usize)
-                .min(src_h - 1);
+            let src_y_bot =
+                (((cy * 2 + 1) as f64 * src_h as f64 / out_px_h as f64) as usize).min(src_h - 1);
             let src_x = (cx as f64 * src_w as f64 / out_w as f64) as usize;
 
             let top_c = pixel_at(rgba, src_w, src_x, src_y_top);
@@ -2621,6 +2872,7 @@ mod recovered_regression_tests {
         let mut counter = 0usize;
         render_markdown_blocks(
             text,
+            80,
             crate::i18n::Language::Fr,
             &mut lines,
             None,
@@ -2629,7 +2881,7 @@ mod recovered_regression_tests {
         );
         let joined = spans_text(&lines);
         assert!(!joined.contains("COMMANDE #"), "{joined}");
-        assert!(!joined.contains("Exécuter"), "{joined}");
+        assert!(!joined.contains("Alt + 1"), "{joined}");
         assert!(joined.contains("echo hello"), "{joined}");
 
         // A different pending command leaves the proposal card untouched.
@@ -2637,6 +2889,7 @@ mod recovered_regression_tests {
         let mut counter2 = 0usize;
         render_markdown_blocks(
             text,
+            80,
             crate::i18n::Language::Fr,
             &mut lines2,
             None,
@@ -2645,7 +2898,7 @@ mod recovered_regression_tests {
         );
         let joined2 = spans_text(&lines2);
         assert!(joined2.contains("COMMANDE #1"), "{joined2}");
-        assert!(joined2.contains("Exécuter"), "{joined2}");
+        assert!(joined2.contains("Alt + 1"), "{joined2}");
     }
 
     /// The reconstructed visual-row splitter must agree with ratatui's own wrapped
@@ -2704,7 +2957,10 @@ mod recovered_regression_tests {
         // yielding <think><think>…</think>…. The extractor must not leak the inner literal tag.
         let msg = "<think><think>L'utilisateur voit toujours le fantôme. La cause : le cache dms.</think>Voici la solution :```bash\nrm -rf ~/.cache/DankMaterialShell\n```";
         let parsed = extract_thought_block(msg);
-        assert_eq!(parsed.thought.as_deref(), Some("L'utilisateur voit toujours le fantôme. La cause : le cache dms."));
+        assert_eq!(
+            parsed.thought.as_deref(),
+            Some("L'utilisateur voit toujours le fantôme. La cause : le cache dms.")
+        );
         assert!(parsed.response.contains("Voici la solution :"));
 
         // A single normal block is untouched.
@@ -2712,7 +2968,6 @@ mod recovered_regression_tests {
         let parsed2 = extract_thought_block(single);
         assert_eq!(parsed2.thought.as_deref(), Some("Réflexion normale."));
     }
-
 
     #[test]
     fn strip_fullwidth_pipe_hybrid_marker() {
@@ -2822,7 +3077,9 @@ mod halfblock_preview_tests {
     #[test]
     fn render_halfblock_marks_cells_with_upper_half_block() {
         // 2×2 opaque red image → 1×1 cell of `▀` with top=red, bottom=red.
-        let rgba = vec![255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+        let rgba = vec![
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+        ];
         let mut buf = Buffer::empty(Rect::new(0, 0, 4, 4));
         render_halfblock_preview(&rgba, 2, 2, Rect::new(0, 0, 4, 4), &mut buf);
 

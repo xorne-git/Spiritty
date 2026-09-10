@@ -161,9 +161,11 @@ impl AgentEngine {
         // the tool loop so read/write/edit are refused with an explicit message.
         let is_remote_session = matches!(
             sys_ctx.active_session,
-            crate::system::ActiveSession::Ssh { .. } | crate::system::ActiveSession::Container { .. }
+            crate::system::ActiveSession::Ssh { .. }
+                | crate::system::ActiveSession::Container { .. }
         );
-        let is_remote_session = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(is_remote_session));
+        let is_remote_session =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(is_remote_session));
 
         tokio::spawn(async move {
             let mcp_prompt_summary = mcp_manager.get_tools_summary_for_prompt().await;

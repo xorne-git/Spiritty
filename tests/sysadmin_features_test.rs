@@ -206,7 +206,10 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
     let (res_tx, _res_rx) = tokio::sync::oneshot::channel::<String>();
     let tab_id = app.active_tab().id;
     app.on_agent_pty_tool_execute("ls /forbidden".to_string(), res_tx, false);
-    app.on_pty_output(tab_id, b"ls: cannot open directory '/forbidden': Permission denied\n");
+    app.on_pty_output(
+        tab_id,
+        b"ls: cannot open directory '/forbidden': Permission denied\n",
+    );
     assert!(
         app.proactive_error_diagnosis.is_none(),
         "Agent tools should NOT trigger proactive error toast"
@@ -215,7 +218,10 @@ async fn test_proactive_diagnosis_only_for_manual_user_commands() {
     // 2. When user types a manual command in shell and gets an error, proactive error diagnosis triggers
     app.active_pty_tool = None;
     app.last_user_terminal_command = Some("mkdir -p /opt/app".to_string());
-    app.on_pty_output(tab_id, b"mkdir: cannot create directory '/opt/app': Permission denied\n");
+    app.on_pty_output(
+        tab_id,
+        b"mkdir: cannot create directory '/opt/app': Permission denied\n",
+    );
     assert!(
         app.proactive_error_diagnosis.is_some(),
         "Manual user command errors SHOULD trigger proactive diagnosis"
@@ -260,7 +266,9 @@ async fn test_focus_preservation_on_chat_submit_and_execution() {
 
 #[tokio::test]
 async fn test_sudo_password_detection_and_focus_switch() {
-    use spiritty::app::{is_waiting_for_password, is_waiting_for_user_interaction, Focus, InteractionKind};
+    use spiritty::app::{
+        is_waiting_for_password, is_waiting_for_user_interaction, Focus, InteractionKind,
+    };
 
     // 1. Password detection variations
     assert!(is_waiting_for_password("[sudo] password for xorne: "));
@@ -287,7 +295,9 @@ async fn test_sudo_password_detection_and_focus_switch() {
         Some(InteractionKind::Confirmation)
     );
     assert_eq!(
-        is_waiting_for_user_interaction("Are you sure you want to continue connecting (yes/no/[fingerprint])? "),
+        is_waiting_for_user_interaction(
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])? "
+        ),
         Some(InteractionKind::Confirmation)
     );
     assert_eq!(
@@ -312,7 +322,10 @@ async fn test_sudo_password_detection_and_focus_switch() {
     // 4. Output with [Y/n] switches focus to Terminal
     let tab_id = app.active_tab().id;
     app.focus = Focus::Chat;
-    app.on_pty_output(tab_id, b"Need to get 15.2 MB of archives.\nDo you want to continue? [Y/n] ");
+    app.on_pty_output(
+        tab_id,
+        b"Need to get 15.2 MB of archives.\nDo you want to continue? [Y/n] ",
+    );
     assert_eq!(
         app.focus,
         Focus::Terminal,
@@ -522,11 +535,23 @@ async fn test_remote_file_tools_in_ssh_session() {
     };
 
     // 1. Risk classification of remote paths
-    assert_eq!(classify_file_edit("/etc/nginx/nginx.conf"), CommandRisk::Sudo);
+    assert_eq!(
+        classify_file_edit("/etc/nginx/nginx.conf"),
+        CommandRisk::Sudo
+    );
     assert_eq!(classify_file_edit("/var/log/syslog"), CommandRisk::Sudo);
-    assert_eq!(classify_file_edit("~/.ssh/authorized_keys"), CommandRisk::Risky);
-    assert_eq!(classify_file_edit("/home/ubuntu/.bashrc"), CommandRisk::Risky);
-    assert_eq!(classify_file_edit("/home/ubuntu/app/server.js"), CommandRisk::Standard);
+    assert_eq!(
+        classify_file_edit("~/.ssh/authorized_keys"),
+        CommandRisk::Risky
+    );
+    assert_eq!(
+        classify_file_edit("/home/ubuntu/.bashrc"),
+        CommandRisk::Risky
+    );
+    assert_eq!(
+        classify_file_edit("/home/ubuntu/app/server.js"),
+        CommandRisk::Standard
+    );
 
     // 2. Command formatting
     let read_cmd = build_remote_read_command("/etc/caddy/Caddyfile");
@@ -536,11 +561,18 @@ async fn test_remote_file_tools_in_ssh_session() {
     assert!(write_cmd.contains("sudo tee \"/etc/caddy/Caddyfile\""));
 
     // 3. Decoding and editing
-    let b64_input = spiritty::system::clipboard::base64_encode(b":80 {\n    respond \"Hello\"\n}\n");
+    let b64_input =
+        spiritty::system::clipboard::base64_encode(b":80 {\n    respond \"Hello\"\n}\n");
     let decoded = decode_remote_read_output(&b64_input, "/etc/caddy/Caddyfile");
     assert!(decoded.contains("respond \"Hello\""));
 
-    let edited = execute_remote_edit_logic(&decoded, "/etc/caddy/Caddyfile", "respond \"Hello\"", "reverse_proxy localhost:3000").unwrap();
+    let edited = execute_remote_edit_logic(
+        &decoded,
+        "/etc/caddy/Caddyfile",
+        "respond \"Hello\"",
+        "reverse_proxy localhost:3000",
+    )
+    .unwrap();
     assert!(edited.contains("reverse_proxy localhost:3000"));
 }
 
@@ -600,7 +632,10 @@ async fn test_multi_tabs_lifecycle_and_shortcuts() {
 
     // 7. Closing tab via Ctrl + Shift + W
     app.focus = Focus::Terminal;
-    let ctrl_shift_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    let ctrl_shift_w = KeyEvent::new(
+        KeyCode::Char('w'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
     app.handle_key(ctrl_shift_w);
     assert_eq!(app.tabs.len(), 2);
 
@@ -642,7 +677,10 @@ async fn test_tab_renaming_and_session_persistence() {
     }
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(matches!(app.modal, ModalState::None));
-    assert_eq!(app.active_tab().custom_title.as_deref(), Some("production-db"));
+    assert_eq!(
+        app.active_tab().custom_title.as_deref(),
+        Some("production-db")
+    );
     assert_eq!(app.active_tab().display_title(), "production-db");
 
     // 4. Test session persistence: save session with renamed tab

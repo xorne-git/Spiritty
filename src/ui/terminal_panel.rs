@@ -86,28 +86,34 @@ impl<'a> TerminalPanel<'a> {
 
             buf.set_string(curr_x, top_y, &tab_label, tab_style);
 
-            let tab_end_x = curr_x
-                + tab_width.saturating_sub(if is_active && num_tabs > 1 { 3 } else { 0 });
-            self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
-                tab_index: i,
-                start_x: curr_x,
-                end_x: tab_end_x,
-                y: top_y,
-                is_close: false,
-                is_plus: false,
-            });
+            let tab_end_x =
+                curr_x + tab_width.saturating_sub(if is_active && num_tabs > 1 { 3 } else { 0 });
+            self.app
+                .terminal_tab_hits
+                .borrow_mut()
+                .push(crate::app::TerminalTabHit {
+                    tab_index: i,
+                    start_x: curr_x,
+                    end_x: tab_end_x,
+                    y: top_y,
+                    is_close: false,
+                    is_plus: false,
+                });
 
             if is_active && num_tabs > 1 {
                 let close_start_x = tab_end_x;
                 let close_end_x = curr_x + tab_width;
-                self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
-                    tab_index: i,
-                    start_x: close_start_x,
-                    end_x: close_end_x,
-                    y: top_y,
-                    is_close: true,
-                    is_plus: false,
-                });
+                self.app
+                    .terminal_tab_hits
+                    .borrow_mut()
+                    .push(crate::app::TerminalTabHit {
+                        tab_index: i,
+                        start_x: close_start_x,
+                        end_x: close_end_x,
+                        y: top_y,
+                        is_close: true,
+                        is_plus: false,
+                    });
             }
 
             curr_x += tab_width + 1;
@@ -124,14 +130,17 @@ impl<'a> TerminalPanel<'a> {
                 })
                 .add_modifier(Modifier::BOLD);
             buf.set_string(curr_x, top_y, plus_str, plus_style);
-            self.app.terminal_tab_hits.borrow_mut().push(crate::app::TerminalTabHit {
-                tab_index: 0,
-                start_x: curr_x,
-                end_x: curr_x + 3,
-                y: top_y,
-                is_close: false,
-                is_plus: true,
-            });
+            self.app
+                .terminal_tab_hits
+                .borrow_mut()
+                .push(crate::app::TerminalTabHit {
+                    tab_index: 0,
+                    start_x: curr_x,
+                    end_x: curr_x + 3,
+                    y: top_y,
+                    is_close: false,
+                    is_plus: true,
+                });
             curr_x += 3;
         }
 
@@ -243,7 +252,11 @@ impl<'a> TerminalPanel<'a> {
         self.app.update_terminal_size(inner_area);
 
         // Render VT100 screen buffer
-        self.app.active_tab().pty.screen().render_to_buffer(inner_area, buf);
+        self.app
+            .active_tab()
+            .pty
+            .screen()
+            .render_to_buffer(inner_area, buf);
 
         // 3. Proactive Error Diagnosis floating modal in the terminal panel
         if let Some(ref diag) = self.app.proactive_error_diagnosis {

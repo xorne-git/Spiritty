@@ -255,4 +255,3 @@ models = ["gemini-3.8-flash"]
     let serialized_with_effort = toml::to_string(&cfg).unwrap();
     assert!(serialized_with_effort.contains("reasoning_effort = \"medium\""));
 }
-

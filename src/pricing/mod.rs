@@ -69,8 +69,14 @@ impl PricingRegistry {
         m.insert("local".to_string(), ModelPricing::free());
 
         // DeepSeek
-        m.insert("deepseek-v4.1-flash".to_string(), ModelPricing::new(0.30, 1.20));
-        m.insert("deepseek-v4-flash".to_string(), ModelPricing::new(0.30, 1.20));
+        m.insert(
+            "deepseek-v4.1-flash".to_string(),
+            ModelPricing::new(0.30, 1.20),
+        );
+        m.insert(
+            "deepseek-v4-flash".to_string(),
+            ModelPricing::new(0.30, 1.20),
+        );
         m.insert("deepseek-v4-pro".to_string(), ModelPricing::new(0.30, 1.20));
         m.insert("deepseek-flash".to_string(), ModelPricing::new(0.30, 1.20));
         m.insert("deepseek-chat".to_string(), ModelPricing::new(0.14, 0.28));

@@ -62,7 +62,10 @@ pub(crate) struct Message<'a> {
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum ContentPart<'a> {
-    Text { r#type: &'a str, text: &'a str },
+    Text {
+        r#type: &'a str,
+        text: &'a str,
+    },
     ImageUrl {
         r#type: &'a str,
         image_url: ImageUrl<'a>,
@@ -388,7 +391,8 @@ impl LlmProvider for OpenAiCompatibleProvider {
                                 if let Some(ref reason) = choice.finish_reason {
                                     if reason == "length" {
                                         if let Some(close_tag) = reasoning_bracket.finish() {
-                                            let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+                                            let _ = event_tx
+                                                .send(AppEvent::AgentChunk(close_tag.to_string()));
                                         }
                                         let _ = event_tx.send(AppEvent::AgentChunk(
                                             "\n\n[⚠️ Réponse interrompue : limite de tokens atteinte. Tapez 'continue' pour la suite.]".to_string(),
@@ -465,8 +469,8 @@ mod reasoning_bracket_tests {
 
 #[cfg(test)]
 mod vision_payload_tests {
-    use crate::app::MessageAttachment;
     use super::{ContentPart, ImageUrl, Message};
+    use crate::app::MessageAttachment;
 
     #[test]
     fn plain_text_message_is_single_text_part() {
@@ -495,7 +499,10 @@ mod vision_payload_tests {
         let msg = Message {
             role: "user",
             content: Some(vec![
-                ContentPart::Text { r#type: "text", text: "" },
+                ContentPart::Text {
+                    r#type: "text",
+                    text: "",
+                },
                 ContentPart::ImageUrl {
                     r#type: "image_url",
                     image_url: ImageUrl { url: &uri },
@@ -531,12 +538,13 @@ mod vision_payload_tests {
 
     #[test]
     fn build_api_messages_includes_system_prompt_when_non_empty() {
-        use crate::app::{ChatMessage, MessageRole};
         use super::build_api_messages;
+        use crate::app::{ChatMessage, MessageRole};
 
-        let messages = vec![
-            ChatMessage::new(MessageRole::User, "salut, peux tu acceder a internet?"),
-        ];
+        let messages = vec![ChatMessage::new(
+            MessageRole::User,
+            "salut, peux tu acceder a internet?",
+        )];
         let sys_prompt = "You are Spiritty. You have tool:web_search and tool:run_command.";
         let uris = vec![Vec::new()];
 
@@ -562,12 +570,10 @@ mod vision_payload_tests {
 
     #[test]
     fn build_api_messages_omits_system_prompt_when_empty_or_whitespace() {
-        use crate::app::{ChatMessage, MessageRole};
         use super::build_api_messages;
+        use crate::app::{ChatMessage, MessageRole};
 
-        let messages = vec![
-            ChatMessage::new(MessageRole::User, "hello"),
-        ];
+        let messages = vec![ChatMessage::new(MessageRole::User, "hello")];
         let uris = vec![Vec::new()];
 
         let api_messages = build_api_messages(&messages, "", &uris);
@@ -581,12 +587,15 @@ mod vision_payload_tests {
 
     #[test]
     fn build_api_messages_preserves_conversation_turn_sequence() {
-        use crate::app::{ChatMessage, MessageRole};
         use super::build_api_messages;
+        use crate::app::{ChatMessage, MessageRole};
 
         let messages = vec![
             ChatMessage::new(MessageRole::User, "ping 1.1.1.1"),
-            ChatMessage::new(MessageRole::Assistant, "```tool:run_command\nping -c 1 1.1.1.1\n```"),
+            ChatMessage::new(
+                MessageRole::Assistant,
+                "```tool:run_command\nping -c 1 1.1.1.1\n```",
+            ),
             ChatMessage::new(MessageRole::User, "super merci"),
         ];
         let sys_prompt = "You are Spiritty.";

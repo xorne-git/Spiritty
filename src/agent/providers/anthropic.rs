@@ -58,13 +58,9 @@ enum AnthropicContent<'a> {
 #[serde(tag = "type")]
 enum AnthropicBlock<'a> {
     #[serde(rename = "text")]
-    Text {
-        text: &'a str,
-    },
+    Text { text: &'a str },
     #[serde(rename = "image")]
-    Image {
-        source: AnthropicImageSource<'a>,
-    },
+    Image { source: AnthropicImageSource<'a> },
 }
 
 #[derive(Serialize)]
@@ -192,9 +188,7 @@ impl LlmProvider for AnthropicProvider {
             } else {
                 let mut blocks = Vec::with_capacity(msg.attachments.len() + 1);
                 if !msg.content.is_empty() {
-                    blocks.push(AnthropicBlock::Text {
-                        text: &msg.content,
-                    });
+                    blocks.push(AnthropicBlock::Text { text: &msg.content });
                 }
                 for (mime, data) in &inline_datas[idx] {
                     blocks.push(AnthropicBlock::Image {

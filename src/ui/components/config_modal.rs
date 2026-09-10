@@ -209,7 +209,9 @@ impl ConfigModalState {
                 )
             };
 
-        if selected_provider == ProviderType::DeepSeek && (model_input.contains("v4") || model_input.is_empty()) {
+        if selected_provider == ProviderType::DeepSeek
+            && (model_input.contains("v4") || model_input.is_empty())
+        {
             model_input = "deepseek-flash".to_string();
         }
 
@@ -302,7 +304,9 @@ impl ConfigModalState {
             self.reasoning_effort = ReasoningEffort::Default;
         }
 
-        if provider == ProviderType::DeepSeek && (self.model_input.contains("v4") || self.model_input.is_empty()) {
+        if provider == ProviderType::DeepSeek
+            && (self.model_input.contains("v4") || self.model_input.is_empty())
+        {
             self.model_input = "deepseek-flash".to_string();
         }
 
@@ -370,7 +374,9 @@ impl ConfigModalState {
         );
 
         // 2. Persist all edited providers into config
-        for (key, (model, base_url_str, api_key_in, api_key_saved, r_effort)) in &self.provider_edits {
+        for (key, (model, base_url_str, api_key_in, api_key_saved, r_effort)) in
+            &self.provider_edits
+        {
             let base_url = if base_url_str.trim().is_empty() {
                 None
             } else {
@@ -474,7 +480,8 @@ impl ConfigModalState {
             let lang = config.get_language();
             self.pricing_status = Some((
                 std::time::Instant::now(),
-                lang.t(crate::i18n::I18nKey::ConfigRefreshInProgress).to_string(),
+                lang.t(crate::i18n::I18nKey::ConfigRefreshInProgress)
+                    .to_string(),
                 Color::Cyan,
             ));
             return ConfigModalAction::RefreshModelsAndPricing;
@@ -662,7 +669,9 @@ impl ConfigModalState {
                         if let Some(models) = self.models_per_provider.get(&prov_key) {
                             if let Some(selected) = models.get(self.dropdown_selected_idx) {
                                 let mut sel = selected.clone();
-                                if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                                if self.selected_provider == ProviderType::DeepSeek
+                                    && sel.contains("v4")
+                                {
                                     sel = "deepseek-flash".to_string();
                                 }
                                 self.model_input = sel;
@@ -758,7 +767,9 @@ impl ConfigModalState {
                             };
                             self.dropdown_selected_idx = new_idx;
                             let mut sel = models[new_idx].clone();
-                            if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                            if self.selected_provider == ProviderType::DeepSeek
+                                && sel.contains("v4")
+                            {
                                 sel = "deepseek-flash".to_string();
                             }
                             self.model_input = sel;
@@ -802,7 +813,9 @@ impl ConfigModalState {
                             let new_idx = (self.dropdown_selected_idx + 1) % len;
                             self.dropdown_selected_idx = new_idx;
                             let mut sel = models[new_idx].clone();
-                            if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                            if self.selected_provider == ProviderType::DeepSeek
+                                && sel.contains("v4")
+                            {
                                 sel = "deepseek-flash".to_string();
                             }
                             self.model_input = sel;
@@ -1241,10 +1254,7 @@ impl ConfigModalState {
         save_spans.extend(key_pill("Ctrl", Color::Yellow));
         save_spans.push(Span::styled("+", Style::default().fg(Color::Yellow)));
         save_spans.extend(key_pill("S", Color::Yellow));
-        save_spans.push(Span::raw(format!(
-            " {}",
-            lang.t(I18nKey::ConfigButtonSave)
-        )));
+        save_spans.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigButtonSave))));
 
         let mut refresh_spans = Vec::new();
         refresh_spans.extend(key_pill("R", Color::Rgb(80, 200, 120)));
@@ -1297,8 +1307,7 @@ impl ConfigModalState {
             line1.push(Span::raw(gap1));
             line1.extend(close_spans);
 
-            let line2_len =
-                spans_visual_len(&refresh_spans) + spans_visual_len(&pricing_spans);
+            let line2_len = spans_visual_len(&refresh_spans) + spans_visual_len(&pricing_spans);
             let gap2 = if footer_width >= line2_len + 8 {
                 "    "
             } else if footer_width >= line2_len + 4 {

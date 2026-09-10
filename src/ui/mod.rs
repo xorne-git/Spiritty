@@ -113,10 +113,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
 
         let inner = Rect {
-            x: panel_area.x.saturating_add(1),
+            x: panel_area.x,
             y: panel_area.y.saturating_add(1),
-            width: panel_area.width.saturating_sub(2),
-            height: panel_area.height.saturating_sub(2),
+            width: panel_area.width,
+            height: panel_area.height.saturating_sub(1),
         };
 
         if inner.width > 0 && inner.height > 0 {
@@ -654,9 +654,7 @@ fn build_left_metrics(
     };
     let th_span = Span::styled(
         format!(" 🧠 {}", th_label),
-        Style::default()
-            .fg(th_color)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(th_color).add_modifier(Modifier::BOLD),
     );
     let th_w = th_span.width();
     if current_width + th_w <= max_width {

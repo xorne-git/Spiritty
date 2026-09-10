@@ -16,9 +16,7 @@ use crate::{
     system::{ActiveSession, HostsStore, SystemContext},
     ui::{
         chat_panel::prompt_visual_rows,
-        components::{
-            BookmarksModalState, ConfigModalState, ExportModalState, SessionModalState,
-        },
+        components::{BookmarksModalState, ConfigModalState, ExportModalState, SessionModalState},
         theme::ThemeId,
     },
 };
@@ -287,13 +285,20 @@ impl TerminalTab {
         match &self.active_session {
             ActiveSession::Ssh { target, .. } => {
                 if let Some(ref prof) = self.active_remote_profile {
-                    let short_distro = prof.distro.split_whitespace().next().unwrap_or(&prof.distro);
+                    let short_distro = prof
+                        .distro
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(&prof.distro);
                     format!("🌐 {} ({})", target, short_distro)
                 } else {
                     format!("🌐 {}", target)
                 }
             }
-            ActiveSession::Container { runtime, container_id } => {
+            ActiveSession::Container {
+                runtime,
+                container_id,
+            } => {
                 let cut = container_id.floor_char_boundary(8);
                 let short_id = if container_id.len() > 8 {
                     &container_id[..cut]
@@ -514,10 +519,7 @@ impl App {
         let exit_forward_tx = event_tx.clone();
         tokio::spawn(async move {
             while pty_exit_rx.recv().await.is_some() {
-                if exit_forward_tx
-                    .send(AppEvent::PtyExit { tab_id })
-                    .is_err()
-                {
+                if exit_forward_tx.send(AppEvent::PtyExit { tab_id }).is_err() {
                     break;
                 }
             }
@@ -903,7 +905,16 @@ impl App {
                 }
                 config_state.pricing_status = Some((
                     std::time::Instant::now(),
-                    format!("{} ({} {})", lang.t(crate::i18n::I18nKey::ConfigRefreshSuccess), models.len(), if lang == crate::i18n::Language::Fr { "modèles" } else { "models" }),
+                    format!(
+                        "{} ({} {})",
+                        lang.t(crate::i18n::I18nKey::ConfigRefreshSuccess),
+                        models.len(),
+                        if lang == crate::i18n::Language::Fr {
+                            "modèles"
+                        } else {
+                            "models"
+                        }
+                    ),
                     ratatui::style::Color::Green,
                 ));
             }
@@ -915,9 +926,14 @@ impl App {
         if let ModalState::Config(ref mut config_state) = self.modal {
             if config_state.selected_provider.key_str() == provider_key {
                 let msg = if error == "missing_key" {
-                    lang.t(crate::i18n::I18nKey::ConfigRefreshMissingKey).to_string()
+                    lang.t(crate::i18n::I18nKey::ConfigRefreshMissingKey)
+                        .to_string()
                 } else {
-                    format!("{}: {}", lang.t(crate::i18n::I18nKey::ConfigRefreshFailed), error)
+                    format!(
+                        "{}: {}",
+                        lang.t(crate::i18n::I18nKey::ConfigRefreshFailed),
+                        error
+                    )
                 };
                 config_state.pricing_status = Some((
                     std::time::Instant::now(),
@@ -1086,8 +1102,7 @@ impl App {
                 self.trigger_context_probe();
                 self.current_session.provider =
                     self.config.default_provider.display_name().to_string();
-                self.current_session.model =
-                    self.config.get_active_provider_config().model.clone();
+                self.current_session.model = self.config.get_active_provider_config().model.clone();
                 self.save_current_session();
                 self.modal = ModalState::None;
             }
@@ -1307,9 +1322,7 @@ impl App {
                 "sudo" | "standard" => {
                     self.config.auto_approve = crate::config::AutoApproveLevel::Sudo
                 }
-                "yolo" => {
-                    self.config.auto_approve = crate::config::AutoApproveLevel::Yolo
-                }
+                "yolo" => self.config.auto_approve = crate::config::AutoApproveLevel::Yolo,
                 _ => {}
             }
         }
@@ -1744,7 +1757,9 @@ impl App {
                 if self.is_dragging_split && total_width > 0 {
                     let pct = ((x as u32 * 100) / total_width as u32) as u16;
                     self.split_ratio = pct.clamp(15, 85);
-                } else if self.terminal_area.contains(ratatui::layout::Position { x, y })
+                } else if self
+                    .terminal_area
+                    .contains(ratatui::layout::Position { x, y })
                     && self.pty().mouse_protocol_mode() != vt100::MouseProtocolMode::None
                     && !mouse.modifiers.contains(KeyModifiers::SHIFT)
                 {
@@ -1763,7 +1778,9 @@ impl App {
                     let _ = self.config.save();
                 }
                 self.is_dragging_split = false;
-                if self.terminal_area.contains(ratatui::layout::Position { x, y })
+                if self
+                    .terminal_area
+                    .contains(ratatui::layout::Position { x, y })
                     && self.pty().mouse_protocol_mode() != vt100::MouseProtocolMode::None
                     && !mouse.modifiers.contains(KeyModifiers::SHIFT)
                 {
@@ -1840,17 +1857,15 @@ impl App {
         // pasting the text verbatim (PasteInto → no re-detection → no recursion).
         if crate::system::clipboard::looks_like_image_path(&text) {
             let paste_tx = self.event_tx.clone();
-            crate::system::clipboard::spawn_smart_paste_request(move |payload| {
-                match payload {
-                    Some(crate::system::clipboard::ClipboardPayload::Image(img)) => {
-                        let _ = paste_tx.send(AppEvent::PasteImage(img));
-                    }
-                    Some(crate::system::clipboard::ClipboardPayload::Text(txt)) => {
-                        let _ = paste_tx.send(AppEvent::PasteInto(txt));
-                    }
-                    None => {
-                        let _ = paste_tx.send(AppEvent::PasteInto(text));
-                    }
+            crate::system::clipboard::spawn_smart_paste_request(move |payload| match payload {
+                Some(crate::system::clipboard::ClipboardPayload::Image(img)) => {
+                    let _ = paste_tx.send(AppEvent::PasteImage(img));
+                }
+                Some(crate::system::clipboard::ClipboardPayload::Text(txt)) => {
+                    let _ = paste_tx.send(AppEvent::PasteInto(txt));
+                }
+                None => {
+                    let _ = paste_tx.send(AppEvent::PasteInto(text));
                 }
             });
             return;
@@ -2171,12 +2186,11 @@ impl App {
 
             if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
                 let current_title = self.active_tab().custom_title.clone().unwrap_or_default();
-                self.modal = ModalState::RenameTab(
-                    crate::ui::components::RenameTabModalState::new(
+                self.modal =
+                    ModalState::RenameTab(crate::ui::components::RenameTabModalState::new(
                         self.active_tab_index,
                         current_title,
-                    ),
-                );
+                    ));
                 return;
             }
 
@@ -2396,7 +2410,10 @@ impl App {
                     self.trigger_background_host_probe(target);
                 }
             }
-            ActiveSession::Container { runtime, container_id } => {
+            ActiveSession::Container {
+                runtime,
+                container_id,
+            } => {
                 self.system_context.active_remote_profile = None;
                 self.set_toast(format!("📦 {}: {}", runtime, container_id));
             }
@@ -2411,11 +2428,10 @@ impl App {
     }
 
     pub fn on_remote_host_probed(&mut self, target: String, output: String) {
-        if let Some(profile) = self.system_supervisor.on_remote_host_probed(
-            &target,
-            &output,
-            &mut self.system_context,
-        ) {
+        if let Some(profile) =
+            self.system_supervisor
+                .on_remote_host_probed(&target, &output, &mut self.system_context)
+        {
             self.set_toast(format!(
                 "🌐 {} — Profil {} enregistré",
                 target, profile.distro
@@ -2833,7 +2849,8 @@ impl App {
                     let before = &self.chat_input[..self.cursor_pos];
                     let trimmed = before.trim_end();
                     let word_start = trimmed.rfind(' ').map(|p| p + 1).unwrap_or(0);
-                    self.chat_input.replace_range(word_start..self.cursor_pos, "");
+                    self.chat_input
+                        .replace_range(word_start..self.cursor_pos, "");
                     self.cursor_pos = word_start;
                 }
             }
@@ -3029,8 +3046,14 @@ impl App {
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
                 if let Some(idx) = last_msg.content.rfind("```tool:") {
-                    let line_start = last_msg.content[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
-                    if last_msg.content[line_start..idx].chars().all(|c| c == ' ' || c == '\t') {
+                    let line_start = last_msg.content[..idx]
+                        .rfind('\n')
+                        .map(|p| p + 1)
+                        .unwrap_or(0);
+                    if last_msg.content[line_start..idx]
+                        .chars()
+                        .all(|c| c == ' ' || c == '\t')
+                    {
                         last_msg.content = last_msg.content[..line_start].trim_end().to_string();
                     }
                 }
@@ -3054,8 +3077,14 @@ impl App {
             if last_msg.role == MessageRole::Assistant {
                 // Strip the trailing ```tool:... code block if present
                 if let Some(idx) = last_msg.content.rfind("```tool:") {
-                    let line_start = last_msg.content[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
-                    if last_msg.content[line_start..idx].chars().all(|c| c == ' ' || c == '\t') {
+                    let line_start = last_msg.content[..idx]
+                        .rfind('\n')
+                        .map(|p| p + 1)
+                        .unwrap_or(0);
+                    if last_msg.content[line_start..idx]
+                        .chars()
+                        .all(|c| c == ' ' || c == '\t')
+                    {
                         last_msg.content.truncate(line_start);
                     }
                 }
@@ -3146,7 +3175,11 @@ impl App {
             is_remote,
             auto_prompt
         ));
-        self.active_pty_tool = Some(ToolCaptureSession::new(command, Some(result_tx), auto_prompt));
+        self.active_pty_tool = Some(ToolCaptureSession::new(
+            command,
+            Some(result_tx),
+            auto_prompt,
+        ));
     }
 
     /// Records a completed user-command execution into the chat history (as a `[RÉSULTAT...]`
@@ -3225,16 +3258,19 @@ impl App {
                         let lang = self.config.get_language();
                         let toast_msg = match (kind, lang) {
                             (InteractionKind::Password, Language::Fr) => {
-                                "🔒 Saisie requise dans le terminal (mot de passe / sudo)".to_string()
+                                "🔒 Saisie requise dans le terminal (mot de passe / sudo)"
+                                    .to_string()
                             }
                             (InteractionKind::Password, _) => {
                                 "🔒 Input required in terminal (password / sudo)".to_string()
                             }
                             (InteractionKind::Confirmation, Language::Fr) => {
-                                "⚡ Interaction requise dans le terminal ([o/n], confirmation...)".to_string()
+                                "⚡ Interaction requise dans le terminal ([o/n], confirmation...)"
+                                    .to_string()
                             }
                             (InteractionKind::Confirmation, _) => {
-                                "⚡ Interaction required in terminal ([y/n], confirmation...)".to_string()
+                                "⚡ Interaction required in terminal ([y/n], confirmation...)"
+                                    .to_string()
                             }
                             (InteractionKind::Pager, _) => unreachable!(),
                         };
@@ -3389,7 +3425,8 @@ impl App {
 
             if proposals.len() == 1 {
                 let cmd = proposals[0].clone();
-                if crate::agent::safety::should_auto_approve_command(&cmd, self.config.auto_approve) {
+                if crate::agent::safety::should_auto_approve_command(&cmd, self.config.auto_approve)
+                {
                     if self.consecutive_auto_proposals < MAX_CONSECUTIVE_AUTO_PROPOSALS {
                         self.consecutive_auto_proposals += 1;
                         self.last_injected_cmd = None;
@@ -3937,9 +3974,8 @@ pub fn is_natural_approval_phrase(text: &str) -> bool {
 
     // Prefix check for short affirmative expressions (e.g., "oui stp", "ok vas-y vite")
     if clean.len() <= 30 {
-        let starts_affirmative = clean.starts_with("oui ")
-            || clean.starts_with("ok ")
-            || clean.starts_with("yes ");
+        let starts_affirmative =
+            clean.starts_with("oui ") || clean.starts_with("ok ") || clean.starts_with("yes ");
         let contains_negative = clean.contains("non")
             || clean.contains("pas")
             || clean.contains("ne ")
@@ -3965,7 +4001,8 @@ pub fn is_natural_decline_phrase(text: &str) -> bool {
         .to_lowercase();
     matches!(
         clean.as_str(),
-        "non" | "no"
+        "non"
+            | "no"
             | "n"
             | "stop"
             | "annule"
@@ -4326,8 +4363,6 @@ fn probe_model_context(config: &Config, target: Arc<AtomicUsize>) {
         }
     });
 }
-
-
 
 /// Cleans and formats a multiline command into a valid single-line command or bash script wrapper.
 /// - If the command is a heredoc (`<<EOF`), script (shebang #!), or contains bash keywords (while/for/if/IFS), wraps it safely in `bash -c '...'` preserving newlines and markdown content verbatim.
@@ -4852,7 +4887,11 @@ pub fn ensure_non_interactive_command(cmd: &str) -> String {
                     true
                 } else {
                     let prev_char = rest[..actual_idx].chars().last().unwrap();
-                    prev_char.is_whitespace() || prev_char == ';' || prev_char == '&' || prev_char == '|' || prev_char == '('
+                    prev_char.is_whitespace()
+                        || prev_char == ';'
+                        || prev_char == '&'
+                        || prev_char == '|'
+                        || prev_char == '('
                 };
                 let next_idx = actual_idx + target.len();
                 let suffix_ok = if next_idx == rest.len() {
@@ -4916,8 +4955,6 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
     }
     std::path::PathBuf::from(path)
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -5689,8 +5726,14 @@ mod tests {
         // Switch to alternate screen (\x1b[?1049h), enable mouse SGR (\x1b[?1000h\x1b[?1006h), and bracketed paste (\x1b[?2004h)
         vt.process(b"\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h");
         assert!(vt.is_alternate_screen());
-        assert_eq!(vt.mouse_protocol_mode(), vt100::MouseProtocolMode::PressRelease);
-        assert_eq!(vt.mouse_protocol_encoding(), vt100::MouseProtocolEncoding::Sgr);
+        assert_eq!(
+            vt.mouse_protocol_mode(),
+            vt100::MouseProtocolMode::PressRelease
+        );
+        assert_eq!(
+            vt.mouse_protocol_encoding(),
+            vt100::MouseProtocolEncoding::Sgr
+        );
         assert!(vt.bracketed_paste());
 
         // Restore screen (\x1b[?1049l) and disable modes

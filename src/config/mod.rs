@@ -138,11 +138,7 @@ impl ProviderType {
                 "gemini-2.0-flash",
             ],
             ProviderType::Grok => &["grok-4.6", "grok-latest", "grok-2-latest", "grok-beta"],
-            ProviderType::DeepSeek => &[
-                "deepseek-flash",
-                "deepseek-chat",
-                "deepseek-reasoner",
-            ],
+            ProviderType::DeepSeek => &["deepseek-flash", "deepseek-chat", "deepseek-reasoner"],
             ProviderType::Zai => &[
                 "glm-5.3",
                 "glm-5.3-flash",

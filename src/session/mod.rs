@@ -286,7 +286,12 @@ pub fn compact_chat_messages(messages: &[ChatMessage]) -> CompactedHistory {
             "- ... ({} points intermédiaires archivés) ...",
             summary_points.len() - 23
         ));
-        pts.extend(summary_points.iter().skip(summary_points.len() - 20).cloned());
+        pts.extend(
+            summary_points
+                .iter()
+                .skip(summary_points.len() - 20)
+                .cloned(),
+        );
         pts
     } else {
         summary_points

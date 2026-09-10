@@ -276,10 +276,8 @@ impl SessionModalState {
                             crate::config::AutoApproveLevel::Yolo => (Color::Red, " ⚡"),
                             crate::config::AutoApproveLevel::Off => (Color::DarkGray, " ✋"),
                         };
-                        model_spans.push(Span::styled(
-                            badge_text,
-                            Style::default().fg(badge_color),
-                        ));
+                        model_spans
+                            .push(Span::styled(badge_text, Style::default().fg(badge_color)));
                     }
 
                     Row::new(vec![

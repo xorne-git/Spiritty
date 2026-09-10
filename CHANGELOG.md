@@ -22,6 +22,20 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
   - Déploiement de l'icône de bureau dans toutes les tailles standard FreeDesktop (`16x16`, `32x32`, `48x48`, `64x64`, `128x128`, `256x256`, `512x512` et SVG vectoriel `scalable`).
   - Embarquement direct dans [`src/brand.rs`](file:///home/xorne/Projets/Spiritty/src/brand.rs) (`ICON_PNG` et `ICON_SVG`).
   - Intégration visuelle dans `README.md`, `README.fr.md`, le script d'installation `install.sh` et le pipeline CI de release.
+- **Refonte visuelle et conteneur encadré des cartes de commandes (fidèle au design du site web)** :
+  - Refonte complète de [`render_command_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) et [`compose_approval_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) :
+    - Conteneur externe englobant aux coins arrondis (`╭─...─╮`, `│...│`, `╰─...─╯`).
+    - En-tête interne : éclair `⚡` et `COMMANDE #N` ambrés avec badge de risque sobre encadré (`[ SAFE ]`, `[ RISQUÉ ]`).
+    - Boîte intérieure encadrée dédiée au code avec texte en cyan lumineux (`Color::LightCyan`).
+    - Pied de carte épuré : libellé de statut (`"Validation requise avant exécution"`) à gauche et bouton touche `[ Alt + N ]` ambré à droite (sans suffixe verbeux `"Exécuter"`).
+    - Harmonisation de la carte d'approbation d'outils avec touches encadrées `[ F10 ]` et `[ Esc ]`.
+
+### Corrigé
+
+- **Sélection et copie souris de la dernière ligne du prompt multiligne** :
+  - Correction dans [`src/ui/mod.rs`](file:///home/xorne/Projets/Spiritty/src/ui/mod.rs) du calcul du rectangle de sélection (`inner.height = panel_area.height.saturating_sub(1)` au lieu de `saturating_sub(2)`).
+  - Auparavant, la double soustraction de bordure (`height - 2` puis `clamp(..., bottom - 1)`) tronquait la sélection à `panel_area.bottom() - 2`, empêchant la sélection et la copie de la 3ème ligne d'un prompt multiligne (ou de toute ligne inférieure du prompt et du terminal).
+  - La sélection à la souris peut désormais englober sans coupure l'intégralité du prompt multiligne jusqu'à la dernière ligne (`panel_area.bottom() - 1`).
 
 ---
 

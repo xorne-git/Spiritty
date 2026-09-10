@@ -386,10 +386,15 @@ pub fn scan_completed_sentinel(bytes: &[u8]) -> Option<i32> {
     const OSC_PREFIX: &[u8] = b"\x1b]777;spiritty_done;";
     const PLAIN_PREFIX: &[u8] = b"__SPIRITTY_DONE__:";
 
-    let (prefix, is_osc) = if let Some(idx) = bytes.windows(OSC_PREFIX.len()).rposition(|w| w == OSC_PREFIX) {
+    let (prefix, is_osc) = if let Some(idx) = bytes
+        .windows(OSC_PREFIX.len())
+        .rposition(|w| w == OSC_PREFIX)
+    {
         (&bytes[idx + OSC_PREFIX.len()..], true)
     } else {
-        let idx = bytes.windows(PLAIN_PREFIX.len()).rposition(|w| w == PLAIN_PREFIX)?;
+        let idx = bytes
+            .windows(PLAIN_PREFIX.len())
+            .rposition(|w| w == PLAIN_PREFIX)?;
         (&bytes[idx + PLAIN_PREFIX.len()..], false)
     };
 
@@ -478,7 +483,10 @@ pub fn is_waiting_for_user_interaction(raw_text: &str) -> Option<InteractionKind
 
 /// Backward compatibility helper for sudo password check.
 pub fn is_waiting_for_password(raw_text: &str) -> bool {
-    matches!(is_waiting_for_user_interaction(raw_text), Some(InteractionKind::Password))
+    matches!(
+        is_waiting_for_user_interaction(raw_text),
+        Some(InteractionKind::Password)
+    )
 }
 
 /// True if a line is (trailing) shell-prompt noise that should not be reported as command output.
@@ -757,7 +765,10 @@ mod tests {
             is_waiting_for_user_interaction("--More--(73%)"),
             Some(InteractionKind::Pager)
         );
-        assert_eq!(is_waiting_for_user_interaction("normal output line\n"), None);
+        assert_eq!(
+            is_waiting_for_user_interaction("normal output line\n"),
+            None
+        );
     }
 
     #[test]
@@ -773,7 +784,11 @@ mod tests {
 
         let out = session.ingest(b"test\r\n\x1b]777;spiritty_done;0\x07");
         match out {
-            IngestOutcome::Concluded { command, summary, auto_prompt } => {
+            IngestOutcome::Concluded {
+                command,
+                summary,
+                auto_prompt,
+            } => {
                 assert_eq!(command, "echo test");
                 assert_eq!(summary, "Sortie dans le terminal:\ntest");
                 assert!(!auto_prompt);

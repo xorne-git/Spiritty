@@ -325,7 +325,10 @@ async fn test_session_auto_approve_persistence_and_restoration() {
 
     // Verify list_sessions contains auto_approve
     let list = SessionStorage::list_sessions().expect("list sessions");
-    let header = list.iter().find(|h| h.id == session_id).expect("found in list");
+    let header = list
+        .iter()
+        .find(|h| h.id == session_id)
+        .expect("found in list");
     assert_eq!(header.auto_approve, Some(AutoApproveLevel::Yolo));
 
     // Create App instance and test load_session
@@ -336,13 +339,19 @@ async fn test_session_auto_approve_persistence_and_restoration() {
 
     app.load_session(session_id);
     assert_eq!(app.config.auto_approve, AutoApproveLevel::Yolo);
-    assert_eq!(app.current_session.auto_approve, Some(AutoApproveLevel::Yolo));
+    assert_eq!(
+        app.current_session.auto_approve,
+        Some(AutoApproveLevel::Yolo)
+    );
 
     // Cycle auto approve (Yolo -> Off -> Safe -> Sudo -> Yolo)
     let next = app.cycle_auto_approve();
     assert_eq!(next, AutoApproveLevel::Off);
     assert_eq!(app.config.auto_approve, AutoApproveLevel::Off);
-    assert_eq!(app.current_session.auto_approve, Some(AutoApproveLevel::Off));
+    assert_eq!(
+        app.current_session.auto_approve,
+        Some(AutoApproveLevel::Off)
+    );
 
     // Cleanup
     let _ = SessionStorage::delete(session_id);
@@ -411,7 +420,9 @@ fn test_compaction_filters_errors_and_bounds_giant_outputs() {
     // Add a transient timeout error
     messages.push(ChatMessage {
         role: MessageRole::Assistant,
-        content: "⚠️ Erreur : Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE).".to_string(),
+        content:
+            "⚠️ Erreur : Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE)."
+                .to_string(),
         command_proposal: None,
         attachments: Vec::new(),
     });
@@ -420,19 +431,27 @@ fn test_compaction_filters_errors_and_bounds_giant_outputs() {
     let giant_content = "X".repeat(10000);
     messages.push(ChatMessage {
         role: MessageRole::User,
-        content: format!("[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'grep -rn test']: {}", giant_content),
+        content: format!(
+            "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'grep -rn test']: {}",
+            giant_content
+        ),
         command_proposal: None,
         attachments: Vec::new(),
     });
 
     let compacted = compact_chat_messages(&messages);
     // Transient error was filtered out
-    assert!(!compacted.messages.iter().any(|m| m.content.contains("⚠️ Erreur")));
+    assert!(!compacted
+        .messages
+        .iter()
+        .any(|m| m.content.contains("⚠️ Erreur")));
 
     // Giant message was bounded (should not be 10,000 chars)
     let last_msg = compacted.messages.last().unwrap();
     assert!(last_msg.content.len() < 7000);
-    assert!(last_msg.content.contains("sortie tronquée pour le contexte LLM"));
+    assert!(last_msg
+        .content
+        .contains("sortie tronquée pour le contexte LLM"));
 }
 
 #[tokio::test]
@@ -486,7 +505,10 @@ async fn test_auto_approve_command_proposal_lifecycle() {
         attachments: Vec::new(),
     });
     app.on_agent_done();
-    assert!(app.active_pty_tool.is_some(), "Safe command must be auto-executed in Sudo mode");
+    assert!(
+        app.active_pty_tool.is_some(),
+        "Safe command must be auto-executed in Sudo mode"
+    );
     assert_eq!(app.consecutive_auto_proposals, 1);
 
     // Cancel active capture cleanly
@@ -504,7 +526,10 @@ async fn test_auto_approve_command_proposal_lifecycle() {
         attachments: Vec::new(),
     });
     app.on_agent_done();
-    assert!(app.active_pty_tool.is_none(), "Risky command must NEVER be auto-executed in Sudo mode");
+    assert!(
+        app.active_pty_tool.is_none(),
+        "Risky command must NEVER be auto-executed in Sudo mode"
+    );
     assert_eq!(app.consecutive_auto_proposals, 0);
 
     // 4. Multiple command proposals are NOT auto-executed (user must choose)
@@ -512,12 +537,16 @@ async fn test_auto_approve_command_proposal_lifecycle() {
     app.messages.clear();
     app.messages.push(ChatMessage {
         role: MessageRole::Assistant,
-        content: "Deux options :\n```bash\napt update\n```\nou :\n```bash\npacman -Sy\n```".to_string(),
+        content: "Deux options :\n```bash\napt update\n```\nou :\n```bash\npacman -Sy\n```"
+            .to_string(),
         command_proposal: None,
         attachments: Vec::new(),
     });
     app.on_agent_done();
-    assert!(app.active_pty_tool.is_none(), "Multiple alternative proposals require user choice");
+    assert!(
+        app.active_pty_tool.is_none(),
+        "Multiple alternative proposals require user choice"
+    );
     assert_eq!(app.consecutive_auto_proposals, 0);
 
     // 5. Consecutive auto-proposals safety cap (10)
@@ -531,11 +560,11 @@ async fn test_auto_approve_command_proposal_lifecycle() {
         attachments: Vec::new(),
     });
     app.on_agent_done();
-    assert!(app.toast_message.is_some(), "Must notify user when safety limit is reached");
+    assert!(
+        app.toast_message.is_some(),
+        "Must notify user when safety limit is reached"
+    );
 
     // Clean up test session so it never pollutes the user's saved sessions
     let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
 }
-
-
-

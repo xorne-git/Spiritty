@@ -102,8 +102,7 @@ impl RenameTabModalState {
             );
 
             // Text input field box
-            let input_area =
-                Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
+            let input_area = Rect::new(inner.x + 1, inner.y + 1, inner.width.saturating_sub(2), 1);
             let input_style = Style::default()
                 .bg(palette.selection_bg)
                 .fg(palette.text_primary);
