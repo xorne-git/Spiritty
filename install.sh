@@ -264,36 +264,48 @@ setup_desktop_entry() {
             ;;
     esac
 
-    # 1. Install Icons (SVG scalable & high-res PNG)
-    local icon_scalable_dir="$HOME/.local/share/icons/hicolor/scalable/apps"
+    # 1. Install Icons (multi-res PNG & pixmaps)
     local icon_512_dir="$HOME/.local/share/icons/hicolor/512x512/apps"
-    mkdir -p "$icon_scalable_dir" "$icon_512_dir"
-    local icon_dest="${icon_scalable_dir}/spiritty.svg"
+    local pixmaps_dir="$HOME/.local/share/pixmaps"
+    mkdir -p "$icon_512_dir" "$pixmaps_dir"
     local icon_png_dest="${icon_512_dir}/spiritty.png"
+    local pixmaps_png_dest="${pixmaps_dir}/spiritty.png"
 
-    if [ -f "${TMP_DIR}/spiritty.svg" ]; then
-        cp "${TMP_DIR}/spiritty.svg" "$icon_dest"
-    elif [ -f "${TMP_DIR}/assets/icons/spiritty.svg" ]; then
-        cp "${TMP_DIR}/assets/icons/spiritty.svg" "$icon_dest"
-    elif [ -f "assets/icons/spiritty.svg" ]; then
-        cp "assets/icons/spiritty.svg" "$icon_dest"
-    else
-        info "Téléchargement de l'icône officielle (SVG)..."
-        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
-            || curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
-            || true
+    # Remove stale old SVG icon if present so it does not hijack PNG icon resolution in Qt/DMS
+    rm -f "$HOME/.local/share/icons/hicolor/scalable/apps/spiritty.svg" 2>/dev/null || true
+
+    local src_png=""
+    if [ -f "${TMP_DIR}/spiritty.png" ]; then
+        src_png="${TMP_DIR}/spiritty.png"
+    elif [ -f "${TMP_DIR}/assets/icons/spiritty.png" ]; then
+        src_png="${TMP_DIR}/assets/icons/spiritty.png"
+    elif [ -f "assets/icons/spiritty.png" ]; then
+        src_png="assets/icons/spiritty.png"
     fi
 
-    if [ -f "${TMP_DIR}/spiritty.png" ]; then
-        cp "${TMP_DIR}/spiritty.png" "$icon_png_dest"
-    elif [ -f "${TMP_DIR}/assets/icons/spiritty.png" ]; then
-        cp "${TMP_DIR}/assets/icons/spiritty.png" "$icon_png_dest"
-    elif [ -f "assets/icons/spiritty.png" ]; then
-        cp "assets/icons/spiritty.png" "$icon_png_dest"
+    if [ -n "$src_png" ] && [ -f "$src_png" ]; then
+        cp "$src_png" "$icon_png_dest"
+        cp "$src_png" "$pixmaps_png_dest"
     else
-        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/assets/icons/spiritty.png" -o "$icon_png_dest" 2>/dev/null \
-            || curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.png" -o "$icon_png_dest" 2>/dev/null \
+        info "Téléchargement de l'icône officielle..."
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.png" -o "$icon_png_dest" 2>/dev/null \
             || true
+        [ -f "$icon_png_dest" ] && cp "$icon_png_dest" "$pixmaps_png_dest" 2>/dev/null || true
+    fi
+
+    # Install multi-size icons if convert/magick or python is present
+    if command -v magick >/dev/null 2>&1 && [ -f "$icon_png_dest" ]; then
+        for sz in 16 24 32 48 64 96 128 256; do
+            local sz_dir="$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps"
+            mkdir -p "$sz_dir"
+            magick "$icon_png_dest" -resize "${sz}x${sz}" "${sz_dir}/spiritty.png" 2>/dev/null || true
+        done
+    elif command -v convert >/dev/null 2>&1 && [ -f "$icon_png_dest" ]; then
+        for sz in 16 24 32 48 64 96 128 256; do
+            local sz_dir="$HOME/.local/share/icons/hicolor/${sz}x${sz}/apps"
+            mkdir -p "$sz_dir"
+            convert "$icon_png_dest" -resize "${sz}x${sz}" "${sz_dir}/spiritty.png" 2>/dev/null || true
+        done
     fi
 
     # 2. Install Desktop Entry
@@ -319,6 +331,9 @@ EOF
     fi
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    fi
+    if systemctl --user is-active dsearch.service >/dev/null 2>&1; then
+        systemctl --user restart dsearch.service 2>/dev/null || true
     fi
     if systemctl --user is-active dms.service >/dev/null 2>&1; then
         systemctl --user restart dms.service 2>/dev/null || true
