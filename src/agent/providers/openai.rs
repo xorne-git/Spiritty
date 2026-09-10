@@ -52,16 +52,16 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-#[derive(Serialize)]
-struct Message<'a> {
-    role: &'a str,
+#[derive(Serialize, Debug, PartialEq)]
+pub(crate) struct Message<'a> {
+    pub(crate) role: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<Vec<ContentPart<'a>>>,
+    pub(crate) content: Option<Vec<ContentPart<'a>>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 #[serde(untagged)]
-enum ContentPart<'a> {
+pub(crate) enum ContentPart<'a> {
     Text { r#type: &'a str, text: &'a str },
     ImageUrl {
         r#type: &'a str,
@@ -69,9 +69,9 @@ enum ContentPart<'a> {
     },
 }
 
-#[derive(Serialize)]
-struct ImageUrl<'a> {
-    url: &'a str,
+#[derive(Serialize, Debug, PartialEq)]
+pub(crate) struct ImageUrl<'a> {
+    pub(crate) url: &'a str,
 }
 
 #[derive(Serialize)]
@@ -180,6 +180,64 @@ impl ReasoningBracket {
     }
 }
 
+pub(crate) fn build_api_messages<'a>(
+    messages: &'a [ChatMessage],
+    system_prompt: &'a str,
+    message_uris: &'a [Vec<String>],
+) -> Vec<Message<'a>> {
+    let mut api_messages = Vec::with_capacity(messages.len() + 1);
+
+    if !system_prompt.trim().is_empty() {
+        api_messages.push(Message {
+            role: "system",
+            content: Some(vec![ContentPart::Text {
+                r#type: "text",
+                text: system_prompt,
+            }]),
+        });
+    }
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let role = match msg.role {
+            MessageRole::User => "user",
+            MessageRole::Assistant => "assistant",
+            MessageRole::System => "user",
+        };
+        if msg.attachments.is_empty() {
+            api_messages.push(Message {
+                role,
+                content: Some(vec![ContentPart::Text {
+                    r#type: "text",
+                    text: &msg.content,
+                }]),
+            });
+        } else {
+            // Vision turn: text + one image part per attachment (data: URI). The text
+            // part is retained so an image-only attach still carries an empty text block
+            // (the API refuses an image-only turn for some providers).
+            let mut parts = Vec::with_capacity(msg.attachments.len() + 1);
+            parts.push(ContentPart::Text {
+                r#type: "text",
+                text: &msg.content,
+            });
+            if let Some(uris) = message_uris.get(idx) {
+                for uri in uris {
+                    parts.push(ContentPart::ImageUrl {
+                        r#type: "image_url",
+                        image_url: ImageUrl { url: uri },
+                    });
+                }
+            }
+            api_messages.push(Message {
+                role,
+                content: Some(parts),
+            });
+        }
+    }
+
+    api_messages
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiCompatibleProvider {
     async fn stream_chat(
@@ -202,18 +260,6 @@ impl LlmProvider for OpenAiCompatibleProvider {
             }
         }
 
-        let mut api_messages = Vec::new();
-
-        if !system_prompt.is_empty() {
-            api_messages.push(Message {
-                role: "system",
-                content: Some(vec![ContentPart::Text {
-                    r#type: "text",
-                    text: system_prompt,
-                }]),
-            });
-        }
-
         // Owned data-URIs of every attachment, aligned per-message with `messages`. They
         // must outlive the request body (which borrows them), so they are precomputed
         // rather than produced inline (a temporary would be dropped).
@@ -222,42 +268,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             .map(|m| m.attachments.iter().map(|a| a.data_uri()).collect())
             .collect();
 
-        let mut api_messages = Vec::new();
-        for (idx, msg) in messages.iter().enumerate() {
-            let role = match msg.role {
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::System => "user",
-            };
-            if msg.attachments.is_empty() {
-                api_messages.push(Message {
-                    role,
-                    content: Some(vec![ContentPart::Text {
-                        r#type: "text",
-                        text: &msg.content,
-                    }]),
-                });
-            } else {
-                // Vision turn: text + one image part per attachment (data: URI). The text
-                // part is retained so an image-only attach still carries an empty text block
-                // (the API refuses an image-only turn for some providers).
-                let mut parts = Vec::with_capacity(msg.attachments.len() + 1);
-                parts.push(ContentPart::Text {
-                    r#type: "text",
-                    text: &msg.content,
-                });
-                for uri in &message_uris[idx] {
-                    parts.push(ContentPart::ImageUrl {
-                        r#type: "image_url",
-                        image_url: ImageUrl { url: uri },
-                    });
-                }
-                api_messages.push(Message {
-                    role,
-                    content: Some(parts),
-                });
-            }
-        }
+        let api_messages = build_api_messages(messages, system_prompt, &message_uris);
 
         let reasoning_effort = match self.reasoning_effort {
             ReasoningEffort::Low => Some("low"),
@@ -266,8 +277,15 @@ impl LlmProvider for OpenAiCompatibleProvider {
             _ => None,
         };
 
+        // DeepSeek routes all v4 models (v4-pro, v4-flash, v4.1, etc.) to "deepseek-flash".
+        let model_str = if self.base_url.contains("deepseek") && self.model.contains("v4") {
+            "deepseek-flash"
+        } else {
+            &self.model
+        };
+
         let request_body = ChatCompletionRequest {
-            model: &self.model,
+            model: model_str,
             messages: api_messages,
             stream: true,
             stream_options: Some(StreamOptions {
@@ -509,5 +527,76 @@ mod vision_payload_tests {
         let json = serde_json::to_value(&att).unwrap();
         assert_eq!(json["mime_type"], "image/png");
         assert_eq!(json["data_base64"], "iVBORw0KGgo");
+    }
+
+    #[test]
+    fn build_api_messages_includes_system_prompt_when_non_empty() {
+        use crate::app::{ChatMessage, MessageRole};
+        use super::build_api_messages;
+
+        let messages = vec![
+            ChatMessage::new(MessageRole::User, "salut, peux tu acceder a internet?"),
+        ];
+        let sys_prompt = "You are Spiritty. You have tool:web_search and tool:run_command.";
+        let uris = vec![Vec::new()];
+
+        let api_messages = build_api_messages(&messages, sys_prompt, &uris);
+        assert_eq!(api_messages.len(), 2);
+        assert_eq!(api_messages[0].role, "system");
+        assert_eq!(
+            api_messages[0].content,
+            Some(vec![ContentPart::Text {
+                r#type: "text",
+                text: sys_prompt,
+            }])
+        );
+        assert_eq!(api_messages[1].role, "user");
+        assert_eq!(
+            api_messages[1].content,
+            Some(vec![ContentPart::Text {
+                r#type: "text",
+                text: "salut, peux tu acceder a internet?",
+            }])
+        );
+    }
+
+    #[test]
+    fn build_api_messages_omits_system_prompt_when_empty_or_whitespace() {
+        use crate::app::{ChatMessage, MessageRole};
+        use super::build_api_messages;
+
+        let messages = vec![
+            ChatMessage::new(MessageRole::User, "hello"),
+        ];
+        let uris = vec![Vec::new()];
+
+        let api_messages = build_api_messages(&messages, "", &uris);
+        assert_eq!(api_messages.len(), 1);
+        assert_eq!(api_messages[0].role, "user");
+
+        let api_messages_whitespace = build_api_messages(&messages, "   \n\t  ", &uris);
+        assert_eq!(api_messages_whitespace.len(), 1);
+        assert_eq!(api_messages_whitespace[0].role, "user");
+    }
+
+    #[test]
+    fn build_api_messages_preserves_conversation_turn_sequence() {
+        use crate::app::{ChatMessage, MessageRole};
+        use super::build_api_messages;
+
+        let messages = vec![
+            ChatMessage::new(MessageRole::User, "ping 1.1.1.1"),
+            ChatMessage::new(MessageRole::Assistant, "```tool:run_command\nping -c 1 1.1.1.1\n```"),
+            ChatMessage::new(MessageRole::User, "super merci"),
+        ];
+        let sys_prompt = "You are Spiritty.";
+        let uris = vec![Vec::new(), Vec::new(), Vec::new()];
+
+        let api_messages = build_api_messages(&messages, sys_prompt, &uris);
+        assert_eq!(api_messages.len(), 4);
+        assert_eq!(api_messages[0].role, "system");
+        assert_eq!(api_messages[1].role, "user");
+        assert_eq!(api_messages[2].role, "assistant");
+        assert_eq!(api_messages[3].role, "user");
     }
 }

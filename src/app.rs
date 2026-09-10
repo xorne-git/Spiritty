@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     agent::AgentEngine,
-    config::{Config, ProviderType},
+    config::{AutoApproveLevel, Config, ProviderType},
     event::AppEvent,
     i18n::Language,
     pty::PtyProcess,
@@ -389,6 +389,7 @@ pub struct App {
     pub last_injected_cmd: Option<String>,
     pub detected_context_window: Arc<AtomicUsize>,
     pub active_pty_tool: Option<PtyToolCapture>,
+    pub consecutive_auto_proposals: usize,
     pub chat_scroll_from_bottom: u16,
     pub chat_scroll_extra_down: u16,
     /// Index (into `messages`) of the conversation entry whose reasoning block is
@@ -686,6 +687,7 @@ impl App {
             last_injected_cmd: None,
             detected_context_window,
             active_pty_tool: None,
+            consecutive_auto_proposals: 0,
             chat_scroll_from_bottom: 0,
             chat_scroll_extra_down: 0,
             expanded_thought: None,
@@ -1229,6 +1231,7 @@ impl App {
                 }
 
                 // Restore auto-approve level if persisted in session
+                self.consecutive_auto_proposals = 0;
                 let auto_level = loaded.auto_approve;
                 if let Some(lvl) = auto_level {
                     self.config.auto_approve = lvl;
@@ -1318,6 +1321,7 @@ impl App {
     }
 
     pub fn new_session(&mut self) {
+        self.consecutive_auto_proposals = 0;
         if self.agent.is_generating {
             self.stop_agent_generation();
         }
@@ -1590,7 +1594,7 @@ impl App {
             1_048_576
         } else if model.contains("claude") {
             200_000
-        } else if model.contains("deepseek-v4")
+        } else if model.contains("deepseek")
             || model.contains("grok")
             || model.contains("gpt-4")
             || model.contains("gpt-5")
@@ -2177,6 +2181,7 @@ impl App {
             }
 
             if let Some(idx) = key_to_card_index(key.code) {
+                self.consecutive_auto_proposals = 0;
                 if self.execute_command_by_index(idx, true) {
                     return;
                 }
@@ -2690,6 +2695,7 @@ impl App {
         // 3. Alt+1..9 or Alt+&.._ (AZERTY) to execute a specific proposed command card
         if key.modifiers.contains(KeyModifiers::ALT) {
             if let Some(idx) = key_to_card_index(key.code) {
+                self.consecutive_auto_proposals = 0;
                 if self.execute_command_by_index(idx, true) {
                     return;
                 }
@@ -2715,6 +2721,7 @@ impl App {
                     if let Some(target_idx) =
                         parse_command_execution_request(&input, proposals.len())
                     {
+                        self.consecutive_auto_proposals = 0;
                         self.chat_input.clear();
                         self.cursor_pos = 0;
                         self.history_index = None;
@@ -2730,6 +2737,7 @@ impl App {
                     }
                     self.history_index = None;
                     self.input_draft.clear();
+                    self.consecutive_auto_proposals = 0;
 
                     // Clear any lingering error diagnosis upon new message
                     self.proactive_error_diagnosis = None;
@@ -3020,8 +3028,11 @@ impl App {
 
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
-                if let Some(idx) = last_msg.content.find("```tool:") {
-                    last_msg.content = last_msg.content[..idx].trim_end().to_string();
+                if let Some(idx) = last_msg.content.rfind("```tool:") {
+                    let line_start = last_msg.content[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                    if last_msg.content[line_start..idx].chars().all(|c| c == ' ' || c == '\t') {
+                        last_msg.content = last_msg.content[..line_start].trim_end().to_string();
+                    }
                 }
             }
         }
@@ -3042,8 +3053,11 @@ impl App {
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
                 // Strip the trailing ```tool:... code block if present
-                if let Some(idx) = last_msg.content.find("```tool:") {
-                    last_msg.content.truncate(idx);
+                if let Some(idx) = last_msg.content.rfind("```tool:") {
+                    let line_start = last_msg.content[..idx].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                    if last_msg.content[line_start..idx].chars().all(|c| c == ' ' || c == '\t') {
+                        last_msg.content.truncate(line_start);
+                    }
                 }
                 let clean_base = last_msg.content.trim_end().to_string();
                 if command.starts_with("🌐") {
@@ -3355,9 +3369,52 @@ impl App {
             }
         }
         self.save_current_session();
+
+        // Check if the assistant produced a single command proposal eligible for auto-execution
+        const MAX_CONSECUTIVE_AUTO_PROPOSALS: usize = 10;
+        if self.config.auto_approve != AutoApproveLevel::Off
+            && self.active_pty_tool.is_none()
+            && self.pending_tool_approval.is_none()
+            && self.chat_input.trim().is_empty()
+        {
+            let proposals = if let Some(last_msg) = self.messages.last() {
+                if last_msg.role == MessageRole::Assistant {
+                    extract_all_command_proposals(&last_msg.content)
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            if proposals.len() == 1 {
+                let cmd = proposals[0].clone();
+                if crate::agent::safety::should_auto_approve_command(&cmd, self.config.auto_approve) {
+                    if self.consecutive_auto_proposals < MAX_CONSECUTIVE_AUTO_PROPOSALS {
+                        self.consecutive_auto_proposals += 1;
+                        self.last_injected_cmd = None;
+                        if self.execute_command_by_index(0, true) {
+                            return;
+                        }
+                    } else {
+                        // Safety pause: reached limit of consecutive automatic commands
+                        let lang = self.config.get_language();
+                        self.set_toast(
+                            crate::i18n::t(
+                                crate::i18n::I18nKey::AutoApproveMaxConsecutiveReached,
+                                lang,
+                            )
+                            .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        self.consecutive_auto_proposals = 0;
     }
 
     pub fn on_agent_error(&mut self, error: String) {
+        self.consecutive_auto_proposals = 0;
         self.agent.is_generating = false;
         self.pending_tool_approval = None;
         self.active_pty_tool = None;
@@ -3390,6 +3447,7 @@ impl App {
     }
 
     pub fn stop_agent_generation(&mut self) {
+        self.consecutive_auto_proposals = 0;
         if self.agent.is_generating {
             self.agent.stop_generation();
             self.pending_tool_approval = None;
@@ -3635,10 +3693,17 @@ pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
         if let Some(pos) = working.find(fence) {
             let before = &working[..pos];
             let after = &working[pos + fence.len()..];
-            let trimmed_after = after.trim_end_matches('`').trim();
-            if !trimmed_after.is_empty() {
-                working = format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
-                break;
+            // If the remaining text already contains valid code fences (```), do not swallow
+            // normal markdown explanations or subsequent blocks into a fake bash block.
+            // Simply remove the spurious empty fence.
+            if after.contains("```") {
+                working = format!("{}{}", before, after);
+            } else {
+                let trimmed_after = after.trim_end_matches('`').trim();
+                if !trimmed_after.is_empty() {
+                    working = format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
+                    break;
+                }
             }
         }
     }
@@ -3651,27 +3716,71 @@ pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
     working
 }
 
+/// Finds the next valid opening code fence (```) in `s`.
+/// A valid opening fence must start at the beginning of a line (optional spaces/tabs)
+/// and be immediately followed by an info string (no spaces/quotes/backticks) and a newline.
+pub fn find_opening_code_fence(s: &str) -> Option<(usize, &str, &str)> {
+    let mut pos = 0;
+    while let Some(rel) = s[pos..].find("```") {
+        let fence_pos = pos + rel;
+        let line_start = s[..fence_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let prefix = &s[line_start..fence_pos];
+        if prefix.chars().all(|c| c == ' ' || c == '\t') {
+            let after_fence = &s[fence_pos + 3..];
+            if let Some(first_nl) = after_fence.find('\n') {
+                let tag = after_fence[..first_nl].trim();
+                if !tag
+                    .chars()
+                    .any(|c| c == ' ' || c == '\t' || c == '`' || c == '"' || c == '\'')
+                {
+                    let code_rest = &after_fence[first_nl + 1..];
+                    return Some((fence_pos, tag, code_rest));
+                }
+            }
+        }
+        pos = fence_pos + 3;
+    }
+    None
+}
+
+/// Finds the offset of the closing code fence (```) in `s`.
+/// A valid closing fence must be at the start of a line (preceded only by spaces/tabs)
+/// and followed only by whitespace until the end of the line or string.
+pub fn find_closing_code_fence(s: &str) -> Option<usize> {
+    let mut pos = 0;
+    while let Some(rel) = s[pos..].find("```") {
+        let fence_pos = pos + rel;
+        let line_start = s[..fence_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let prefix = &s[line_start..fence_pos];
+        if prefix.chars().all(|c| c == ' ' || c == '\t') {
+            let after = &s[fence_pos + 3..];
+            let line_end = after
+                .find('\n')
+                .map(|p| fence_pos + 3 + p)
+                .unwrap_or(s.len());
+            let tail = &s[fence_pos + 3..line_end];
+            if tail.chars().all(|c| c == ' ' || c == '\t' || c == '\r') {
+                return Some(fence_pos);
+            }
+        }
+        pos = fence_pos + 3;
+    }
+    None
+}
+
 /// Extracts all proposed shell commands from markdown code blocks (excluding output/tools/trees)
 pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
     // The model's private <think>…</think> deliberation frequently contains illustrative
     // (non-executable) code fences. These must never surface as actionable proposals — the
     // tool-call parser already strips them (see agent::tools::strip_think_blocks). Strip them
     // here too so an example block inside the reasoning is not executed as a real command.
-    let stripped =
-        crate::agent::tools::strip_think_blocks(text);
+    let stripped = crate::agent::tools::strip_think_blocks(text);
     let repaired = repair_prematurely_closed_code_blocks(&stripped);
     let mut list = Vec::new();
     let mut remaining = repaired.as_str();
 
-    while let Some(start_idx) = remaining.find("```") {
-        let after_fence = &remaining[start_idx + 3..];
-        let (fence_tag, code_rest) = if let Some(first_nl) = after_fence.find('\n') {
-            (after_fence[..first_nl].trim(), &after_fence[first_nl + 1..])
-        } else {
-            ("", after_fence)
-        };
-
-        if let Some(end_idx) = code_rest.find("```") {
+    while let Some((_start_idx, fence_tag, code_rest)) = find_opening_code_fence(remaining) {
+        if let Some(end_idx) = find_closing_code_fence(code_rest) {
             let code_content = code_rest[..end_idx].trim();
             if is_executable_command_block(fence_tag, code_content) {
                 // Strip spurious interpreter framing (`bash`, `sudo sh`, shebang lines, a
@@ -3682,9 +3791,14 @@ pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
                     list.push(cleaned);
                 }
             }
-            remaining = &code_rest[end_idx + 3..];
+            let after_close = &code_rest[end_idx + 3..];
+            remaining = after_close
+                .strip_prefix('\n')
+                .or_else(|| after_close.strip_prefix("\r\n"))
+                .unwrap_or(after_close);
         } else {
-            break;
+            // Unclosed code block: continue scanning remaining content
+            remaining = code_rest;
         }
     }
 
@@ -4410,7 +4524,12 @@ fn is_clean_command_line(line: &str) -> bool {
     }
 
     let lower = l.to_lowercase();
-    if lower.starts_with("cela ")
+    if lower == "pour"
+        || lower == "suite"
+        || lower == "attention"
+        || lower == "voici"
+        || lower == "cela"
+        || lower.starts_with("cela ")
         || lower.starts_with("pour ")
         || lower.starts_with("si ")
         || lower.starts_with("voici ")

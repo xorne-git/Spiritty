@@ -456,4 +456,86 @@ async fn test_alt_1_on_resumed_session() {
     assert!(!app.should_quit);
 }
 
+#[tokio::test]
+async fn test_auto_approve_command_proposal_lifecycle() {
+    use spiritty::app::App;
+    use spiritty::config::AutoApproveLevel;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 24, 80).expect("create app");
+
+    // 1. Off mode: Safe command proposal is NOT auto-executed
+    app.config.auto_approve = AutoApproveLevel::Off;
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Voici le code :\n```bash\nsed -n '305,345p' src/agent/tools.rs\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.on_agent_done();
+    assert!(app.active_pty_tool.is_none());
+    assert_eq!(app.consecutive_auto_proposals, 0);
+
+    // 2. Sudo mode: Safe command proposal IS auto-executed
+    app.config.auto_approve = AutoApproveLevel::Sudo;
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Voici le code :\n```bash\nsed -n '305,345p' src/agent/tools.rs\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.on_agent_done();
+    assert!(app.active_pty_tool.is_some(), "Safe command must be auto-executed in Sudo mode");
+    assert_eq!(app.consecutive_auto_proposals, 1);
+
+    // Cancel active capture cleanly
+    app.stop_agent_generation();
+    assert!(app.active_pty_tool.is_none());
+    assert_eq!(app.consecutive_auto_proposals, 0);
+
+    // 3. Sudo mode: Risky command proposal is NOT auto-executed (requires human consent)
+    app.config.auto_approve = AutoApproveLevel::Sudo;
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Attention :\n```bash\nsudo rm -rf /var/cache/apt\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.on_agent_done();
+    assert!(app.active_pty_tool.is_none(), "Risky command must NEVER be auto-executed in Sudo mode");
+    assert_eq!(app.consecutive_auto_proposals, 0);
+
+    // 4. Multiple command proposals are NOT auto-executed (user must choose)
+    app.config.auto_approve = AutoApproveLevel::Sudo;
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Deux options :\n```bash\napt update\n```\nou :\n```bash\npacman -Sy\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.on_agent_done();
+    assert!(app.active_pty_tool.is_none(), "Multiple alternative proposals require user choice");
+    assert_eq!(app.consecutive_auto_proposals, 0);
+
+    // 5. Consecutive auto-proposals safety cap (10)
+    app.config.auto_approve = AutoApproveLevel::Sudo;
+    app.consecutive_auto_proposals = 10;
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Suite :\n```bash\nsed -n '1,10p' Cargo.toml\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.on_agent_done();
+    assert!(app.toast_message.is_some(), "Must notify user when safety limit is reached");
+
+    // Clean up test session so it never pollutes the user's saved sessions
+    let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
+}
+
+
 

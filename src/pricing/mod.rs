@@ -69,6 +69,10 @@ impl PricingRegistry {
         m.insert("local".to_string(), ModelPricing::free());
 
         // DeepSeek
+        m.insert("deepseek-v4.1-flash".to_string(), ModelPricing::new(0.30, 1.20));
+        m.insert("deepseek-v4-flash".to_string(), ModelPricing::new(0.30, 1.20));
+        m.insert("deepseek-v4-pro".to_string(), ModelPricing::new(0.30, 1.20));
+        m.insert("deepseek-flash".to_string(), ModelPricing::new(0.30, 1.20));
         m.insert("deepseek-chat".to_string(), ModelPricing::new(0.14, 0.28));
         m.insert("deepseek-v3".to_string(), ModelPricing::new(0.14, 0.28));
         m.insert("deepseek-coder".to_string(), ModelPricing::new(0.14, 0.28));
@@ -321,6 +325,8 @@ impl PricingRegistry {
         if base_price.is_none() && is_deepseek_family {
             if model_clean.contains("reasoner") || model_clean.contains("r1") {
                 base_price = Some(ModelPricing::new(0.55, 2.19));
+            } else if model_clean.contains("v4") || model_clean.contains("flash") {
+                base_price = Some(ModelPricing::new(0.30, 1.20));
             } else {
                 base_price = Some(ModelPricing::new(0.14, 0.28));
             }

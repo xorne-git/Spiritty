@@ -1053,21 +1053,16 @@ fn render_markdown_blocks(
     let repaired = crate::app::repair_prematurely_closed_code_blocks(text);
     let mut remaining = repaired.as_str();
 
-    while let Some(start_idx) = remaining.find("```") {
+    while let Some((start_idx, fence_tag, code_rest)) =
+        crate::app::find_opening_code_fence(remaining)
+    {
         let text_before = &remaining[..start_idx];
         if !text_before.trim().is_empty() {
             render_text_lines(text_before, lines, leading_prefix.take());
             push_blank_line(lines);
         }
 
-        let after_fence = &remaining[start_idx + 3..];
-        let (fence_tag, code_rest) = if let Some(first_nl) = after_fence.find('\n') {
-            (after_fence[..first_nl].trim(), &after_fence[first_nl + 1..])
-        } else {
-            (after_fence.trim(), "")
-        };
-
-        if let Some(end_idx) = code_rest.find("```") {
+        if let Some(end_idx) = crate::app::find_closing_code_fence(code_rest) {
             let code_content = code_rest[..end_idx].trim();
             if fence_tag.starts_with("tool:") {
                 // Internal tool call block: skip rendering
@@ -1089,7 +1084,11 @@ fn render_markdown_blocks(
             } else {
                 render_code_snippet_box(code_content, fence_tag, lines);
             }
-            remaining = &code_rest[end_idx + 3..];
+            let after_close = &code_rest[end_idx + 3..];
+            remaining = after_close
+                .strip_prefix('\n')
+                .or_else(|| after_close.strip_prefix("\r\n"))
+                .unwrap_or(after_close);
         } else {
             // Streaming inside open code block (still incomplete):
             // Render as code snippet box while streaming; only promote to interactive Command Card (with Alt 1) once the block is closed!
@@ -2016,18 +2015,26 @@ fn clean_response(text: &str) -> String {
         cleaned = rest.trim();
     }
 
-    // Strip tool call blocks (```tool:...```) completely
+    // Strip tool call blocks (```tool:...```) completely if they form actual fenced blocks
     let mut result = String::new();
     let mut remaining = cleaned;
     while let Some(start) = remaining.find("```tool:") {
-        result.push_str(&remaining[..start]);
+        let line_start = remaining[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let is_at_line_start = remaining[line_start..start].chars().all(|c| c == ' ' || c == '\t');
         let after = &remaining[start + 8..];
-        if let Some(end) = after.find("```") {
-            remaining = &after[end + 3..];
-        } else {
-            remaining = "";
-            break;
+        let has_newline = after.find('\n').map(|nl| after[..nl].trim().is_empty() || after[..nl].contains(':')).unwrap_or(false);
+
+        if is_at_line_start && has_newline {
+            if let Some(end) = after.find("```") {
+                result.push_str(&remaining[..line_start]);
+                remaining = &after[end + 3..];
+                continue;
+            }
         }
+
+        // Not an actual standalone tool block: keep the text and advance search past prefix
+        result.push_str(&remaining[..start + 8]);
+        remaining = after;
     }
     result.push_str(remaining);
 

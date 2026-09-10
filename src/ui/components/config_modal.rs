@@ -194,7 +194,7 @@ impl ConfigModalState {
         }
 
         let prov_key = selected_provider.key_str();
-        let (model_input, base_url_input, api_key_input_pre) =
+        let (mut model_input, base_url_input, api_key_input_pre) =
             if let Some(p_cfg) = config.providers.get(prov_key) {
                 (
                     p_cfg.model.clone(),
@@ -208,6 +208,10 @@ impl ConfigModalState {
                     String::new(),
                 )
             };
+
+        if selected_provider == ProviderType::DeepSeek && (model_input.contains("v4") || model_input.is_empty()) {
+            model_input = "deepseek-flash".to_string();
+        }
 
         // Never preload an actual secret into the editable field: stash it aside so the
         // modal can't leak it on screen. Empty field at save-time = keep stored key.
@@ -298,6 +302,10 @@ impl ConfigModalState {
             self.reasoning_effort = ReasoningEffort::Default;
         }
 
+        if provider == ProviderType::DeepSeek && (self.model_input.contains("v4") || self.model_input.is_empty()) {
+            self.model_input = "deepseek-flash".to_string();
+        }
+
         self.url_cursor = self.base_url_input.chars().count();
         self.api_key_cursor = self.api_key_input.chars().count();
 
@@ -379,9 +387,18 @@ impl ConfigModalState {
                 .get(key)
                 .cloned()
                 .unwrap_or_default();
-            let model_trimmed = model.trim().to_string();
+            let mut model_trimmed = model.trim().to_string();
+            if key == "deepseek" && (model_trimmed.contains("v4") || model_trimmed.is_empty()) {
+                model_trimmed = "deepseek-flash".to_string();
+            }
             if !model_trimmed.is_empty() && !models.contains(&model_trimmed) {
                 models.push(model_trimmed.clone());
+            }
+            if key == "deepseek" {
+                models.retain(|m| !m.contains("v4"));
+                if !models.contains(&"deepseek-flash".to_string()) {
+                    models.insert(0, "deepseek-flash".to_string());
+                }
             }
             let existing_ctx = config.providers.get(key).and_then(|p| p.context_window);
             let updated_provider = ProviderConfig {
@@ -644,7 +661,11 @@ impl ConfigModalState {
                     KeyCode::Enter | KeyCode::Char(' ') => {
                         if let Some(models) = self.models_per_provider.get(&prov_key) {
                             if let Some(selected) = models.get(self.dropdown_selected_idx) {
-                                self.model_input = selected.clone();
+                                let mut sel = selected.clone();
+                                if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                                    sel = "deepseek-flash".to_string();
+                                }
+                                self.model_input = sel;
                             }
                         }
                         self.is_dropdown_open = false;
@@ -736,7 +757,11 @@ impl ConfigModalState {
                                 self.dropdown_selected_idx - 1
                             };
                             self.dropdown_selected_idx = new_idx;
-                            self.model_input = models[new_idx].clone();
+                            let mut sel = models[new_idx].clone();
+                            if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                                sel = "deepseek-flash".to_string();
+                            }
+                            self.model_input = sel;
                         }
                     }
                 }
@@ -776,7 +801,11 @@ impl ConfigModalState {
                         if len > 0 {
                             let new_idx = (self.dropdown_selected_idx + 1) % len;
                             self.dropdown_selected_idx = new_idx;
-                            self.model_input = models[new_idx].clone();
+                            let mut sel = models[new_idx].clone();
+                            if self.selected_provider == ProviderType::DeepSeek && sel.contains("v4") {
+                                sel = "deepseek-flash".to_string();
+                            }
+                            self.model_input = sel;
                         }
                     }
                 }

@@ -36,6 +36,16 @@ fn sanitize_id(id: &str) -> Result<String> {
 
 impl SessionStorage {
     pub fn sessions_dir() -> Result<PathBuf> {
+        if let Ok(custom) = std::env::var("SPIRITTY_SESSIONS_DIR") {
+            let path = PathBuf::from(custom);
+            if !path.exists() {
+                fs::create_dir_all(&path).with_context(|| {
+                    format!("Failed to create custom sessions directory at {:?}", path)
+                })?;
+            }
+            return Ok(path);
+        }
+
         let dir = dirs::config_dir()
             .context("Could not find standard config directory (~/.config)")?
             .join("spiritty")

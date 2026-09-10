@@ -669,4 +669,7 @@ async fn test_tab_renaming_and_session_persistence() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.active_tab().custom_title, None);
     assert_eq!(app.active_tab().display_title(), "💻 local");
+
+    // Clean up test session
+    let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
 }

@@ -17,6 +17,46 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ---
 
+## v0.7.2 — 2026-09-10
+
+### Corrigé
+
+- **Isolation des sessions de tests et élimination de la pollution de l'historique de sessions** :
+  - Correction d'un effet de bord où l'exécution de la suite de tests (`cargo test`) enregistrait des sessions temporaires de test directement dans `~/.config/spiritty/sessions/` sans les supprimer.
+  - La commande `spiritty -c` reprenait alors ces sessions de test orphelines (ex. `Session #141311` avec la commande dummy `sed -n '1,10p' Cargo.toml`) au lieu de la dernière vraie conversation utilisateur, et polluait le gestionnaire de sessions.
+  - Ajout du support de la variable `SPIRITTY_SESSIONS_DIR` dans [`src/session/storage.rs`](file:///home/xorne/Projets/Spiritty/src/session/storage.rs) pour isoler les tests, suppression systématique des artefacts de tests, et purge des sessions tests orphelines.
+- **Robustesse du découpage des blocs de code Markdown et élimination des fausses propositions de commandes** :
+  - Correction d'un bogue subtil dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) et [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) où la présence de triple backticks dans une chaîne littérale à l'intérieur d'un bloc de code (ex. `remaining.find("```")`) ou de backticks inline dans le texte conversationnel tronquait prématurément le bloc et interprétait des mots ordinaires du texte explicatif (ex. le mot « Pour ») comme des propositions de commandes shell exécutables.
+  - Implémentation des analyseurs syntaxiques rigoureux `find_opening_code_fence` et `find_closing_code_fence` vérifiant qu'une fence d'ouverture ou de fermeture commence en début de ligne (avec espaces optionnels) et possède une balise info valide, ignorant les backticks inline ou contenus dans des chaînes littérales.
+  - Amélioration de `repair_prematurely_closed_code_blocks` : lorsqu'un bloc vide prématurément fermé est détecté, si le texte suivant contient déjà des fences valides, la fence vide est supprimée sans ré-emballer les explications textuelles suivantes dans un faux bloc bash.
+  - Filtrage renforcé dans `is_clean_command_line` rejetant les mots de liaison conversationnels isolés (« pour », « suite », « attention », « voici », « cela »).
+- **Auto-approbation des propositions de commandes selon le niveau configuré (Safe / Sudo / Yolo)** :
+  - Correction d'une incohérence où les commandes shell proposées par l'assistant sous forme de bloc Markdown interactif (`⚡ COMMANDE #1`) imposaient systématiquement une validation manuelle (`Alt + 1`), même lorsque le mode d'approbation actif (`F3 Safe` ou `F3 Sudo`) autorisait explicitement le niveau de risque de la commande (ex. commandes en lecture seule `Safe` comme `sed`, `cat`, `grep`, `df` ou commandes administratives `Sudo`).
+  - Évaluation automatique dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) (`on_agent_done`) des propositions uniques éligibles via `should_auto_approve_command(&cmd, level)` avec injection et exécution directe dans le terminal PTY.
+  - Préservation stricte du contrôle utilisateur : les commandes destructrices (`Risky`) exigent toujours une validation manuelle (sauf en mode `Yolo`), les propositions alternatives multiples attendent le choix de l'utilisateur, et un garde-fou borne les enchaînements automatiques à 10 exécutions consécutives maximum avec notification toast i18n (`AutoApproveMaxConsecutiveReached`).
+- **Restauration du prompt système pour les fournisseurs OpenAI-compatibles (DeepSeek, Grok, GLM, LM Studio)** :
+  - Correction d'un bogue critique de masquage de variable (`let mut api_messages = Vec::new()`) dans [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs) qui écrasait et réinitialisait la liste des messages à vide juste après l'insertion du message système.
+  - Les modèles DeepSeek reçoivent à nouveau le prompt système complet de Spiritty (identifiant le rôle, le terminal split-screen, les outils `tool:run_command`, `tool:web_search`, `tool:read_file`, etc.) et peuvent naviguer sur le web et inspecter le système au lieu de refuser en affirmant qu'ils n'ont pas d'accès Internet.
+  - Extraction de la fonction pure `build_api_messages` couverte par une suite de tests unitaires dédiés.
+- **Détection de la fenêtre de contexte pour toute la gamme DeepSeek (131k tokens)** :
+  - Correction de la détection de la fenêtre de contexte maximale dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) : le test ciblait restrictivement `model.contains("deepseek-v4")`, provoquant la dégradation de `deepseek-flash`, `deepseek-chat` et `deepseek-reasoner` vers la fenêtre locale par défaut de 8,2k tokens.
+  - Élargissement à `model.contains("deepseek")` garantissant la fenêtre complète de 131 072 tokens (131k) pour tous les modèles de la famille DeepSeek.
+- **Durcissement et sécurisation du parsing des blocs d'outils (`tool:run_command`, `web_search`, `read/write/edit_file`)** :
+  - Correction d'un comportement critique dans [`src/agent/tools.rs`](file:///home/xorne/Projets/Spiritty/src/agent/tools.rs) où l'absence de délimiteur fermant ``` ou la mention inline d'un nom d'outil dans une phrase explicative provoquait la capture de l'intégralité du reste de la réponse Markdown comme commande shell exécutée en direct dans le PTY.
+  - Exigence stricte d'un début de ligne (avec indentation optionnelle), d'une ligne d'en-tête propre terminée par un saut de ligne, et d'un délimiteur fermant obligatoire ``` (ou `</tool:...>`).
+  - Filtrage des faux positifs : rejet systématique des commandes placeholders (`...`, `<command>`, `<unit>`, `cmd`, `commande`) et des blocs tronqués à mi-parcours.
+  - Ajustement dans [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) et [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) pour préserver le texte conversationnel mentionnant des outils sans le tronquer arbitrairement.
+
+### Ajouté
+
+- **Support du modèle DeepSeek V4.1 Flash (`deepseek-flash`) et alignement tarifaire (10 sept. 2026)** :
+  - Alignement sur l'identifiant réel de l'API DeepSeek : bien que l'annonce titre « V4.1 Flash », la passerelle officielle `api.deepseek.com` n'accepte que `deepseek-flash`, `deepseek-v4-flash` et `deepseek-v4-pro` (rejetant `deepseek-v4.1-flash` en HTTP 400).
+  - Définition de `deepseek-flash` comme modèle officiel par défaut dans [`src/config/mod.rs`](file:///home/xorne/Projets/Spiritty/src/config/mod.rs).
+  - Mappage automatique et systématique de toute sélection ou saisie d'un modèle `v4*` (`deepseek-v4`, `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4.1-flash`) vers `deepseek-flash` au chargement de la configuration, dans la modale de configuration (F2/Ctrl+P) et sur le réseau dans [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs).
+  - Mise à jour des tarifs officiels dans [`assets/pricing.json`](file:///home/xorne/Projets/Spiritty/assets/pricing.json) et [`src/pricing/mod.rs`](file:///home/xorne/Projets/Spiritty/src/pricing/mod.rs) ($0.30 / 1M input cache-miss, $1.20 / 1M output au plein tarif peak, avec réduction dynamique à $0.15 / $0.60 en heures creuses off-peak et week-ends).
+
+---
+
 ## v0.7.1 — 2026-09-09
 
 ### Ajouté

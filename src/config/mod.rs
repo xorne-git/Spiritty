@@ -99,7 +99,7 @@ impl ProviderType {
             ProviderType::LmStudio => "local-model",
             ProviderType::Gemini => "gemini-3.8-flash",
             ProviderType::Grok => "grok-4.6",
-            ProviderType::DeepSeek => "deepseek-v4-pro",
+            ProviderType::DeepSeek => "deepseek-flash",
             ProviderType::Zai => "glm-5.3",
             ProviderType::OpenAI => "gpt-5.6-sol",
             ProviderType::Anthropic => "claude-sonnet-5",
@@ -138,7 +138,11 @@ impl ProviderType {
                 "gemini-2.0-flash",
             ],
             ProviderType::Grok => &["grok-4.6", "grok-latest", "grok-2-latest", "grok-beta"],
-            ProviderType::DeepSeek => &["deepseek-v4-pro", "deepseek-v4-flash"],
+            ProviderType::DeepSeek => &[
+                "deepseek-flash",
+                "deepseek-chat",
+                "deepseek-reasoner",
+            ],
             ProviderType::Zai => &[
                 "glm-5.3",
                 "glm-5.3-flash",
@@ -542,12 +546,12 @@ impl Config {
                                 p.popular_models().iter().map(|s| s.to_string()).collect();
 
                             if let Some(p_cfg) = config.providers.get_mut(key) {
-                                // Fix obsolete or empty model names
-                                if p_cfg.model == "deepseek-chat"
-                                    || p_cfg.model == "deepseek-reasoner"
-                                    || p_cfg.model == "deepseek-v4-pr"
-                                    || p_cfg.model.is_empty()
-                                {
+                                if *p == ProviderType::DeepSeek {
+                                    // Any v4 model (v4-pro, v4-flash, v4.1, etc.) maps directly to deepseek-flash
+                                    if p_cfg.model.contains("v4") || p_cfg.model.is_empty() {
+                                        p_cfg.model = "deepseek-flash".to_string();
+                                    }
+                                } else if p_cfg.model.is_empty() {
                                     p_cfg.model = p.default_model().to_string();
                                 }
 
@@ -555,12 +559,12 @@ impl Config {
                                 if p_cfg.models.is_empty() {
                                     p_cfg.models = default_models;
                                 } else {
-                                    // Clean up obsolete model names
-                                    p_cfg.models.retain(|m| {
-                                        m != "deepseek-chat"
-                                            && m != "deepseek-reasoner"
-                                            && m != "deepseek-v4-pr"
-                                    });
+                                    if *p == ProviderType::DeepSeek {
+                                        // Purge obsolete or unroutable v4 model names
+                                        p_cfg.models.retain(|m| !m.contains("v4"));
+                                    } else {
+                                        p_cfg.models.retain(|m| m != "deepseek-v4-pr");
+                                    }
                                     // Ensure popular models are included so new additions (e.g. gemini-3.8-flash)
                                     // appear in the list for existing configs without overwriting custom models.
                                     for dm in default_models.iter().rev() {

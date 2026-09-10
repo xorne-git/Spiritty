@@ -122,5 +122,10 @@ pub fn translate(key: I18nKey) -> &'static str {
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => "Always respond in English concisely and technically.",
+
+        // Safety & Auto-Approve
+        I18nKey::AutoApproveMaxConsecutiveReached => {
+            "Safety stop: limit of consecutive auto-approved commands reached"
+        }
     }
 }

@@ -261,33 +261,42 @@ pub fn parse_tool_call(text: &str) -> Option<ToolInvocation> {
 
 fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
     // 1. Check for MCP tool call: ```tool:mcp:<server>:<tool_name>\n{...}\n```
-    if let Some(start) = text.find("```tool:mcp:") {
+    let mut mcp_search_from = 0;
+    while let Some(rel) = text[mcp_search_from..].find("```tool:mcp:") {
+        let start = mcp_search_from + rel;
+        mcp_search_from = start + "```tool:mcp:".len();
+
+        let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+            continue;
+        }
+
         let after = &text[start + "```tool:mcp:".len()..];
-        let first_line_end = after.find('\n').unwrap_or(after.len());
+        let Some(first_line_end) = after.find('\n') else {
+            continue;
+        };
         let header = after[..first_line_end].trim();
         let parts: Vec<&str> = header.split(':').collect();
-        if parts.len() >= 2 {
-            let server = parts[0].to_string();
-            let tool = parts[1].to_string();
-            let body_start = if first_line_end < after.len() {
-                &after[first_line_end..]
-            } else {
-                ""
-            };
-            let json_str = if let Some(end) = body_start.find("```") {
-                &body_start[..end]
-            } else {
-                body_start
-            }
-            .trim();
-            let arguments = serde_json::from_str::<serde_json::Value>(json_str)
-                .unwrap_or_else(|_| serde_json::json!({}));
-            return Some(ToolInvocation::McpCall {
-                server,
-                tool,
-                arguments,
-            });
+        if parts.len() < 2 {
+            continue;
         }
+
+        let server = parts[0].to_string();
+        let tool = parts[1].to_string();
+        let body_start = &after[first_line_end + 1..];
+
+        let Some(end) = body_start.find("```") else {
+            continue;
+        };
+
+        let json_str = body_start[..end].trim();
+        let arguments = serde_json::from_str::<serde_json::Value>(json_str)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        return Some(ToolInvocation::McpCall {
+            server,
+            tool,
+            arguments,
+        });
     }
 
     // 2. Check for Web Search with ```
@@ -297,16 +306,32 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
         "```tool:web",
         "```tool:google",
     ] {
-        if let Some(start) = text.find(prefix) {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find(prefix) {
+            let start = search_from + rel;
+            search_from = start + prefix.len();
+
+            let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+                continue;
+            }
+
             let after = &text[start + prefix.len()..];
-            let code_start = after.strip_prefix('\n').unwrap_or(after);
-            let query_str = if let Some(end) = code_start.find("```") {
-                &code_start[..end]
-            } else {
-                code_start
+            let Some(first_nl) = after.find('\n') else {
+                continue;
             };
-            let query = query_str.trim().to_string();
-            if !query.is_empty() {
+            let tag_rest = after[..first_nl].trim();
+            let code_start = &after[first_nl + 1..];
+
+            let query = if !tag_rest.is_empty() {
+                tag_rest.to_string()
+            } else if let Some(end_rel) = code_start.find("```") {
+                code_start[..end_rel].trim().to_string()
+            } else {
+                continue;
+            };
+
+            if !query.is_empty() && query != "..." && query != "…" {
                 return Some(ToolInvocation::WebSearch(query));
             }
         }
@@ -314,20 +339,34 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
 
     // 3. Command execution with ```
     for prefix in &["```tool:run_command", "```tool:execute_command"] {
-        if let Some(start) = text.find(prefix) {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find(prefix) {
+            let start = search_from + rel;
+            search_from = start + prefix.len();
+
+            let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+                continue;
+            }
+
             let after = &text[start + prefix.len()..];
-            let code_start = after.strip_prefix('\n').unwrap_or(after);
-            let raw_block = if let Some(end) = code_start.find("```") {
-                code_start[..end].trim()
-            } else {
-                code_start.trim()
+            let Some(first_nl) = after.find('\n') else {
+                continue;
             };
+            let tag_rest = &after[..first_nl];
+            if !tag_rest.trim().is_empty() {
+                continue;
+            }
+
+            let code_start = &after[first_nl + 1..];
+            let Some(end) = crate::app::find_closing_code_fence(code_start) else {
+                continue;
+            };
+            let raw_block = code_start[..end].trim();
 
             if !raw_block.is_empty() {
-                // Same cleanup as markdown proposals: drop interpreter framing (`bash`,
-                // shebangs) and dangling `exit` so the command runs as intended in the PTY.
                 let cleaned = crate::app::sanitize_proposed_command(raw_block);
-                if !cleaned.is_empty() {
+                if is_plausible_shell_command(&cleaned) {
                     return Some(ToolInvocation::RunCommand(cleaned));
                 }
             }
@@ -341,13 +380,31 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
         ("```tool:edit_file", "edit"),
         ("```tool:write_file", "write"),
     ] {
-        if let Some(start) = text.find(prefix) {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find(prefix) {
+            let start = search_from + rel;
+            search_from = start + prefix.len();
+
+            let line_start = text[..start].rfind('\n').map(|p| p + 1).unwrap_or(0);
+            if !text[line_start..start].chars().all(|c| c == ' ' || c == '\t') {
+                continue;
+            }
+
             let after = &text[start + prefix.len()..];
-            let body = if let Some(end) = after.find("```") {
-                &after[..end]
-            } else {
-                after
+            let Some(first_nl) = after.find('\n') else {
+                continue;
             };
+            let tag_rest = &after[..first_nl];
+            if !tag_rest.trim().is_empty() {
+                continue;
+            }
+
+            let code_start = &after[first_nl + 1..];
+            let Some(end) = crate::app::find_closing_code_fence(code_start) else {
+                continue;
+            };
+
+            let body = &code_start[..end];
             if let Some(t) = parse_file_edit_fence(body.trim(), tool) {
                 return Some(t);
             }
@@ -356,28 +413,51 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
 
     // 3b. HTML-style tool tags some models emit instead of the fenced block —
     //     observed live from Gemini: `<tool:run_command>\ncmd\n``` ` (opening
-    //     tag, command, then a stray fence, closing tag omitted). The payload
-    //     ends at the closing tag, a stray markdown fence, or end of text; a
-    //     leading fence wrapping the body (```bash … ```) is unwrapped too.
+    //     tag, command, then a stray fence, closing tag omitted).
     for open in &["<tool:run_command>", "<tool:execute_command>"] {
-        if let Some(start) = text.find(open) {
+        let mut search_from = 0;
+        while let Some(rel) = text[search_from..].find(open) {
+            let start = search_from + rel;
+            search_from = start + open.len();
+
             let after = &text[start + open.len()..];
-            let end = after
+            let (raw, has_end): (&str, bool) = if let Some(end) = after
                 .find("</tool:run_command>")
                 .or_else(|| after.find("</tool:execute_command>"))
-                .unwrap_or(after.len());
-            let trimmed = after[..end].trim();
-            let raw = if let Some(rest) = trimmed.strip_prefix("```") {
-                let body = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(0)..];
-                &body[..body.find("```").unwrap_or(body.len())]
-            } else {
-                &trimmed[..trimmed.find("```").unwrap_or(trimmed.len())]
-            };
-            if !raw.trim().is_empty() {
-                let cleaned = crate::app::sanitize_proposed_command(raw.trim());
-                if !cleaned.is_empty() {
-                    return Some(ToolInvocation::RunCommand(cleaned));
+            {
+                let inside = after[..end].trim();
+                if let Some(rest) = inside.strip_prefix("```") {
+                    let body = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(0)..];
+                    let fence_end = body.find("```").unwrap_or(body.len());
+                    (&body[..fence_end], true)
+                } else {
+                    (inside, true)
                 }
+            } else {
+                let trimmed_after = after.trim_start();
+                if let Some(rest) = trimmed_after.strip_prefix("```") {
+                    let body = &rest[rest.find('\n').map(|i| i + 1).unwrap_or(0)..];
+                    if let Some(fence_end) = body.find("```") {
+                        (&body[..fence_end], true)
+                    } else {
+                        ("", false)
+                    }
+                } else if let Some(end) = after.find("```") {
+                    // Stray fence closing: <tool:run_command>\ncmd\n```
+                    let inside = after[..end].trim();
+                    (inside, true)
+                } else {
+                    ("", false)
+                }
+            };
+
+            if !has_end {
+                continue;
+            }
+
+            let cleaned = crate::app::sanitize_proposed_command(raw.trim());
+            if is_plausible_shell_command(&cleaned) {
+                return Some(ToolInvocation::RunCommand(cleaned));
             }
         }
     }
@@ -396,6 +476,32 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
     }
 
     None
+}
+
+/// True when a command string looks like an actionable shell command, rather than
+/// an ellipsis, placeholder (`<command>`, `<unit>`), or prose snippet.
+pub fn is_plausible_shell_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "..."
+        || trimmed == "…"
+        || trimmed == "<command>"
+        || trimmed == "commande"
+        || trimmed == "cmd"
+        || trimmed == "<action>"
+        || trimmed == "<unit>"
+    {
+        return false;
+    }
+    if trimmed.starts_with('<') && trimmed.ends_with('>') && !trimmed.contains(' ') {
+        return false;
+    }
+    if trimmed.lines().all(|l| l.trim().starts_with('#')) {
+        return false;
+    }
+    true
 }
 
 /// Parses the body of a fenced file-edit tool block into a `ToolInvocation`.
@@ -1306,5 +1412,50 @@ mod tool_parse_tests {
         let err_dup = execute_remote_edit_logic(orig_dup, "test.txt", "foo", "baz");
         assert!(err_dup.is_err());
         assert!(err_dup.unwrap_err().contains("apparaît 2 fois"));
+    }
+
+    #[test]
+    fn rejects_inline_tool_mention_without_block() {
+        let text = "* Il doit émettre directement un bloc ```tool:run_command (ex: `systemctl --failed` ou `systemctl --user --failed`).\n* Suite du texte.";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn rejects_unclosed_tool_run_command() {
+        let text = "```tool:run_command\nsystemctl --failed\nEt voici la suite de mes explications sans fermeture de bloc...";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn rejects_placeholder_commands() {
+        assert_eq!(parse_tool_call("```tool:run_command\n...\n```"), None);
+        assert_eq!(parse_tool_call("```tool:run_command\n<command>\n```"), None);
+        assert_eq!(parse_tool_call("```tool:run_command\n<unit>\n```"), None);
+        assert_eq!(parse_tool_call("```tool:run_command\ncommande\n```"), None);
+        assert_eq!(parse_tool_call("```tool:run_command\ncmd\n```"), None);
+    }
+
+    #[test]
+    fn parses_valid_block_preceded_by_inline_mention() {
+        let text = "N'utilise pas ```tool:run_command``` dans les commentaires. Voici la commande :\n\n```tool:run_command\nuptime\n```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("uptime".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_indented_fenced_tool_block() {
+        let text = "Exemple :\n   ```tool:run_command\n   df -h\n   ```";
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("df -h".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_unclosed_html_style_tag_mention() {
+        let text = "N'utilisez pas de balise <tool:run_command> dans votre texte explicatif.";
+        assert_eq!(parse_tool_call(text), None);
     }
 }

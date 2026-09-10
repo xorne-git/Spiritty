@@ -1139,3 +1139,83 @@ fn test_reasoning_edge_cases_thunk_and_partial_th() {
         ))
     );
 }
+
+#[tokio::test]
+async fn test_context_window_limit_detection() {
+    use spiritty::app::App;
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 24, 80).unwrap();
+
+    // DeepSeek family models must resolve to 131k (131_072)
+    app.config.default_provider = spiritty::config::ProviderType::DeepSeek;
+    if let Some(cfg) = app.config.providers.get_mut("deepseek") {
+        cfg.model = "deepseek-flash".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 131_072);
+
+    if let Some(cfg) = app.config.providers.get_mut("deepseek") {
+        cfg.model = "deepseek-v4-flash".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 131_072);
+
+    if let Some(cfg) = app.config.providers.get_mut("deepseek") {
+        cfg.model = "deepseek-chat".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 131_072);
+
+    // Gemini models resolve to 1M (1_048_576)
+    app.config.default_provider = spiritty::config::ProviderType::Gemini;
+    if let Some(cfg) = app.config.providers.get_mut("gemini") {
+        cfg.model = "gemini-3.8-flash".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 1_048_576);
+
+    // Claude models resolve to 200k (200_000)
+    app.config.default_provider = spiritty::config::ProviderType::Anthropic;
+    if let Some(cfg) = app.config.providers.get_mut("anthropic") {
+        cfg.model = "claude-3-7-sonnet".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 200_000);
+
+    // Generic local fallback resolves to 8k (8_192)
+    app.config.default_provider = spiritty::config::ProviderType::LmStudio;
+    if let Some(cfg) = app.config.providers.get_mut("lmstudio") {
+        cfg.model = "my-custom-local-model".to_string();
+    }
+    assert_eq!(app.get_context_window_limit(), 8_192);
+}
+
+#[test]
+fn test_code_block_containing_fences_does_not_leak_proposals() {
+    let snippet = r#"
+Voici l'autopsie du bug :
+```rust
+while let Some(start_idx) = remaining.find("```") {
+    let code = "test";
+}
+```
+Pour ```tool:run_command```, il vérifie bien que la fence commence en début de ligne.
+Mais dans `src/app.rs` :
+```rust
+while let Some(start_idx) = remaining.find("```") { ... }
+```
+De plus, si un bloc sans tag est capturé, il faut vérifier qu'il s'agit bien d'une commande.
+"#;
+
+    let proposals = spiritty::app::extract_all_command_proposals(snippet);
+    assert!(
+        proposals.is_empty(),
+        "Expected no proposals from Rust code blocks and conversational text, got: {:?}",
+        proposals
+    );
+    assert_eq!(spiritty::app::extract_command_proposal(snippet), None);
+}
+
+
+#[test]
+fn test_repair_prematurely_closed_code_blocks_does_not_swallow_markdown() {
+    use spiritty::app::extract_all_command_proposals;
+    let input = "Voici un exemple vide :\n```bash\n\n```\nPour afficher les conteneurs, lancez :\n```bash\ndocker ps\n```\nEt voilà.";
+    let proposals = extract_all_command_proposals(input);
+    assert_eq!(proposals, vec!["docker ps"]);
+}

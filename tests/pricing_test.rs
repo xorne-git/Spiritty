@@ -86,7 +86,15 @@ fn test_unknown_models_have_no_price() {
     // The user's actual DeepSeek lineup keeps working via documented family rates
     // (base peak rate, independent of the live clock's off-peak window).
     assert_eq!(
+        registry.get_pricing_at("deepseek", "deepseek-v4.1-flash", None),
+        Some(ModelPricing::new(0.30, 1.20))
+    );
+    assert_eq!(
         registry.get_pricing_at("deepseek", "deepseek-v4-flash", None),
+        Some(ModelPricing::new(0.30, 1.20))
+    );
+    assert_eq!(
+        registry.get_pricing_at("deepseek", "deepseek-v3", None),
         Some(ModelPricing::new(0.14, 0.28))
     );
 }

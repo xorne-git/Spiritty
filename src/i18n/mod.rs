@@ -185,6 +185,9 @@ pub enum I18nKey {
 
     // Agent System Prompts
     AgentLanguageInstruction,
+
+    // Safety & Auto-Approve
+    AutoApproveMaxConsecutiveReached,
 }
 
 pub fn t(key: I18nKey, lang: Language) -> &'static str {

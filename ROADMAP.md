@@ -160,6 +160,7 @@ Ce document définit les étapes clés du développement de **Spiritty**, du pro
   - [x] Gestion robuste des applications ncurses & TUI interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`) : SGR mouse tracking, shift bypass, navigation alternate-screen, xterm modifiers, bracketed paste.
   - [x] Multi-onglets enrichis : renommage d'onglets (`Alt+R`), persistance en session des libellés et cibles SSH.
   - [x] Découverte dynamique de modèles LLM et tarifs en direct (`R` dans `F2`) et niveau de réflexion configurable (`ReasoningEffort` à 5 niveaux avec badges visuels et support API multi-providers).
+  - [x] Intégration officielle DeepSeek V4.1 Flash (`deepseek-flash`), auto-approbation des commandes Safe/Sudo et isolation hermétique des sessions de tests.
   - [x] Approfondissement architectural (Deep Modules) :
     - Unification des modales TUI (`ModalState` / `ModalOutcome` dans `src/ui/components/`), centralisant frappes, collage et rendu.
     - Superviseur système et contextes SSH (`SystemSupervisor` et `InspectableTab` dans `src/system/supervisor.rs`), isolant la détection de processus `/proc`, le profilage de distribution et la déduplication des sondes d'arrière-plan.
