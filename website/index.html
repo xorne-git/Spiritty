@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spiritty 🧞⚡ — L'assistant IA pour terminal nouvelle génération</title>
+    <meta name="description" content="Spiritty est un assistant IA pour terminal en split-screen écrit en Rust. Conçu pour les sysadmins et DevOps : shell PTY interactif à droite, agent IA contextuel à gauche avec sécurité human-in-the-loop.">
+    <meta name="keywords" content="terminal, AI, assistant, sysadmin, devops, rust, tui, pty, deepseek, ollama, claude, ssh, mcp">
+    <meta name="author" content="Sylvain Cotineau">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://spiritty.ai/">
+    <meta property="og:title" content="Spiritty 🧞⚡ — Terminal AI Assistant for Sysadmins">
+    <meta property="og:description" content="Split-screen terminal assistant combining a proactive sysadmin AI agent and an interactive native PTY shell.">
+    <meta property="og:image" content="https://spiritty.ai/assets/logo.png">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://spiritty.ai/">
+    <meta property="twitter:title" content="Spiritty 🧞⚡ — Terminal AI Assistant">
+    <meta property="twitter:description" content="Split-screen terminal assistant combining a proactive sysadmin AI agent and an interactive native PTY shell.">
+    <meta property="twitter:image" content="https://spiritty.ai/assets/logo.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="icon" type="image/png" href="assets/favicon.png">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Ambient Cosmic Grid Background -->
+    <div class="bg-grid"></div>
+
+    <!-- Toast Notification for Copy Feedback -->
+    <div id="toastMsg" class="toast-msg">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span data-i18n="toast_copied">Commande copiée dans le presse-papiers !</span>
+    </div>
+
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="container">
+            <a href="#" class="brand">
+                <img src="assets/spiritty.png" alt="Spiritty Logo" class="brand-icon">
+                <span>Spiritty</span>
+                <span class="brand-version">v0.7.2</span>
+            </a>
+
+            <ul class="nav-links">
+                <li><a href="#features" class="nav-link" data-i18n="nav_features">Fonctionnalités</a></li>
+                <li><a href="#demo" class="nav-link" data-i18n="nav_demo">Démonstration</a></li>
+                <li><a href="#install" class="nav-link" data-i18n="nav_install">Installation</a></li>
+                <li><a href="#shortcuts" class="nav-link" data-i18n="nav_shortcuts">Raccourcis</a></li>
+            </ul>
+
+            <div class="nav-actions">
+                <!-- Language Toggle -->
+                <button id="langToggleBtn" class="lang-btn" aria-label="Toggle language">
+                    <span id="langBtnText">🇬🇧 EN</span>
+                </button>
+
+                <!-- GitHub Link -->
+                <a href="https://github.com/xorne-git/Spiritty" target="_blank" rel="noopener noreferrer" class="btn-github">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                    </svg>
+                    <span>GitHub</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="container">
+            <div class="hero-badge-wrap">
+                <div class="hero-badge" data-i18n="hero_badge">
+                    ✨ Version 0.7.2 disponible — Binaire TUI Rust natif
+                </div>
+            </div>
+
+            <!-- Logo with celestial aura -->
+            <div class="hero-logo-container">
+                <div class="hero-logo-glow"></div>
+                <img src="assets/logo.png" alt="Spiritty Logo" class="hero-logo">
+            </div>
+
+            <h1 class="hero-title" data-i18n="hero_title">
+                L'assistant IA pour terminal <span class="gradient-text">nouvelle génération</span>
+            </h1>
+
+            <p class="hero-subtitle" data-i18n="hero_subtitle">
+                Conçu par un sysadmin pour les sysadmins, ingénieurs DevOps et power users. Split-screen ergonomique : agent IA contextuel à gauche, shell PTY natif 100% interactif à droite.
+            </p>
+
+            <!-- 1-Click Installer Box -->
+            <div class="installer-box">
+                <div class="installer-header">
+                    <div class="installer-tabs">
+                        <button class="installer-tab active" data-target="official" data-i18n="install_tab_official">Officiel (spiritty.ai)</button>
+                        <button class="installer-tab" data-target="github" data-i18n="install_tab_github">Miroir GitHub (Raw)</button>
+                    </div>
+                    <div class="installer-badge">
+                        <span>⚡ 1-Step Setup</span>
+                    </div>
+                </div>
+
+                <div class="installer-body">
+                    <div class="installer-command">
+                        <span class="cmd-prefix">$</span><span id="installCommand">curl -fsSL https://spiritty.ai/install.sh | bash</span>
+                    </div>
+                    <button id="copyInstallBtn" class="btn-copy">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span class="btn-text" data-i18n="copy_btn">Copier</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="hero-platforms">
+                <span class="platform-pill">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9v-2h2v2zm0-4H9V7h2v5z"/></svg>
+                    <span data-i18n="platforms_label">Compatible Linux (x86_64, aarch64) & macOS Apple Silicon (aarch64)</span>
+                </span>
+            </div>
+
+            <!-- Value Highlights Pills -->
+            <div class="hero-highlights">
+                <div class="highlight-pill" data-i18n="pill_rust">
+                    <strong>100% Rust</strong> & Ultra-rapide
+                </div>
+                <div class="highlight-pill" data-i18n="pill_pty">
+                    <strong>PTY Natif</strong> & Zéro pollution
+                </div>
+                <div class="highlight-pill" data-i18n="pill_hitl">
+                    <strong>Human-in-the-Loop</strong> Strict
+                </div>
+                <div class="highlight-pill" data-i18n="pill_models">
+                    <strong>Multi-Providers</strong> (Cloud & Local)
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Interactive TUI Showcase Demo -->
+    <section id="demo" class="demo-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag" data-i18n="demo_tag">DÉMONSTRATION INTERACTIVE</span>
+                <h2 class="section-title" data-i18n="demo_title">L'expérience Spiritty en direct</h2>
+                <p class="section-desc" data-i18n="demo_desc">
+                    Explorez comment Spiritty collabore en temps réel dans votre terminal sans jamais interrompre votre frappe ni polluer votre historique shell.
+                </p>
+            </div>
+
+            <!-- Scenario Selection Buttons -->
+            <div class="scenario-selector">
+                <button class="scenario-btn active" data-scenario="perf" data-i18n="scenario_perf">🚀 Diagnostic Nginx / 502</button>
+                <button class="scenario-btn" data-scenario="ssh" data-i18n="scenario_ssh">🌐 Contexte SSH & Détection</button>
+                <button class="scenario-btn" data-scenario="diag" data-i18n="scenario_diag">🛠️ Diagnostic Proactif (Alt+D)</button>
+                <button class="scenario-btn" data-scenario="mcp" data-i18n="scenario_mcp">🔌 Outils & Protocole MCP</button>
+            </div>
+
+            <!-- TUI Mockup Container (Faithful to Real Spiritty Ratatui TUI) -->
+            <div class="tui-window">
+                <!-- Top Window Frame / Window Controls -->
+                <div class="tui-window-titlebar">
+                    <div class="window-dots">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                    </div>
+                    <div class="window-app-title">spiritty — 140x42 (ratatui / crossterm)</div>
+                    <div class="window-app-tag">Split-Screen Sysadmin Engine</div>
+                </div>
+
+                <!-- Ratatui Split-Screen -->
+                <div class="tui-split-screen">
+                    <!-- Left: AI Assistant / Diagnostic Flow -->
+                    <div class="tui-left-panel">
+                        <div class="tui-panel-topbar">
+                            <div class="tui-panel-brand">
+                                <span class="genie-icon">🧞</span>
+                                <span class="brand-title">Spiritty</span>
+                                <span class="brand-version">v0.7.2</span>
+                            </div>
+                            <div id="demoLeftLines" class="tui-line-count">81 l.</div>
+                        </div>
+
+                        <div id="demoChatFlow" class="tui-chat-flow">
+                            <!-- Populated dynamically by script.js -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Native Shell PTY -->
+                    <div class="tui-right-panel">
+                        <div class="tui-shell-topbar">
+                            <div class="tui-tabs-group">
+                                <span class="tui-tab active">1 ■ Spiritty</span>
+                                <span class="tui-tab-add">+</span>
+                                <span id="demoHostTab" class="tui-host-tab">🌐 SSH bento.moondogs.fr (reprise)</span>
+                            </div>
+                            <div id="demoRightLines" class="tui-line-count">58 l.</div>
+                        </div>
+
+                        <div id="demoTerminalContent" class="tui-terminal-content">
+                            <!-- Populated dynamically by script.js -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer Status Bar (100% faithful to Screenshot 1) -->
+                <div class="tui-statusbar">
+                    <div class="tui-status-left">
+                        <span class="status-provider">🔮 Google Gemini</span>
+                        <span class="status-sep">|</span>
+                        <span id="demoFooterModel" class="status-model">gemini-3.8-flash</span>
+                        <span class="status-sep">|</span>
+                        <span id="demoFooterReasoning" class="status-badge-med">Med</span>
+                        <span class="status-sep">|</span>
+                        <span id="demoFooterTok" class="status-tok">⚡ 2.4k tok</span>
+                        <span class="status-sep">|</span>
+                        <span id="demoFooterCost" class="status-cost">💵 $0.0221</span>
+                        <span class="status-sep">|</span>
+                        <span id="demoFooterCtx" class="status-ctx">📖 Ctx: 1.6k / 1.0M (0%)</span>
+                    </div>
+                    <div class="tui-status-right">
+                        <span class="status-label">Approbation :</span>
+                        <span id="demoFooterApprove" class="tui-keycap key-yellow">F3 Sudo</span>
+                        <span class="tui-keycap key-purple">Ctrl P</span><span class="key-label">Config</span>
+                        <span class="tui-keycap key-purple">Ctrl B</span><span class="key-label">Hosts</span>
+                        <span class="tui-keycap key-purple">Ctrl M</span><span class="key-label">MCP</span>
+                        <span class="tui-keycap key-gray">Ctrl H</span><span class="key-label">Sessions</span>
+                        <span class="tui-keycap key-cyan">F1</span><span class="key-label">Aide</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Key Features Grid -->
+    <section id="features" class="features-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag" data-i18n="feat_tag">CONÇU POUR L'ADMINISTRATION SYSTÈME</span>
+                <h2 class="section-title" data-i18n="feat_title">Pourquoi Spiritty surpasse les outils existants</h2>
+                <p class="section-desc" data-i18n="feat_desc">
+                    Chaque détail a été pensé pour respecter l'ergonomie sacrée du terminal Linux et accélérer les opérations de production.
+                </p>
+            </div>
+
+            <div class="features-grid">
+                <!-- Feature 1 -->
+                <div class="feature-card">
+                    <div class="feature-icon-wrap">🖥️</div>
+                    <h3 class="feature-title" data-i18n="feat_1_title">Split-Screen & Zéro Pollution</h3>
+                    <p class="feature-desc" data-i18n="feat_1_desc">
+                        Votre shell à droite reste 100% interactif en continu (bash, zsh, fish). Aucune commande n'est insérée en douce ni cachée avec des sentinelles visibles dans votre PTY.
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="feature-card gold">
+                    <div class="feature-icon-wrap">🛡️</div>
+                    <h3 class="feature-title" data-i18n="feat_2_title">Human-in-the-Loop & Sécurité</h3>
+                    <p class="feature-desc" data-i18n="feat_2_desc">
+                        Aucune commande ne tourne sans votre accord explicite. Classification stricte des risques (Safe, Sudo, Risky) et modes d'approbation ajustables en une touche (F3).
+                    </p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="feature-card">
+                    <div class="feature-icon-wrap">🌐</div>
+                    <h3 class="feature-title" data-i18n="feat_3_title">Contexte Hôte & Détection SSH</h3>
+                    <p class="feature-desc" data-i18n="feat_3_desc">
+                        Surveillance temps réel sous le PTY : Spiritty détecte vos connexions SSH, profile la distribution distante (Debian, Ubuntu, Arch...) et bascule instantanément son prompt.
+                    </p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="feature-card">
+                    <div class="feature-icon-wrap">🧠</div>
+                    <h3 class="feature-title" data-i18n="feat_4_title">Multi-Providers & LLMs Locaux</h3>
+                    <p class="feature-desc" data-i18n="feat_4_desc">
+                        DeepSeek V4.1 Flash, Claude 3.7 Sonnet, Gemini 2.5, Grok, OpenAI, mais aussi vos serveurs locaux Ollama et LM Studio pour une confidentialité totale.
+                    </p>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="feature-card gold">
+                    <div class="feature-icon-wrap">🔌</div>
+                    <h3 class="feature-title" data-i18n="feat_5_title">Support Protocole MCP</h3>
+                    <p class="feature-desc" data-i18n="feat_5_desc">
+                        Intégrez vos serveurs MCP (Model Context Protocol) en JSON-RPC pour connecter Docker, Kubernetes, bases de données et outils custom via la modale Ctrl+M.
+                    </p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="feature-card">
+                    <div class="feature-icon-wrap">📊</div>
+                    <h3 class="feature-title" data-i18n="feat_6_title">Métriques Réelles & Coûts Live</h3>
+                    <p class="feature-desc" data-i18n="feat_6_desc">
+                        Suivi exact du débit (tokens/s réels), décompte précis des fenêtres de contexte et estimation en direct du coût de votre session au centième de centime.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="install" class="install-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag" data-i18n="install_tag">DÉMARRAGE EN 30 SECONDES</span>
+                <h2 class="section-title" data-i18n="install_title">Installez Spiritty facilement</h2>
+                <p class="section-desc" data-i18n="install_desc">
+                    Téléchargez le binaire précompilé officiel ou compilez depuis les sources Cargo en quelques commandes.
+                </p>
+            </div>
+
+            <div class="install-cards">
+                <!-- Option 1: Curl (Recommended) -->
+                <div class="install-card recommended">
+                    <span class="recommended-ribbon">Recommandé</span>
+                    <div>
+                        <h3 class="install-card-title" data-i18n="inst_opt1_title">1. Installateur One-Line</h3>
+                        <p class="install-card-desc" data-i18n="inst_opt1_desc">
+                            Détecte automatiquement votre architecture, installe le binaire dans ~/.local/bin et configure le lanceur bureau avec icône.
+                        </p>
+                        <div class="code-snippet">
+                            curl -fsSL https://spiritty.ai/install.sh | bash
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Option 2: Cargo Build -->
+                <div class="install-card">
+                    <div>
+                        <h3 class="install-card-title" data-i18n="inst_opt2_title">2. Compilation depuis les Sources</h3>
+                        <p class="install-card-desc" data-i18n="inst_opt2_desc">
+                            Vous avez Rust installé ? Clonez le dépôt et construisez le binaire autonome optimisé en une minute chrono.
+                        </p>
+                        <div class="code-snippet">
+                            git clone https://github.com/xorne-git/Spiritty.git<br>
+                            cd Spiritty && cargo build --release
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Option 3: Direct Release -->
+                <div class="install-card">
+                    <div>
+                        <h3 class="install-card-title" data-i18n="inst_opt3_title">3. Archives Binaires Directes</h3>
+                        <p class="install-card-desc" data-i18n="inst_opt3_desc">
+                            Téléchargez directement les archives tarball légères pour Linux x86_64, aarch64 ou macOS Apple Silicon depuis GitHub Releases.
+                        </p>
+                        <div style="margin-top: 24px;">
+                            <a href="https://github.com/xorne-git/Spiritty/releases/latest" target="_blank" rel="noopener noreferrer" class="btn-github" style="width: 100%; justify-content: center;" data-i18n="btn_view_releases">
+                                Voir les releases GitHub →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Keyboard Shortcuts Cheatsheet -->
+    <section id="shortcuts" class="shortcuts-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag" data-i18n="shortcuts_tag">ERGONOMIE CLAVIER</span>
+                <h2 class="section-title" data-i18n="shortcuts_title">Raccourcis essentiels</h2>
+                <p class="section-desc" data-i18n="shortcuts_desc">
+                    Restez au clavier : tout est accessible en une combinaison de touches intuitive.
+                </p>
+            </div>
+
+            <div class="shortcuts-table-wrap">
+                <table class="shortcuts-table">
+                    <thead>
+                        <tr>
+                            <th data-i18n="col_key">Raccourci</th>
+                            <th data-i18n="col_action">Action</th>
+                            <th data-i18n="col_context">Utilité</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="kbd-badge">Ctrl + A</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k1_action">Bascule de focus</td>
+                            <td data-i18n="k1_desc">Passe instantanément du panneau Chat au shell Terminal natif</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">Alt + 1..9</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k2_action">Exécuter proposition N</td>
+                            <td data-i18n="k2_desc">Injecte et exécute la commande #N suggérée par Spiritty</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">Alt + D</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k3_action">Diagnostic proactif</td>
+                            <td data-i18n="k3_desc">Analyse immédiatement la dernière commande shell échouée dans le PTY</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">F2 / Ctrl + P</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k4_action">Configuration & Modèles</td>
+                            <td data-i18n="k4_desc">Changez de provider, de modèle ou de clé API à la volée</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">F3</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k5_action">Niveau d'approbation</td>
+                            <td data-i18n="k5_desc">Basculez entre Safe, Sudo, Yolo et Strict</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">Ctrl + M</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k6_action">Gestionnaire MCP</td>
+                            <td data-i18n="k6_desc">Inspectez, activez ou configurez vos serveurs et outils MCP</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">Ctrl + H</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k7_action">Historique des sessions</td>
+                            <td data-i18n="k7_desc">Naviguez, restaurez ou compactez vos conversations archivées</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <img src="assets/spiritty.png" alt="Spiritty" style="width: 32px; height: 32px;">
+                        <span style="font-weight: 800; color: #fff; font-size: 1.2rem;">Spiritty</span>
+                    </div>
+                    <p data-i18n="footer_desc">
+                        Spiritty est un projet Open Source créé pour libérer le potentiel des administrateurs système et ingénieurs d'infrastructure.
+                    </p>
+                </div>
+
+                <div class="footer-col">
+                    <h4 data-i18n="footer_links_col1">Ressources</h4>
+                    <ul class="footer-links">
+                        <li><a href="https://github.com/xorne-git/Spiritty#readme" target="_blank" rel="noopener">Documentation</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/blob/main/ROADMAP.md" target="_blank" rel="noopener">Roadmap</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/blob/main/ARCHITECTURE.md" target="_blank" rel="noopener">Architecture</a></li>
+                    </ul>
+                </div>
+
+                <div class="footer-col">
+                    <h4 data-i18n="footer_links_col2">Projet</h4>
+                    <ul class="footer-links">
+                        <li><a href="https://github.com/xorne-git/Spiritty" target="_blank" rel="noopener">GitHub</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/releases" target="_blank" rel="noopener">Releases</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/issues" target="_blank" rel="noopener">Signaler un bug</a></li>
+                        <li><a href="https://github.com/xorne-git/Spiritty/blob/main/LICENSE" target="_blank" rel="noopener">Licence MIT / Apache</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="footer-bottom">
+                <span data-i18n="footer_copyright">© 2026 Spiritty Contributors. Distribué sous licences MIT ou Apache-2.0.</span>
+                <span>Conçu avec passion par <a href="https://github.com/xorne-git" target="_blank" rel="noopener" style="color: var(--cyan); text-decoration: none;">Sylvain Cotineau (xorne)</a></span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Interactive Script -->
+    <script src="script.js"></script>
+</body>
+</html>
