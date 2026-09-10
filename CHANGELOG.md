@@ -15,6 +15,10 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+---
+
+## v0.7.3 — 2026-09-10
+
 ### Ajouté
 
 - **Nouveau logo officiel et icône de bureau multi-résolutions (Génie céleste Spiritty)** :
