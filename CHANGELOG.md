@@ -15,6 +15,14 @@ Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0
 
 ## Non publié
 
+### Ajouté
+
+- **Nouveau logo officiel et icône de bureau multi-résolutions (Génie céleste Spiritty)** :
+  - Intégration du nouveau logo officiel haute résolution dans [`assets/logo.png`](file:///home/xorne/Projets/Spiritty/assets/logo.png) et [`assets/icons/spiritty.png`](file:///home/xorne/Projets/Spiritty/assets/icons/spiritty.png) (génie céleste bleu et or aux volutes stellaires en forme de « S »).
+  - Déploiement de l'icône de bureau dans toutes les tailles standard FreeDesktop (`16x16`, `32x32`, `48x48`, `64x64`, `128x128`, `256x256`, `512x512` et SVG vectoriel `scalable`).
+  - Embarquement direct dans [`src/brand.rs`](file:///home/xorne/Projets/Spiritty/src/brand.rs) (`ICON_PNG` et `ICON_SVG`).
+  - Intégration visuelle dans `README.md`, `README.fr.md`, le script d'installation `install.sh` et le pipeline CI de release.
+
 ---
 
 ## v0.7.2 — 2026-09-10

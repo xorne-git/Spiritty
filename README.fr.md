@@ -1,8 +1,9 @@
-# Spiritty 🧞⚡
-
-[English](README.md) | **Français**
-
-> **L'assistant IA pour terminal nouvelle génération, pensé pour les sysadmins, DevOps et power-users.**
+<div align="center">
+  <img src="assets/logo.png" alt="Logo Spiritty" width="220">
+  <h1>Spiritty 🧞⚡</h1>
+  <p><strong>L'assistant IA pour terminal nouvelle génération, pensé pour les sysadmins, DevOps et power-users.</strong></p>
+  <p><a href="README.md">English</a> | <strong>Français</strong></p>
+</div>
 
 Spiritty est une application TUI (Terminal User Interface) écrite en **Rust** qui combine dans un même écran scindé :
 - **À gauche :** Un agent d'assistance IA contextuel, proactif et interactif.

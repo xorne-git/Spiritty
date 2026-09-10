@@ -67,11 +67,12 @@ jobs:
           mkdir -p dist
           cp "$BIN_PATH" dist/spiritty
           cp README.md dist/
-          cp LICENSE* dist/ 2>/dev/null || true
           cp assets/icons/spiritty.svg dist/ 2>/dev/null || true
+          cp assets/icons/spiritty.png dist/ 2>/dev/null || true
+          cp assets/logo.png dist/ 2>/dev/null || true
 
           cd dist
-          tar -czf "../${{ matrix.archive_name }}.tar.gz" spiritty README.md LICENSE* spiritty.svg
+          tar -czf "../${{ matrix.archive_name }}.tar.gz" spiritty README.md LICENSE* spiritty.svg spiritty.png logo.png
           cd ..
           shasum -a 256 "${{ matrix.archive_name }}.tar.gz" > "${{ matrix.archive_name }}.tar.gz.sha256"
 

@@ -264,19 +264,35 @@ setup_desktop_entry() {
             ;;
     esac
 
-    # 1. Install Icon
-    local icon_dir="$HOME/.local/share/icons/hicolor/scalable/apps"
-    mkdir -p "$icon_dir"
-    local icon_dest="${icon_dir}/spiritty.svg"
+    # 1. Install Icons (SVG scalable & high-res PNG)
+    local icon_scalable_dir="$HOME/.local/share/icons/hicolor/scalable/apps"
+    local icon_512_dir="$HOME/.local/share/icons/hicolor/512x512/apps"
+    mkdir -p "$icon_scalable_dir" "$icon_512_dir"
+    local icon_dest="${icon_scalable_dir}/spiritty.svg"
+    local icon_png_dest="${icon_512_dir}/spiritty.png"
 
     if [ -f "${TMP_DIR}/spiritty.svg" ]; then
         cp "${TMP_DIR}/spiritty.svg" "$icon_dest"
     elif [ -f "${TMP_DIR}/assets/icons/spiritty.svg" ]; then
         cp "${TMP_DIR}/assets/icons/spiritty.svg" "$icon_dest"
+    elif [ -f "assets/icons/spiritty.svg" ]; then
+        cp "assets/icons/spiritty.svg" "$icon_dest"
     else
-        info "Téléchargement de l'icône officielle..."
+        info "Téléchargement de l'icône officielle (SVG)..."
         curl -fsSL "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
             || curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.svg" -o "$icon_dest" 2>/dev/null \
+            || true
+    fi
+
+    if [ -f "${TMP_DIR}/spiritty.png" ]; then
+        cp "${TMP_DIR}/spiritty.png" "$icon_png_dest"
+    elif [ -f "${TMP_DIR}/assets/icons/spiritty.png" ]; then
+        cp "${TMP_DIR}/assets/icons/spiritty.png" "$icon_png_dest"
+    elif [ -f "assets/icons/spiritty.png" ]; then
+        cp "assets/icons/spiritty.png" "$icon_png_dest"
+    else
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/assets/icons/spiritty.png" -o "$icon_png_dest" 2>/dev/null \
+            || curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/assets/icons/spiritty.png" -o "$icon_png_dest" 2>/dev/null \
             || true
     fi
 
