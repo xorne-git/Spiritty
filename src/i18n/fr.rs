@@ -55,7 +55,10 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescToggleFocus => "Basculer le focus (Chat ↔ Shell)",
         I18nKey::HelpDescMouseClick => "Focus direct sur le panneau cliqué",
         I18nKey::HelpDescScroll => "Défiler l'historique (Chat & Shell)",
-        I18nKey::HelpDescResizePanels => "Ajuster la largeur des panneaux",
+        I18nKey::HelpDescResizePanels => "Ajuster la séparation chat / terminal (←/→ ou ↑/↓)",
+        I18nKey::HelpDescToggleOrientation => {
+            "Basculer horizontal (haut/bas) / vertical (côte à côte)"
+        }
         I18nKey::HelpDescConfigModal => "Configuration des modèles & clés API",
         I18nKey::HelpDescSessionModal => "Historique & gestion des sessions",
         I18nKey::HelpDescNewSession => "Démarrer une nouvelle session",
@@ -76,6 +79,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpFooterPromptPrefix => "Appuyez sur ",
         I18nKey::HelpFooterPromptMiddle => " ou ",
         I18nKey::HelpFooterPromptSuffix => " pour fermer",
+        I18nKey::HelpFooterScroll => "Défiler",
 
         // Sessions Modal
         I18nKey::SshReconnectTitle => " 🔗 Reconnexion SSH ",
@@ -118,13 +122,15 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SshScanSuccess => "Environnement serveur profilé avec succès et enregistré.",
         I18nKey::SshScanFailed => "Échec de l'analyse de l'hôte distant.",
         I18nKey::SshLocalRestored => "Retour à l'environnement local.",
-        I18nKey::HelpDescScanHost => {
-            "Scanner et enregistrer l'environnement du serveur SSH distant"
-        }
+        I18nKey::HelpDescScanHost => "Scanner et mémoriser l'hôte SSH distant",
         I18nKey::TabRenameTitle => "Renommer l'onglet",
         I18nKey::TabRenamePrompt => "Nouveau nom de l'onglet :",
         I18nKey::TabRenameHelp => "[Entrée] Valider · [Échap] Annuler (vide = réinitialiser)",
         I18nKey::HelpDescRenameTab => "Renommer l'onglet actif du terminal",
+
+        // Layout / split toasts
+        I18nKey::ToastLayoutHorizontal => "Affichage horizontal : Chat en haut, Terminal en bas",
+        I18nKey::ToastLayoutVertical => "Affichage vertical : Chat à gauche, Terminal à droite",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => {

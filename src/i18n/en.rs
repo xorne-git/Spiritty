@@ -55,7 +55,10 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescToggleFocus => "Toggle focus between Chat and Shell",
         I18nKey::HelpDescMouseClick => "Direct focus on clicked panel",
         I18nKey::HelpDescScroll => "Scroll history (Chat & Terminal)",
-        I18nKey::HelpDescResizePanels => "Adjust split panel width",
+        I18nKey::HelpDescResizePanels => "Adjust the chat / terminal split (←/→ or ↑/↓)",
+        I18nKey::HelpDescToggleOrientation => {
+            "Toggle horizontal (top/bottom) / vertical (side by side)"
+        }
         I18nKey::HelpDescConfigModal => "Models and API Keys Configuration",
         I18nKey::HelpDescSessionModal => "Session Manager and History",
         I18nKey::HelpDescNewSession => "Start a new clean session",
@@ -76,6 +79,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpFooterPromptPrefix => "Press ",
         I18nKey::HelpFooterPromptMiddle => " or ",
         I18nKey::HelpFooterPromptSuffix => " to close",
+        I18nKey::HelpFooterScroll => "Scroll",
 
         // Sessions Modal
         I18nKey::SshReconnectTitle => " 🔗 SSH Reconnect ",
@@ -114,11 +118,15 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SshScanSuccess => "Remote server environment profiled and saved.",
         I18nKey::SshScanFailed => "Failed to profile remote host.",
         I18nKey::SshLocalRestored => "Restored local environment.",
-        I18nKey::HelpDescScanHost => "Scan and register remote SSH server environment",
+        I18nKey::HelpDescScanHost => "Scan and remember the remote SSH host",
         I18nKey::TabRenameTitle => "Rename tab",
         I18nKey::TabRenamePrompt => "New tab name:",
         I18nKey::TabRenameHelp => "[Enter] Confirm · [Esc] Cancel (empty = reset)",
         I18nKey::HelpDescRenameTab => "Rename active terminal tab",
+
+        // Layout / split toasts
+        I18nKey::ToastLayoutHorizontal => "Horizontal layout: Chat on top, Terminal at the bottom",
+        I18nKey::ToastLayoutVertical => "Vertical layout: Chat on the left, Terminal on the right",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => "Always respond in English concisely and technically.",

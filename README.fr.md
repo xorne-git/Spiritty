@@ -67,6 +67,8 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 +-------------------------------------------------------------------------+
 ```
 
+> *Le schéma ci-dessus illustre l'affichage côte à côte (vertical). Spiritty démarre en **horizontal** (chat en haut, shell en bas) — appuyez sur `F4` pour basculer entre les deux.*
+
 ---
 
 ## 🛠️ Stack Technique
@@ -82,7 +84,7 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 
 ## 🚀 Fonctionnalités Clés
 
-- [x] **Split-Screen Ergonomique :** Agent à gauche, Shell natif interactif (`$SHELL`) à droite avec redimensionnement interactif (souris ou `Alt+Left/Right`).
+- [x] **Split-Screen Ergonomique :** Agent IA et shell natif interactif (`$SHELL`) en **affichage horizontal par défaut** (chat en haut ~70 %, shell en bas) pour rester lisible sur un terminal peu large — bascule en côte à côte avec `F4`, redimensionnable à la souris ou via `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
 - [x] **Multi-Fournisseurs LLM :** Support complet pour LM Studio, Ollama local, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok) et Z.ai (GLM) avec détection automatique de la taille de contexte.
 - [x] **Gestionnaire de Sessions & Compactage :**
   - Sauvegarde et restauration complètes des sessions dans `~/.config/spiritty/sessions/`.
@@ -152,6 +154,7 @@ spiritty --help
 | `F10` | Autoriser la commande en attente (validation en un appui) |
 | `F6` | Basculer le focus (alias de `Ctrl + Espace`) |
 | `F3` | Changer le mode d'approbation automatique (Safe / Sudo / YOLO / Off) |
+| `F4` | Basculer l'affichage (horizontal : chat en haut / vertical : côte à côte) |
 | `Ctrl + B` | Gestionnaire de serveurs SSH & favoris (Quick-Connect) |
 | `Ctrl + E` | Exporter la session active en rapport Markdown |
 | `Ctrl + F` | Rechercher dans l'historique du chat en temps réel |
@@ -160,7 +163,8 @@ spiritty --help
 | `Ctrl + N` | Créer une nouvelle session vierge |
 | `Ctrl + P` | Ouvrir la configuration des modèles / API keys |
 | `F1` | Afficher la modale d'aide des raccourcis |
-| `Alt + ←` / `Alt + →` | Déplacer la séparation d'écran |
+| `Alt + ←` / `Alt + →` | Déplacer la séparation d'écran (affichage vertical) |
+| `Alt + ↑` / `Alt + ↓` | Déplacer la séparation d'écran (affichage horizontal) |
 | `Ctrl + Q` | Sauvegarder et quitter Spiritty |
 
 ---

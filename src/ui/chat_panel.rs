@@ -206,7 +206,8 @@ impl<'a> ChatPanel<'a> {
                     // them ("scrolling into empty space" bug). Staleness is not a
                     // concern — `cached_fresh` above already recomposes the live
                     // tail on every frame while generating.
-                    let has_thought = role_tag == 2 && !skipped && has_visible_thought(&msg.content);
+                    let has_thought =
+                        role_tag == 2 && !skipped && has_visible_thought(&msg.content);
                     let slot = cache.slot_mut(idx);
                     *slot = Some(crate::app::ChatCacheEntry {
                         generation: gen_key,
@@ -1110,8 +1111,8 @@ fn compose_approval_card(command: &str, panel_width: u16, lang: Language) -> Vec
     };
 
     let enter_len = 9; // "[ Enter ]"
-    let esc_len = 7;   // "[ Esc ]"
-    let sep_len = 5;   // "  ·  "
+    let esc_len = 7; // "[ Esc ]"
+    let sep_len = 5; // "  ·  "
     let footer_fixed_len = 3
         + enter_len
         + approve_label.chars().count()
@@ -1131,7 +1132,10 @@ fn compose_approval_card(command: &str, panel_width: u16, lang: Language) -> Vec
     ));
     footer_spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
     footer_spans.extend(key_pill("Esc", Color::Red));
-    footer_spans.push(Span::styled(decline_label, Style::default().fg(Color::White)));
+    footer_spans.push(Span::styled(
+        decline_label,
+        Style::default().fg(Color::White),
+    ));
     footer_spans.push(Span::raw(" ".repeat(footer_gap)));
     footer_spans.push(Span::styled("  │", Style::default().fg(outer_border_color)));
 
@@ -2216,6 +2220,8 @@ struct ParsedThought {
 /// reasoning marker leaves the real deliberation verbatim.
 fn strip_residual_reasoning_tags(text: &str) -> String {
     const TAGS: &[&str] = &[
+        crate::agent::tools::REASONING_OPEN,
+        crate::agent::tools::REASONING_CLOSE,
         "<think>",
         "</think>",
         "<thought>",
@@ -2307,6 +2313,43 @@ fn extract_thought_block(text: &str) -> ParsedThought {
         "```sh",
         "```zsh",
     ];
+
+    // Spiritty's own reasoning wrapper takes precedence: it may contain literal `<think>`
+    // quoted by the model, so the first `REASONING_CLOSE` (not the first legacy close tag)
+    // is the authoritative boundary.
+    if let Some(s) = text.find(crate::agent::tools::REASONING_OPEN) {
+        let before = &text[..s];
+        let after = &text[s + crate::agent::tools::REASONING_OPEN.len()..];
+        if let Some(e) = after.find(crate::agent::tools::REASONING_CLOSE) {
+            let thought = strip_residual_reasoning_tags(&after[..e]);
+            let after_end = after[e + crate::agent::tools::REASONING_CLOSE.len()..].trim();
+            let remaining = if before.trim().is_empty() {
+                clean_response(after_end)
+            } else {
+                clean_response(&format!("{}\n\n{}", before.trim(), after_end))
+            };
+            return ParsedThought {
+                thought: if thought.is_empty() {
+                    None
+                } else {
+                    Some(thought)
+                },
+                is_completed: true,
+                response: remaining,
+            };
+        }
+        // Still streaming inside the reasoning block.
+        let thought = strip_residual_reasoning_tags(after);
+        return ParsedThought {
+            thought: if thought.is_empty() {
+                None
+            } else {
+                Some(thought)
+            },
+            is_completed: false,
+            response: clean_response(before.trim()),
+        };
+    }
 
     // Find earliest open tag
     let earliest_open = crate::agent::tools::find_earliest_tag(text, OPEN_TAGS);
@@ -2406,7 +2449,9 @@ fn has_visible_thought(content: &str) -> bool {
         "<plan>",
         "<thought_process>",
     ];
-    if !OPEN_TAGS.iter().any(|tag| content.contains(tag)) {
+    if !content.contains(crate::agent::tools::REASONING_OPEN)
+        && !OPEN_TAGS.iter().any(|tag| content.contains(tag))
+    {
         return false;
     }
     extract_thought_block(content)
@@ -3104,6 +3149,25 @@ mod recovered_regression_tests {
         assert!(!cleaned.contains("exec_command"));
         assert!(cleaned.contains("Je relance."));
         assert!(cleaned.contains("```bash"));
+    }
+
+    #[test]
+    fn sentinel_reasoning_wrapper_beats_literal_think_inside() {
+        use super::extract_thought_block;
+        use crate::agent::tools::{REASONING_CLOSE, REASONING_OPEN};
+        // The model quotes `<think>`/`</think>` while reasoning about them; Spiritty's own
+        // sentinel wrapper must be the boundary, and the visible answer must survive.
+        let msg = format!(
+            "{REASONING_OPEN}Je cite <think> et </think> littéraux.{REASONING_CLOSE}Réponse visible."
+        );
+        let parsed = extract_thought_block(&msg);
+        assert_eq!(
+            parsed.thought.as_deref(),
+            Some("Je cite  et  littéraux."),
+            "literal tags must be stripped from the reasoning, not treated as boundaries"
+        );
+        assert_eq!(parsed.response, "Réponse visible.");
+        assert!(parsed.is_completed);
     }
 
     #[test]

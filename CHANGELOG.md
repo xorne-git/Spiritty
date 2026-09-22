@@ -17,6 +17,10 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+- **Adjustable split orientation — horizontal layout by default (`F4`)**:
+  - The chat/terminal split now defaults to a **horizontal layout** (chat on top at ~70% height, interactive PTY shell below), which stays readable on narrow terminals; press `F4` to switch back to the classic side-by-side (vertical) layout.
+  - Each orientation remembers its own ratio: vertical defaults to 50% chat width, horizontal to 70% chat height. The orientation and both ratios are persisted in `~/.config/spiritty/config.toml` (`split_orientation`, `split_ratio`, `split_ratio_horizontal`).
+  - `Alt + ←/→` resizes the split in vertical mode, `Alt + ↑/↓` in horizontal mode; the divider is drawn as a vertical `│` or horizontal `─` line accordingly and stays draggable with the mouse. The shell tabs, mouse selection and PTY sizing all follow the active orientation.
 - **Direct validation of a pending command with a single press of [ Enter ]**:
   - When a command awaits user confirmation (`pending_tool_approval`), a single press of `[ Enter ]` validates and runs the command directly if the input field (prompt) is empty (or contains an affirmative sentence such as `ok` / `oui`).
   - If the user types text (question, new directive) before pressing `Enter`, the pending command is cleanly denied to unblock the agent, and the new message is immediately submitted to the model.
@@ -24,6 +28,12 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- **Reasoning turns no longer end silently (thinking swallowed the command)**:
+  - Spiritty now wraps a provider's streamed `reasoning_content` in a dedicated, unambiguous marker (`<spiritty:think>…</spiritty:think>`) instead of `<think>…</think>`. A model that literally writes `<think>`/`</think>` *inside* its reasoning (e.g. while debugging this very feature) can no longer split Spiritty's own reasoning boundary and corrupt parsing.
+  - `strip_think_blocks` strips residual reasoning closing tags (a leaked `</think>` used to pollute the answer and could sit on a code fence's closing line — ` ```</think> ` — making `find_closing_code_fence` reject the block and silently drop the whole command). Legacy `<think>` handling is preserved for older sessions.
+  - When a reasoning block is left **unclosed** and is immediately followed by the model's real command (` ```bash ` / ` ```tool: `…), the command is now preserved instead of being swallowed (this alone recovered ~8+3 command blocks across two real sessions).
+  - New **dead-turn recovery**: if a turn produces no visible answer but its reasoning carried an executable command, the command is promoted to a visible ```` ```bash ```` block (and a proposal) so the normal card / approval flow handles it — requiring user consent — instead of ending the turn with nothing.
+  - The model's private reasoning is now dropped from the conversation sent back to the API (it is no longer echoed, saving context).
 - **Elimination of the 100% CPU freeze during model streaming and terminal output**:
   - **Batched event draining**: the main loop [`run_loop`](file:///home/xorne/Projets/Spiritty/src/main.rs) now immediately drains all pending events in memory (`try_recv()`) before triggering a render, eliminating queue congestion where each individual chunk or PTY byte triggered a full terminal redraw.
   - **Frame rate throttling (~30 FPS)**: the periodic background redraw is limited to 30 ms for continuous streams (LLM chunks, PTY output), while keeping an instant 0 ms render for interactive keyboard input, pastes and mouse clicks.
@@ -45,6 +55,9 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Changed
 
+- **Status bar shortcut priorities & help modal readability**:
+  - The footer's right-hand shortcuts now prioritize `F3` (approval), `Ctrl + P` Config, `F4` (layout) and `F1` (help); `Ctrl + B` / `Ctrl + M` / `Ctrl + H` (Hosts/MCP/Sessions) appear only when space allows, and the rendering degrades from bracketed pills to compact badges to bare keys instead of overflowing.
+  - The `F1` help modal is now a **single full-width column** (one shortcut per line, a blank line before each section title, no more descriptions truncated by a two-column split) and **scrolls** (`↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`, `j`/`k`) with a scrollbar when the list exceeds the viewport.
 - **General harmonization of buttons and shortcut keys (`key_pill`)**:
   - Replacement of the solid Powerline pills with rounded edges (`...`) by the framed key format `[ key ]` (colored brackets and bold label without a solid background), guaranteeing a clean, universal rendering with no dependency on Nerd Fonts glyphs.
   - Systematic unification of key combinations as a single key `[ Ctrl + Key ]` (instead of `[ Ctrl ] + [ Key ]` or `[ Ctrl ] [ Key ]`) in the F1 help modal, the configuration modal, the footer and the previews.

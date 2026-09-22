@@ -401,6 +401,43 @@ fn default_mcp_enabled() -> bool {
     true
 }
 
+/// Orientation of the chat/terminal split.
+///
+/// `Horizontal` stacks the chat **on top** of the terminal (width-constrained shells stay
+/// readable); `Vertical` places them side by side. It can be toggled at runtime with `F4`
+/// and is persisted in `config.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplitOrientation {
+    Vertical,
+    #[default]
+    Horizontal,
+}
+
+impl SplitOrientation {
+    pub fn key_str(self) -> &'static str {
+        match self {
+            SplitOrientation::Vertical => "vertical",
+            SplitOrientation::Horizontal => "horizontal",
+        }
+    }
+
+    /// Parses a persisted orientation string, defaulting to `Horizontal` on anything
+    /// unrecognized (including legacy configs that predate the field).
+    pub fn parse_or_default(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "vertical" | "v" | "column" => SplitOrientation::Vertical,
+            _ => SplitOrientation::Horizontal,
+        }
+    }
+
+    pub fn toggle(self) -> Self {
+        match self {
+            SplitOrientation::Vertical => SplitOrientation::Horizontal,
+            SplitOrientation::Horizontal => SplitOrientation::Vertical,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -423,6 +460,12 @@ pub struct Config {
     pub system_prompt_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_ratio: Option<u16>,
+    /// Chat height percentage when the split is horizontal (chat on top). Defaults to 70.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_ratio_horizontal: Option<u16>,
+    /// Persisted split orientation ("horizontal" or "vertical"). Defaults to horizontal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_orientation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,6 +503,8 @@ impl Default for Config {
             system_prompt: None,
             system_prompt_file: None,
             split_ratio: Some(50),
+            split_ratio_horizontal: Some(70),
+            split_orientation: Some("horizontal".to_string()),
             theme: Some("spiritty_dark".to_string()),
             export_dir: None,
         }
@@ -467,8 +512,24 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn get_split_orientation(&self) -> SplitOrientation {
+        self.split_orientation
+            .as_deref()
+            .map(SplitOrientation::parse_or_default)
+            .unwrap_or_default()
+    }
+
+    /// Ratio of the **active** orientation: chat width percentage when vertical (side by
+    /// side) or chat height percentage when horizontal (chat on top).
     pub fn get_split_ratio(&self) -> u16 {
-        self.split_ratio.unwrap_or(50).clamp(15, 85)
+        self.get_split_ratio_for(self.get_split_orientation())
+    }
+
+    pub fn get_split_ratio_for(&self, orientation: SplitOrientation) -> u16 {
+        match orientation {
+            SplitOrientation::Vertical => self.split_ratio.unwrap_or(50).clamp(15, 85),
+            SplitOrientation::Horizontal => self.split_ratio_horizontal.unwrap_or(70).clamp(15, 85),
+        }
     }
 
     pub fn get_theme(&self) -> String {

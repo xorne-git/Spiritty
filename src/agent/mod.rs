@@ -54,6 +54,10 @@ fn prepare_conversation(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
         })
         .map(|mut m| {
             if m.role == MessageRole::Assistant {
+                // Drop the model's private reasoning from the history sent back to the API:
+                // it is not useful context, wastes tokens, and must never leak Spiritty's own
+                // reasoning markers back to the provider.
+                m.content = crate::agent::tools::strip_think_blocks(&m.content).into_owned();
                 let mut clean_lines = Vec::new();
                 for l in m.content.lines() {
                     let trimmed = l.trim();

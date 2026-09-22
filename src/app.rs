@@ -8,15 +8,18 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     agent::AgentEngine,
-    config::{AutoApproveLevel, Config, ProviderType},
+    config::{AutoApproveLevel, Config, ProviderType, SplitOrientation},
     event::AppEvent,
-    i18n::Language,
+    i18n::{I18nKey, Language},
     pty::PtyProcess,
     session::{Session, SessionStorage},
     system::{ActiveSession, HostsStore, SystemContext},
     ui::{
         chat_panel::prompt_visual_rows,
-        components::{BookmarksModalState, ConfigModalState, ExportModalState, SessionModalState},
+        components::{
+            BookmarksModalState, ConfigModalState, ExportModalState, HelpModalState,
+            SessionModalState,
+        },
         theme::ThemeId,
     },
 };
@@ -381,6 +384,8 @@ pub struct App {
     pub terminal_tab_hits: std::cell::RefCell<Vec<TerminalTabHit>>,
     pub should_quit: bool,
     pub split_ratio: u16,
+    /// Current split orientation (horizontal = chat on top, vertical = side by side).
+    pub split_orientation: SplitOrientation,
     pub terminal_inner_size: (u16, u16),
     pub chat_area: Rect,
     pub terminal_area: Rect,
@@ -662,7 +667,8 @@ impl App {
         let mut current_session = Session::new(active_provider, &active_model);
         current_session.auto_approve = Some(config.auto_approve);
 
-        let split_ratio = config.get_split_ratio();
+        let split_orientation = config.get_split_orientation();
+        let split_ratio = config.get_split_ratio_for(split_orientation);
         let theme = ThemeId::parse_or_default(&config.get_theme());
 
         let app = Self {
@@ -677,6 +683,7 @@ impl App {
             terminal_tab_hits: std::cell::RefCell::new(Vec::new()),
             should_quit: false,
             split_ratio,
+            split_orientation,
             terminal_inner_size: (initial_rows, initial_cols),
             chat_area: Rect::default(),
             terminal_area: Rect::default(),
@@ -1381,11 +1388,60 @@ impl App {
         };
     }
 
+    /// Persists the active orientation's ratio into its dedicated config slot.
+    fn persist_split_ratio(&mut self) {
+        match self.split_orientation {
+            SplitOrientation::Vertical => self.config.split_ratio = Some(self.split_ratio),
+            SplitOrientation::Horizontal => {
+                self.config.split_ratio_horizontal = Some(self.split_ratio)
+            }
+        }
+    }
+
     pub fn adjust_split(&mut self, delta: i16) {
         let new_ratio = (self.split_ratio as i16 + delta).clamp(15, 85) as u16;
         self.split_ratio = new_ratio;
-        self.config.split_ratio = Some(new_ratio);
+        self.persist_split_ratio();
         let _ = self.config.save();
+    }
+
+    /// Toggles between the horizontal (chat on top) and vertical (side by side) split,
+    /// remembering each orientation's own ratio and persisting the choice.
+    pub fn toggle_split_orientation(&mut self) {
+        // Remember where the user left the current layout before switching away from it.
+        self.persist_split_ratio();
+
+        self.split_orientation = self.split_orientation.toggle();
+        self.split_ratio = self.config.get_split_ratio_for(self.split_orientation);
+        self.config.split_orientation = Some(self.split_orientation.key_str().to_string());
+        let _ = self.config.save();
+
+        let lang = self.config.get_language();
+        let msg = match self.split_orientation {
+            SplitOrientation::Horizontal => lang.t(I18nKey::ToastLayoutHorizontal),
+            SplitOrientation::Vertical => lang.t(I18nKey::ToastLayoutVertical),
+        };
+        self.set_toast(msg.to_string());
+    }
+
+    /// Computes the PTY (rows, cols) for the terminal panel from the total terminal size,
+    /// honouring the active split orientation and ratio.
+    pub fn compute_pty_size(&self, total_width: u16, total_height: u16) -> (u16, u16) {
+        let workspace_h = total_height.saturating_sub(3).max(1);
+        match self.split_orientation {
+            SplitOrientation::Vertical => {
+                let cols = (((total_width as u32 * (100 - self.split_ratio as u32)) / 100) as u16)
+                    .saturating_sub(1)
+                    .max(1);
+                (workspace_h, cols)
+            }
+            SplitOrientation::Horizontal => {
+                let rows =
+                    (((workspace_h as u32 * (100 - self.split_ratio as u32)) / 100) as u16).max(1);
+                let cols = total_width.saturating_sub(1).max(1);
+                (rows, cols)
+            }
+        }
     }
 
     pub fn set_theme(&mut self, theme_id: ThemeId) {
@@ -1692,11 +1748,27 @@ impl App {
             return;
         }
 
-        let border_x = self.chat_area.right();
+        // Divider hit-testing depends on the orientation: a vertical divider is grabbed by
+        // its column, a horizontal one by its row (within the workspace width).
+        let on_divider = match self.split_orientation {
+            SplitOrientation::Vertical => {
+                let border_x = self.chat_area.right();
+                x >= border_x.saturating_sub(1) && x <= border_x.saturating_add(1)
+            }
+            SplitOrientation::Horizontal => {
+                let border_y = self.chat_area.bottom().saturating_sub(1);
+                // Only the divider row and the row above it (never the terminal tab bar
+                // sitting right below, which must stay clickable).
+                y >= border_y.saturating_sub(1)
+                    && y <= border_y
+                    && x >= self.chat_area.left()
+                    && x < self.chat_area.right()
+            }
+        };
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if x >= border_x.saturating_sub(1) && x <= border_x.saturating_add(1) {
+                if on_divider {
                     self.is_dragging_split = true;
                     self.mouse_selection = None;
                 } else if self.chat_area.contains(ratatui::layout::Position { x, y }) {
@@ -1756,9 +1828,26 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if self.is_dragging_split && total_width > 0 {
-                    let pct = ((x as u32 * 100) / total_width as u32) as u16;
-                    self.split_ratio = pct.clamp(15, 85);
+                if self.is_dragging_split {
+                    match self.split_orientation {
+                        SplitOrientation::Vertical => {
+                            if total_width > 0 {
+                                let pct = ((x as u32 * 100) / total_width as u32) as u16;
+                                self.split_ratio = pct.clamp(15, 85);
+                            }
+                        }
+                        SplitOrientation::Horizontal => {
+                            let total_h = self
+                                .chat_area
+                                .height
+                                .saturating_add(self.terminal_area.height);
+                            if total_h > 0 {
+                                let rel = y.saturating_sub(self.chat_area.top()) as u32;
+                                let pct = ((rel * 100) / total_h as u32) as u16;
+                                self.split_ratio = pct.clamp(15, 85);
+                            }
+                        }
+                    }
                 } else if self
                     .terminal_area
                     .contains(ratatui::layout::Position { x, y })
@@ -1776,7 +1865,7 @@ impl App {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 if self.is_dragging_split {
-                    self.config.split_ratio = Some(self.split_ratio);
+                    self.persist_split_ratio();
                     let _ = self.config.save();
                 }
                 self.is_dragging_split = false;
@@ -1973,8 +2062,8 @@ impl App {
         // 1. Global modal triggers & shortcuts
         if key.code == KeyCode::F(1) {
             self.modal = match self.modal {
-                ModalState::Help => ModalState::None,
-                _ => ModalState::Help,
+                ModalState::Help(_) => ModalState::None,
+                _ => ModalState::Help(HelpModalState::new()),
             };
             return;
         }
@@ -2146,7 +2235,9 @@ impl App {
                 if let Some(digit) = c.to_digit(10) {
                     if (1..=9).contains(&digit) {
                         let target_idx = (digit - 1) as usize;
-                        if target_idx < self.tabs.len() {
+                        let card_conflict = key_to_card_index(key.code)
+                            .is_some_and(|i| i < self.all_command_proposals().len());
+                        if !card_conflict && target_idx < self.tabs.len() {
                             self.select_tab(target_idx);
                             return;
                         }
@@ -2203,16 +2294,29 @@ impl App {
                 }
             }
 
-            match key.code {
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') => {
-                    self.adjust_split(-3);
-                    return;
-                }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') => {
-                    self.adjust_split(3);
-                    return;
-                }
-                _ => {}
+            match self.split_orientation {
+                SplitOrientation::Vertical => match key.code {
+                    KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') => {
+                        self.adjust_split(-3);
+                        return;
+                    }
+                    KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') => {
+                        self.adjust_split(3);
+                        return;
+                    }
+                    _ => {}
+                },
+                SplitOrientation::Horizontal => match key.code {
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                        self.adjust_split(-3);
+                        return;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                        self.adjust_split(3);
+                        return;
+                    }
+                    _ => {}
+                },
             }
         }
 
@@ -2221,6 +2325,12 @@ impl App {
         let is_ctrl_space =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(' ');
         let is_f6 = key.code == KeyCode::F(6);
+
+        // F4 toggles the split orientation (chat on top <-> side by side).
+        if key.code == KeyCode::F(4) {
+            self.toggle_split_orientation();
+            return;
+        }
 
         if is_shift_tab || is_ctrl_space || is_f6 {
             self.toggle_focus();
@@ -2733,7 +2843,8 @@ impl App {
                 }
 
                 let input = self.chat_input.trim().to_string();
-                if !input.is_empty() && !self.agent.is_generating {
+                let has_pending_image = self.pending_image.is_some();
+                if (!input.is_empty() || has_pending_image) && !self.agent.is_generating {
                     // Check if input is a natural command execution request ("ok", "oui", "vas y", "lance", "2", "lance 2", etc.)
                     let proposals = self.all_command_proposals();
                     if let Some(target_idx) =
@@ -2750,7 +2861,7 @@ impl App {
                     }
 
                     // Record in prompt history if non-empty and not identical to last entry
-                    if self.chat_history.last() != Some(&input) {
+                    if !input.is_empty() && self.chat_history.last() != Some(&input) {
                         self.chat_history.push(input.clone());
                     }
                     self.history_index = None;
@@ -3378,7 +3489,27 @@ impl App {
         }
     }
 
+    /// Dead-turn recovery: when the model streamed everything (command included) as reasoning
+    /// and produced no visible content, promote the recovered command to a visible ```bash block
+    /// so the normal command-card / approval machinery picks it up instead of ending silently.
+    fn recover_dead_turn_proposal(&mut self) {
+        let Some(last_msg) = self.messages.last_mut() else {
+            return;
+        };
+        if last_msg.role != MessageRole::Assistant || last_msg.command_proposal.is_some() {
+            return;
+        }
+        let Some(cmd) = recover_command_from_reasoning(&last_msg.content) else {
+            return;
+        };
+        last_msg
+            .content
+            .push_str(&format!("\n\n```bash\n{}\n```\n", cmd));
+        last_msg.command_proposal = Some(cmd);
+    }
+
     pub fn on_agent_done(&mut self) {
+        self.recover_dead_turn_proposal();
         if let Some(first) = self.first_chunk_time.take() {
             let secs = first.elapsed().as_secs_f64();
             if secs > 0.1 && self.current_turn_tokens > 0 && self.last_tokens_per_sec.is_none() {
@@ -3459,6 +3590,9 @@ impl App {
     }
 
     pub fn on_agent_error(&mut self, error: String) {
+        // Recover a command the model only emitted inside its reasoning *before* the error line
+        // is appended (which would otherwise make the visible text non-empty).
+        self.recover_dead_turn_proposal();
         self.consecutive_auto_proposals = 0;
         self.agent.is_generating = false;
         self.pending_tool_approval = None;
@@ -3744,11 +3878,11 @@ pub fn repair_prematurely_closed_code_blocks(text: &str) -> String {
             if after.contains("```") {
                 working = format!("{}{}", before, after);
             } else {
-                let trimmed_after = after.trim_end_matches('`').trim();
-                if !trimmed_after.is_empty() {
-                    working = format!("{}\n\n```bash\n{}\n```", before.trim_end(), trimmed_after);
-                    break;
-                }
+                // Never manufacture a ```bash block from residual text: that would turn
+                // trailing prose/reasoning into an executable command proposal. Drop the
+                // spurious empty fence and keep the surrounding text untouched.
+                working = format!("{}{}", before, after);
+                break;
             }
         }
     }
@@ -3864,6 +3998,23 @@ pub fn extract_all_command_proposals(text: &str) -> Vec<String> {
 /// Extracts the first proposed shell command from markdown code blocks or tool calls
 pub fn extract_command_proposal(text: &str) -> Option<String> {
     extract_all_command_proposals(text).into_iter().next()
+}
+
+/// Last-resort recovery for a "dead turn": some reasoning models (e.g. deepseek-flash) stream
+/// their whole answer — command included — as `reasoning_content` and never emit visible
+/// `content`. Once folded into a `<think>` block that command is stripped and the turn ends
+/// silently. When (and only when) the visible text is empty, unwrap the reasoning markers and
+/// return the first executable command found, so the caller can surface it for approval.
+pub fn recover_command_from_reasoning(text: &str) -> Option<String> {
+    if !crate::agent::tools::strip_think_blocks(text)
+        .trim()
+        .is_empty()
+    {
+        // A real visible answer exists: never surface a command merely *considered* in reasoning.
+        return None;
+    }
+    let unwrapped = crate::agent::tools::unwrap_reasoning_tags(text);
+    extract_all_command_proposals(&unwrapped).into_iter().next()
 }
 
 /// True when a line is a bare interpreter invocation framing a command transcript rather than

@@ -54,6 +54,10 @@ To embed a real terminal inside a Ratatui widget without disturbing the parent s
    - During the `draw()` rendering pass, the `TerminalPanel` widget reads the cells of the virtual `vt100` screen and converts them into `ratatui::buffer::Buffer` cells (characters, foreground/background colors, bold/underline/reverse attributes).
    - When the interface is resized (split slider or window resize), a `pty.resize(rows, cols)` notification is immediately sent to the slave PTY via `SIGWINCH`.
 
+4. **Split orientation (horizontal / vertical):**
+   - The workspace supports two orientations: a **horizontal** split (chat on top / terminal at the bottom — the default at ~70% chat height, suited to narrow terminals) and a **vertical** split (chat left / terminal right). `F4` toggles between them.
+   - Each orientation keeps its own ratio (`split_ratio` for vertical, `split_ratio_horizontal` for horizontal), persisted in `~/.config/spiritty/config.toml`. Mouse dragging and `Alt + ←/→` (vertical) or `Alt + ↑/↓` (horizontal) adjust the active ratio; the PTY is resized automatically whenever the terminal panel's inner area changes, so both orientations stay accurate.
+
 ---
 
 ## 3. AI Agent System & Context Injection

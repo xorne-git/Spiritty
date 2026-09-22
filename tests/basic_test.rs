@@ -827,15 +827,28 @@ async fn test_shift_enter_multiline_prompt() {
 fn test_repair_prematurely_closed_code_blocks() {
     use spiritty::app::{extract_all_command_proposals, repair_prematurely_closed_code_blocks};
 
+    // Regression: the model emitted an empty ```bash fence then the real script *outside* any
+    // fence. Repair must drop the spurious empty fence WITHOUT manufacturing a new ```bash
+    // block from the residual text (that turned trailing prose/reasoning into fake commands).
     let glitched = "Je corrige avec le bon pattern :\n\n```bash\n \n```\nfor v in 7.4 8.4 8.5; do\n  sudo sed -i -e 's/a/b/' /etc/php/$v/fpm/php.ini\ndone\n\nsudo systemctl restart php-fpm`";
     let repaired = repair_prematurely_closed_code_blocks(glitched);
 
-    assert!(repaired.contains("```bash\nfor v in 7.4 8.4 8.5; do"));
-    assert!(repaired.ends_with("sudo systemctl restart php-fpm\n```"));
+    assert!(
+        !repaired.contains("```bash"),
+        "repair must not manufacture a bash block: {repaired}"
+    );
+    assert!(repaired.contains("for v in 7.4 8.4 8.5; do"));
+    assert!(
+        !repaired.ends_with("```"),
+        "repair must not fabricate a closing fence: {repaired}"
+    );
 
+    // The un-fenced residual text must not be promoted to a command proposal.
     let proposals = extract_all_command_proposals(glitched);
-    assert_eq!(proposals.len(), 1);
-    assert!(proposals[0].starts_with("for v in 7.4 8.4 8.5; do"));
+    assert!(
+        proposals.is_empty(),
+        "residual un-fenced text must not become a command proposal: {proposals:?}"
+    );
 }
 
 #[test]
@@ -920,21 +933,17 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
 
         if width >= 140 {
-            assert!(
-                footer_text.contains("Hosts") || footer_text.contains("B"),
-                "Width 140 should contain Hosts! Rendered: '{}'",
-                footer_text
-            );
-            assert!(
-                footer_text.contains("MCP") || footer_text.contains("M"),
-                "Width 140 should contain MCP! Rendered: '{}'",
-                footer_text
-            );
-            assert!(
-                footer_text.contains("Sessions") || footer_text.contains("H"),
-                "Width 140 should contain Sessions! Rendered: '{}'",
-                footer_text
-            );
+            // Priority shortcuts (F3 approval, Config, F4 layout, F1 help) must all be
+            // visible on a wide terminal; Hosts/MCP/Sessions are now optional.
+            for expected in ["F3", "Config", "F4", "F1"] {
+                assert!(
+                    footer_text.contains(expected),
+                    "Width {} should contain {}! Rendered: '{}'",
+                    width,
+                    expected,
+                    footer_text
+                );
+            }
         }
     }
 }
@@ -1122,8 +1131,14 @@ async fn test_enter_key_approves_pending_command_when_prompt_empty() {
     });
     app.chat_input.clear();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(app.pending_tool_approval.is_none(), "pending must be consumed");
-    assert!(rx.await.expect("approval sent"), "Enter must approve when prompt is empty");
+    assert!(
+        app.pending_tool_approval.is_none(),
+        "pending must be consumed"
+    );
+    assert!(
+        rx.await.expect("approval sent"),
+        "Enter must approve when prompt is empty"
+    );
 
     // 2. Enter with 'non' declines the command
     let (tx_no, rx_no) = tokio::sync::oneshot::channel::<bool>();
@@ -1134,7 +1149,10 @@ async fn test_enter_key_approves_pending_command_when_prompt_empty() {
     app.chat_input = "non".to_string();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.pending_tool_approval.is_none());
-    assert!(!rx_no.await.expect("decline sent"), "Entering 'non' must decline");
+    assert!(
+        !rx_no.await.expect("decline sent"),
+        "Entering 'non' must decline"
+    );
     assert!(app.chat_input.is_empty(), "chat_input must be cleared");
 
     // 3. Shift+Enter does NOT approve, but inserts newline
@@ -1146,8 +1164,14 @@ async fn test_enter_key_approves_pending_command_when_prompt_empty() {
     app.chat_input = "attends".to_string();
     app.cursor_pos = 7;
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
-    assert!(app.pending_tool_approval.is_some(), "Shift+Enter must not consume pending");
-    assert!(rx_shift.try_recv().is_err(), "no approval must be sent on Shift+Enter");
+    assert!(
+        app.pending_tool_approval.is_some(),
+        "Shift+Enter must not consume pending"
+    );
+    assert!(
+        rx_shift.try_recv().is_err(),
+        "no approval must be sent on Shift+Enter"
+    );
     assert_eq!(app.chat_input, "attends\n");
 
     // 4. Enter with a new question/instruction declines the pending command so prompt can be processed
@@ -1158,8 +1182,14 @@ async fn test_enter_key_approves_pending_command_when_prompt_empty() {
     });
     app.chat_input = "pourquoi veux-tu redémarrer ?".to_string();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(app.pending_tool_approval.is_none(), "pending tool must be cleared");
-    assert!(!rx_query.await.expect("decline sent"), "Entering a question must decline pending command");
+    assert!(
+        app.pending_tool_approval.is_none(),
+        "pending tool must be cleared"
+    );
+    assert!(
+        !rx_query.await.expect("decline sent"),
+        "Entering a question must decline pending command"
+    );
 }
 
 #[test]
@@ -1324,5 +1354,181 @@ fn test_mouse_selection_reaches_bottom_prompt_line() {
     assert_eq!(
         clamped_e_y, 29,
         "Dragging past panel must clamp to the bottom-most prompt line (29)"
+    );
+}
+
+#[tokio::test]
+async fn test_split_orientation_pty_sizing() {
+    use spiritty::app::App;
+    use spiritty::config::SplitOrientation;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 40, 120).unwrap();
+
+    // Horizontal (chat on top): the terminal keeps the full width and gets a reduced height.
+    app.split_orientation = SplitOrientation::Horizontal;
+    app.split_ratio = 70;
+    let (h_rows, h_cols) = app.compute_pty_size(120, 40);
+    assert_eq!(h_cols, 119);
+    assert_eq!(h_rows, 11); // 37 workspace rows * (100 - 70) / 100
+
+    // Vertical (side by side): the terminal keeps the full height and gets a reduced width.
+    app.split_orientation = SplitOrientation::Vertical;
+    app.split_ratio = 50;
+    let (v_rows, v_cols) = app.compute_pty_size(120, 40);
+    assert_eq!(v_rows, 37); // 40 - 3 (workspace height)
+    assert_eq!(v_cols, 59); // (120 * 50 / 100) - 1
+}
+
+#[tokio::test]
+async fn test_render_both_split_orientations() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::App;
+    use spiritty::config::SplitOrientation;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 40, 120).unwrap();
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    // Horizontal: chat stacked above the terminal, sharing the workspace width.
+    app.split_orientation = SplitOrientation::Horizontal;
+    app.split_ratio = 70;
+    terminal
+        .draw(|f| spiritty::ui::draw(f, &mut app))
+        .expect("horizontal draw must not panic");
+    assert_eq!(app.chat_area.x, app.terminal_area.x);
+    assert_eq!(app.chat_area.width, app.terminal_area.width);
+    assert_eq!(app.chat_area.bottom(), app.terminal_area.top());
+    assert!(app.chat_area.height > app.terminal_area.height);
+
+    // Vertical: chat left of the terminal, sharing the workspace height.
+    app.split_orientation = SplitOrientation::Vertical;
+    app.split_ratio = 50;
+    terminal
+        .draw(|f| spiritty::ui::draw(f, &mut app))
+        .expect("vertical draw must not panic");
+    assert_eq!(app.chat_area.y, app.terminal_area.y);
+    assert_eq!(app.chat_area.height, app.terminal_area.height);
+    assert_eq!(app.chat_area.right(), app.terminal_area.left());
+    assert!(app.chat_area.left() < app.terminal_area.left());
+}
+
+#[test]
+fn test_help_modal_single_column_and_scroll() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::i18n::Language;
+    use spiritty::ui::components::{HelpModal, HelpModalState};
+
+    let mut state = HelpModalState::new();
+    let key = |c| KeyEvent::new(c, KeyModifiers::NONE);
+
+    // max_scroll is only known after a render, so scrolling is clamped to 0 initially.
+    assert!(!HelpModal::handle_key(key(KeyCode::Down), &mut state));
+    assert_eq!(state.scroll, 0);
+
+    // Render on a short terminal: the content overflows and becomes scrollable.
+    let mut term = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    term.draw(|f| {
+        HelpModal::render_modal(f.area(), f.buffer_mut(), Language::Fr, &state);
+    })
+    .unwrap();
+
+    for _ in 0..5 {
+        HelpModal::handle_key(key(KeyCode::Down), &mut state);
+    }
+    assert_eq!(state.scroll, 5);
+
+    HelpModal::handle_key(key(KeyCode::End), &mut state);
+    assert!(state.scroll > 0, "End should jump to the bottom");
+    HelpModal::handle_key(key(KeyCode::Home), &mut state);
+    assert_eq!(state.scroll, 0, "Home should jump back to the top");
+
+    // Re-render at the bottom edge to make sure slicing never panics.
+    HelpModal::handle_key(key(KeyCode::End), &mut state);
+    term.draw(|f| {
+        HelpModal::render_modal(f.area(), f.buffer_mut(), Language::En, &state);
+    })
+    .unwrap();
+
+    // Esc closes the modal.
+    assert!(HelpModal::handle_key(key(KeyCode::Esc), &mut state));
+}
+
+#[test]
+fn test_command_recovered_after_unclosed_think() {
+    use spiritty::app::extract_all_command_proposals;
+
+    // Real-session repro: the model opened `<think>` and never closed it, then emitted its real
+    // command as a ```bash block. That block must be extracted, not swallowed as reasoning.
+    let text = "<think>Je réfléchis encore, et je n'ai pas fermé ma balise.\n```bash\nuptime && df -h\n```";
+    let proposals = extract_all_command_proposals(text);
+    assert_eq!(proposals.len(), 1, "got {proposals:?}");
+    assert_eq!(proposals[0], "uptime && df -h");
+}
+
+#[test]
+fn test_command_recovered_when_closing_fence_glued_to_think_tag() {
+    use spiritty::app::extract_all_command_proposals;
+
+    // Real-session repro: a stray `</think>` was glued to the closing code fence, which made
+    // `find_closing_code_fence` reject the block and silently drop the command.
+    let text =
+        "<think>Analyse.\n</think>Je lance :\n```bash\nsudo systemctl restart nginx\n```</think>";
+    let proposals = extract_all_command_proposals(text);
+    assert_eq!(proposals.len(), 1, "got {proposals:?}");
+    assert_eq!(proposals[0], "sudo systemctl restart nginx");
+}
+
+#[test]
+fn test_recover_command_from_reasoning_guards_on_visible_answer() {
+    use spiritty::app::recover_command_from_reasoning;
+
+    // Dead turn: the model put its command inside the reasoning and produced no visible answer.
+    let dead = "<think>Je réfléchis encore.\n```bash\nsudo systemctl restart nginx\n```</think>";
+    assert_eq!(
+        recover_command_from_reasoning(dead),
+        Some("sudo systemctl restart nginx".to_string())
+    );
+
+    // There IS a visible answer: a command merely *considered* in the reasoning must be ignored.
+    let alive = "<think>peut-être :\n```bash\nrm -rf /\n```</think>Voici mon analyse.";
+    assert_eq!(recover_command_from_reasoning(alive), None);
+}
+
+#[tokio::test]
+async fn test_dead_turn_recovery_promotes_reasoning_command() {
+    use spiritty::app::{App, ChatMessage, MessageRole};
+
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(tx, 24, 80).unwrap();
+    // Disable auto-approval so the recovered (Safe) command is not injected into the PTY,
+    // keeping the assertion focused on the recovered proposal itself.
+    app.config.auto_approve = spiritty::config::AutoApproveLevel::Off;
+    app.messages.clear();
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "<think>Analyse.\n```bash\nuptime && df -h\n```</think>".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    app.on_agent_done();
+
+    let last = app.messages.last().expect("assistant message kept");
+    assert!(
+        last.content.contains("```bash\nuptime && df -h\n```"),
+        "recovered command must be promoted to a visible block: {}",
+        last.content
+    );
+    assert_eq!(last.command_proposal.as_deref(), Some("uptime && df -h"));
+    assert_eq!(
+        app.all_command_proposals(),
+        vec!["uptime && df -h".to_string()],
+        "the recovered command must be actionable"
     );
 }

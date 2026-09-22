@@ -582,12 +582,160 @@ pub(crate) fn find_earliest_tag(text: &str, tags: &[&str]) -> Option<(usize, usi
     earliest
 }
 
-/// Removes reasoning regions (`<think>…</think>`, `<thought>…</thought>`, etc.) so
-/// their internal deliberation is never parsed as an actionable tool call. Handles
-/// typo variants emitted by real models (e.g. `</thunk>`, `</thinking>`, `</thought>`,
-/// `</th`) and transitions where tool calls follow directly without a closing tag.
+/// Opening/closing delimiters Spiritty itself wraps around a provider's streamed
+/// `reasoning_content`. Deliberately distinct from `<think>` so a model that literally writes
+/// `<think>`/`</think>` *inside* its reasoning cannot split our own reasoning boundary (which
+/// used to corrupt parsing and drop the following command).
+pub const REASONING_OPEN: &str = "<spiritty:think>";
+pub const REASONING_CLOSE: &str = "</spiritty:think>";
+
+const LEGACY_OPEN_TAGS: &[&str] = &[
+    "<think>",
+    "<thought>",
+    "<thinking>",
+    "<reasoning>",
+    "<reflection>",
+    "<plan>",
+    "<thought_process>",
+];
+
+const LEGACY_CLOSE_TAGS: &[&str] = &[
+    "</think>",
+    "</thunk>",
+    "</thought>",
+    "</thinking>",
+    "</thinking",
+    "</reasoning>",
+    "</reflection>",
+    "</plan>",
+    "</thought_process>",
+];
+
+/// Markers that start a real tool invocation OR a real command block. Consulted only when a
+/// reasoning block is left *unclosed* (model truncation / malformed output): the close-tag
+/// branch always wins when a closing tag exists, so a ```bash example safely nested inside a
+/// *closed* reasoning block stays stripped. When reasoning is unclosed, the model typically
+/// emits its real command right after it — dropping that command ended whole turns silently.
+const TOOL_STARTS: &[&str] = &[
+    "<｜｜DSML｜｜",
+    "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}",
+    "<|DSML|",
+    "<|tool_calls|>",
+    "<tool_call>",
+    "<tool_calls>",
+    "<invoke",
+    "<command>",
+    "<tool:run_command>",
+    "<tool:execute_command>",
+    "```tool:",
+    "```bash",
+    "```sh",
+    "```zsh",
+    "```shell",
+];
+
+/// Removes reasoning regions so their internal deliberation is never parsed as an actionable
+/// tool call. Handles Spiritty's own `REASONING_OPEN…REASONING_CLOSE` wrapper first (the
+/// authoritative boundary, which may contain literal `<think>` quoted by the model), then
+/// falls back to legacy `<think>`/`<thought>`/… markers and stray closing tags.
 pub fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
-    const OPEN_TAGS: &[&str] = &[
+    if !text.contains(REASONING_OPEN) && !text.contains(REASONING_CLOSE) {
+        return strip_legacy_think_blocks(text);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(REASONING_OPEN) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + REASONING_OPEN.len()..];
+        if let Some(end) = after.find(REASONING_CLOSE) {
+            rest = &after[end + REASONING_CLOSE.len()..];
+        } else {
+            // Unclosed own-reasoning block: keep a following tool / command block if any.
+            if let Some((tool_rel, _)) = find_earliest_tag(after, TOOL_STARTS) {
+                out.push_str(&after[tool_rel..]);
+            }
+            return std::borrow::Cow::Owned(strip_residual_reasoning_tags(&out));
+        }
+    }
+    out.push_str(rest);
+    let legacy = strip_legacy_think_blocks(&out).into_owned();
+    std::borrow::Cow::Owned(strip_residual_reasoning_tags(&legacy))
+}
+
+/// Legacy in-band reasoning markers (`<think>…</think>`, typo variants, and transitions where
+/// a tool/command block follows an unclosed block).
+fn strip_legacy_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
+    let has_open = LEGACY_OPEN_TAGS.iter().any(|op| text.contains(op));
+    let has_close = LEGACY_CLOSE_TAGS.iter().any(|ct| text.contains(ct));
+
+    if !has_open && !has_close {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    if !has_open {
+        return std::borrow::Cow::Owned(strip_residual_reasoning_tags(text));
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some((start, open_tag_len)) = find_earliest_tag(rest, LEGACY_OPEN_TAGS) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + open_tag_len..];
+
+        if let Some((close_rel, close_tag_len)) = find_earliest_tag(after_open, LEGACY_CLOSE_TAGS) {
+            rest = &after_open[close_rel + close_tag_len..];
+        } else if let Some((tool_rel, _)) = find_earliest_tag(after_open, TOOL_STARTS) {
+            // Unclosed reasoning immediately followed by a tool call / command block: keep it.
+            rest = &after_open[tool_rel..];
+        } else {
+            // Unclosed reasoning (stream cut at EOF or mid-reasoning): drop to end.
+            return std::borrow::Cow::Owned(strip_residual_reasoning_tags(&out));
+        }
+    }
+
+    out.push_str(rest);
+    std::borrow::Cow::Owned(strip_residual_reasoning_tags(&out))
+}
+
+/// Removes any residual reasoning closing tags after the block-stripping pass. A leaked
+/// `</think>` not only polluted the rendered answer but could sit on the closing line of a
+/// code fence (` ```</think> `), which made `find_closing_code_fence` reject the fence and
+/// silently drop the whole command block. Longest / most specific tags are removed first.
+fn strip_residual_reasoning_tags(s: &str) -> String {
+    if !s.contains("</") {
+        return s.to_string();
+    }
+    let mut out = s.to_string();
+    for tag in [
+        "</thought_process>",
+        "</reflection>",
+        "</reasoning>",
+        "</thinking>",
+        "</thought>",
+        "</thunk>",
+        "</think>",
+        "</plan>",
+        "</thinking",
+        REASONING_CLOSE,
+        REASONING_OPEN,
+    ] {
+        if out.contains(tag) {
+            out = out.replace(tag, "");
+        }
+    }
+    out
+}
+
+/// Removes reasoning *markers* while keeping their inner text. Used as a last-resort recovery
+/// when an assistant turn produced nothing but reasoning (the model streamed its whole answer,
+/// command included, as `reasoning_content`): the inner text is scanned for an executable
+/// command instead of being silently discarded.
+pub fn unwrap_reasoning_tags(text: &str) -> String {
+    let mut out = text.to_string();
+    for tag in [
+        REASONING_OPEN,
+        REASONING_CLOSE,
         "<think>",
         "<thought>",
         "<thinking>",
@@ -595,66 +743,12 @@ pub fn strip_think_blocks(text: &str) -> std::borrow::Cow<'_, str> {
         "<reflection>",
         "<plan>",
         "<thought_process>",
-    ];
-
-    const CLOSE_TAGS: &[&str] = &[
-        "</think>",
-        "</thunk>",
-        "</thought>",
-        "</thinking>",
-        "</thinking",
-        "</reasoning>",
-        "</reflection>",
-        "</plan>",
-        "</thought_process>",
-    ];
-
-    const TOOL_STARTS: &[&str] = &[
-        "<｜｜DSML｜｜",
-        "<\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}",
-        "<|DSML|",
-        "<|tool_calls|>",
-        "<tool_call>",
-        "<tool_calls>",
-        "<invoke",
-        "<command>",
-        "<tool:run_command>",
-        "<tool:execute_command>",
-        "```tool:",
-        "```bash",
-        "```sh",
-        "```zsh",
-    ];
-
-    if !OPEN_TAGS.iter().any(|op| text.contains(op)) {
-        return std::borrow::Cow::Borrowed(text);
-    }
-
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-
-    while let Some((start, open_tag_len)) = find_earliest_tag(rest, OPEN_TAGS) {
-        out.push_str(&rest[..start]);
-        let after_open = &rest[start + open_tag_len..];
-
-        if let Some((close_rel, close_tag_len)) = find_earliest_tag(after_open, CLOSE_TAGS) {
-            rest = &after_open[close_rel + close_tag_len..];
-        } else if let Some((tool_rel, _)) = find_earliest_tag(after_open, TOOL_STARTS) {
-            rest = &after_open[tool_rel..];
-        } else if after_open.ends_with("</th")
-            || after_open.ends_with("</thi")
-            || after_open.ends_with("</thin")
-        {
-            // Stream cut right as the closing tag was beginning at EOF
-            return std::borrow::Cow::Owned(out);
-        } else {
-            // Stream cut mid-reasoning: drop to end
-            return std::borrow::Cow::Owned(out);
+    ] {
+        if out.contains(tag) {
+            out = out.replace(tag, "");
         }
     }
-
-    out.push_str(rest);
-    std::borrow::Cow::Owned(out)
+    strip_residual_reasoning_tags(&out)
 }
 
 /// Normalizes the hybrid DSML tool scaffolding some GLM/Z.ai models emit as plain
@@ -1177,7 +1271,34 @@ async fn search_tavily(client: &reqwest::Client, query: &str, api_key: &str) -> 
 
 #[cfg(test)]
 mod tool_parse_tests {
-    use super::{parse_tool_call, ToolInvocation};
+    use super::{parse_tool_call, strip_think_blocks, ToolInvocation};
+    use crate::agent::tools::{REASONING_CLOSE, REASONING_OPEN};
+
+    #[test]
+    fn sentinel_reasoning_with_literal_think_tags_is_stripped_cleanly() {
+        // Spiritty's own wrapper may contain literal `<think>` quoted by the model; the
+        // sentinel boundary (not the first legacy close tag) must win, keeping the command.
+        let text = format!(
+            "{REASONING_OPEN}Je cite <think> et </think> dans mon raisonnement.{REASONING_CLOSE}```bash\nuptime\n```"
+        );
+        let stripped = strip_think_blocks(&text);
+        assert!(!stripped.contains(REASONING_OPEN));
+        assert!(
+            !stripped.contains("<think>"),
+            "literal tag leaked: {stripped}"
+        );
+        assert!(
+            stripped.contains("```bash\nuptime\n```"),
+            "the command after the sentinel was swallowed: {stripped}"
+        );
+    }
+
+    #[test]
+    fn sentinel_reasoning_only_turn_yields_empty_visible_text() {
+        let text = format!("{REASONING_OPEN}raisonnement seul{REASONING_CLOSE}");
+        let stripped = strip_think_blocks(&text);
+        assert!(stripped.trim().is_empty(), "got: {stripped:?}");
+    }
 
     /// Exact hybrid scaffolding captured from a live GLM/Z.ai session: fullwidth
     /// pipes U+FF5C, `<｜｜DSML｜｜…>` markers, HTML-style invoke/parameter children.
@@ -1345,6 +1466,45 @@ mod tool_parse_tests {
     fn file_edit_fence_inside_think_block_is_ignored() {
         let text = "<think>je vais éditer :\n```tool:edit_file\n/tmp/t.txt\nold\n---\nnew\n```</think>Réponse.";
         assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn unclosed_think_keeps_following_bash_block() {
+        // Real-session repro: the model opened `<think>` and never closed it, then emitted its
+        // actual command as a ```bash block. That command must survive (it used to vanish,
+        // ending the turn silently).
+        let text = "<think>Je réfléchis encore, et je n'ai pas fermé la balise.\n```bash\nsudo systemctl restart nginx\n```";
+        let stripped = strip_think_blocks(text);
+        assert!(!stripped.contains("<think>"));
+        assert!(
+            stripped.contains("sudo systemctl restart nginx"),
+            "the trailing command was swallowed: {stripped}"
+        );
+    }
+
+    #[test]
+    fn strips_stray_closing_think_tag_after_answer() {
+        // The model repeats `</think>` after its answer; it must not leak into the content.
+        let text = "<think>raisonnement</think>Voici la commande :\n```bash\nuptime\n```</think>";
+        let stripped = strip_think_blocks(text);
+        assert!(
+            !stripped.contains("</think>"),
+            "stray closing tag leaked: {stripped}"
+        );
+        assert!(stripped.contains("```bash\nuptime\n```"), "got: {stripped}");
+    }
+
+    #[test]
+    fn strips_close_tag_glued_to_closing_fence() {
+        // ` ```</think> ` made `find_closing_code_fence` reject the fence, dropping the tool call.
+        let text =
+            "<think>raisonnement</think>Je lance :\n```tool:run_command\nuptime\n```</think>";
+        let stripped = strip_think_blocks(text);
+        assert!(!stripped.contains("</think>"));
+        assert_eq!(
+            parse_tool_call(text),
+            Some(ToolInvocation::RunCommand("uptime".to_string()))
+        );
     }
 
     #[tokio::test]

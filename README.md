@@ -67,6 +67,8 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 +-------------------------------------------------------------------------+
 ```
 
+> *The diagram above shows the side-by-side (vertical) view. Spiritty starts in the **horizontal** layout (chat on top, shell below) — press `F4` to switch between the two.*
+
 ---
 
 ## 🛠️ Tech Stack
@@ -82,7 +84,7 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 
 ## 🚀 Key Features
 
-- [x] **Ergonomic Split-Screen:** AI Agent on the left, native interactive shell (`$SHELL`) on the right with interactive resizing (mouse drag or `Alt+Left/Right`).
+- [x] **Ergonomic Split-Screen:** AI Agent and native interactive shell (`$SHELL`) in a **horizontal layout by default** (chat on top ~70%, shell below) for readability on narrow terminals — switchable to side-by-side with `F4`, resizable by mouse drag or `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
 - [x] **Multi-Provider LLM Engine:** Native streaming support for LM Studio, Ollama, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok), and Z.ai (GLM) with dynamic context window auto-detection.
 - [x] **Session Management & Smart Compaction:**
   - Full session persistence stored in `~/.config/spiritty/sessions/`.
@@ -152,6 +154,7 @@ spiritty --help
 | `F10` | Approve the pending command authorization (one-keystroke) |
 | `F6` | Toggle focus (alias of `Ctrl + Space`) |
 | `F3` | Cycle Auto-Approve policy (Safe / Sudo / YOLO / Off) |
+| `F4` | Toggle split layout (horizontal: chat on top / vertical: side by side) |
 | `Ctrl + B` | Quick-Connect SSH servers & bookmarks manager |
 | `Ctrl + E` | Export current session to formatted Markdown report |
 | `Ctrl + F` | Search in chat history with real-time match navigation |
@@ -160,7 +163,8 @@ spiritty --help
 | `Ctrl + N` | Start a new clean session |
 | `Ctrl + P` | Open model & API key configuration |
 | `F1` | Show keyboard shortcuts help modal |
-| `Alt + ←` / `Alt + →` | Adjust split screen ratio |
+| `Alt + ←` / `Alt + →` | Adjust split ratio (vertical layout) |
+| `Alt + ↑` / `Alt + ↓` | Adjust split ratio (horizontal layout) |
 | `Ctrl + Q` | Save and quit Spiritty |
 
 ---

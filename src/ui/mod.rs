@@ -16,6 +16,7 @@ use ratatui::{
 
 use crate::{
     app::{App, Focus},
+    config::SplitOrientation,
     i18n::{I18nKey, Language},
 };
 use chat_panel::ChatPanel;
@@ -36,12 +37,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let footer_divider_area = vertical_chunks[1];
     let footer_area = vertical_chunks[2];
 
-    // 2. Pure full-height horizontal split (Left: Chat, Right: Terminal)
-    let body_chunks = Layout::horizontal([
-        Constraint::Percentage(app.split_ratio),
-        Constraint::Percentage(100 - app.split_ratio),
-    ])
-    .split(workspace_area);
+    // 2. Split the workspace according to the active orientation:
+    //    - Vertical: Chat left / Terminal right (side by side)
+    //    - Horizontal: Chat top / Terminal bottom (best on narrow terminals)
+    let body_chunks = match app.split_orientation {
+        SplitOrientation::Vertical => Layout::horizontal([
+            Constraint::Percentage(app.split_ratio),
+            Constraint::Percentage(100 - app.split_ratio),
+        ])
+        .split(workspace_area),
+        SplitOrientation::Horizontal => Layout::vertical([
+            Constraint::Percentage(app.split_ratio),
+            Constraint::Percentage(100 - app.split_ratio),
+        ])
+        .split(workspace_area),
+    };
 
     let chat_area = body_chunks[0];
     let terminal_area = body_chunks[1];
@@ -94,8 +104,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let terminal_panel = TerminalPanel::new(app);
     let term_cursor = terminal_panel.render_panel(terminal_area, buf);
 
-    // 2.3 Permanent vertical divider liseret between Chat and Terminal
-    let split_x = chat_area.right().saturating_sub(1);
+    // 2.3 Permanent divider liseret between Chat and Terminal, matching the split orientation
     let split_style = if app.is_dragging_split {
         Style::default()
             .fg(palette.warning)
@@ -103,8 +112,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         Style::default().fg(palette.border_unfocused)
     };
-    for y in workspace_area.top()..workspace_area.bottom() {
-        buf.set_string(split_x, y, "│", split_style);
+    match app.split_orientation {
+        SplitOrientation::Vertical => {
+            let split_x = chat_area.right().saturating_sub(1);
+            for y in workspace_area.top()..workspace_area.bottom() {
+                buf.set_string(split_x, y, "│", split_style);
+            }
+        }
+        SplitOrientation::Horizontal => {
+            let split_y = chat_area.bottom().saturating_sub(1);
+            for x in workspace_area.left()..workspace_area.right() {
+                buf.set_string(x, split_y, "─", split_style);
+            }
+        }
     }
 
     // 2.5 Apply mouse selection highlight and copy to clipboard on release
@@ -279,249 +299,189 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> Vec<Span<'static>> {
+    right_shortcut_spans(lang, app.config.auto_approve, available_width)
+}
+
+/// Builds the right-hand footer shortcuts, prioritising (in order) **F3 approval, Config,
+/// F4 and F1**. Optional groups (Sessions, MCP, Hosts) are pulled in only when they fit,
+/// and rendering degrades from bracketed pills to compact badges and then to bare keys
+/// before any of the four essentials is dropped (F1 is always kept last).
+fn right_shortcut_spans(
+    lang: Language,
+    auto_approve: crate::config::AutoApproveLevel,
+    available_width: usize,
+) -> Vec<Span<'static>> {
     use crate::config::AutoApproveLevel;
-    let (auto_badge_color, auto_badge_text) = match app.config.auto_approve {
+
+    if available_width < 4 {
+        return Vec::new();
+    }
+
+    let (auto_badge_color, auto_badge_text) = match auto_approve {
         AutoApproveLevel::Safe => (Color::Green, "Safe"),
         AutoApproveLevel::Sudo => (Color::Yellow, "Sudo"),
         AutoApproveLevel::Yolo => (Color::Red, "YOLO"),
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
+    let help_label = if lang == Language::Fr { "Aide" } else { "Help" };
 
-    let mut right = Vec::new();
+    struct Item {
+        /// Rich: `[ Ctrl + P ] Config `.
+        pill: Vec<Span<'static>>,
+        /// Compact: `[^P] Config `.
+        compact: Vec<Span<'static>>,
+        /// Bare key: `[^P]`.
+        keys: Vec<Span<'static>>,
+    }
 
-    if available_width >= 114 {
-        // Tier 1: Full bracketed key pills with all shortcuts
-        right.push(Span::styled(
-            lang.t(I18nKey::FooterApprovalLabel),
-            Style::default().fg(Color::DarkGray),
-        ));
-        right.extend(key_pill("F3", auto_badge_color));
-        right.push(Span::styled(
-            format!(" {} ", auto_badge_text),
-            Style::default()
-                .fg(auto_badge_color)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl + P", Color::Magenta));
-        right.push(Span::styled(
-            " Config ",
+    let pill = |key: String, color: Color, label: &str| -> Vec<Span<'static>> {
+        let mut v = key_pill(key, color);
+        v.push(Span::styled(
+            format!(" {} ", label),
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ));
+        v
+    };
+    let compact = |key: &str, color: Color, label: &str| -> Vec<Span<'static>> {
+        vec![
+            Span::styled(
+                key.to_string(),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {} ", label), Style::default().fg(Color::White)),
+        ]
+    };
+    let bare = |key: &str, color: Color| -> Vec<Span<'static>> {
+        vec![Span::styled(
+            key.to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )]
+    };
 
-        right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl + B", Color::Cyan));
-        right.push(Span::styled(
-            " Hosts ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl + M", Color::Rgb(140, 100, 240)));
-        right.push(Span::styled(
-            " MCP ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl + H", Color::LightCyan));
-        right.push(Span::styled(
-            " Sessions ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        right.push(Span::raw(" "));
-        right.extend(key_pill("F1", Color::Cyan));
-        right.push(Span::styled(
-            if lang == Language::Fr {
-                " Aide "
-            } else {
-                " Help "
+    // Display order: F3 approval | Config | Hosts | MCP | Sessions | F4 layout | F1 help.
+    let items: Vec<Item> = vec![
+        Item {
+            pill: {
+                let mut v = vec![Span::styled(
+                    lang.t(I18nKey::FooterApprovalLabel),
+                    Style::default().fg(Color::DarkGray),
+                )];
+                v.extend(key_pill("F3", auto_badge_color));
+                v.push(Span::styled(
+                    format!(" {} ", auto_badge_text),
+                    Style::default()
+                        .fg(auto_badge_color)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                v
             },
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-    } else if available_width >= 56 {
-        // Tier 2: Compact bracketed badges with all shortcuts
-        right.push(Span::styled(
-            format!("F3:{}", auto_badge_text),
-            Style::default()
-                .fg(auto_badge_color)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::raw(" "));
+            compact: vec![
+                Span::styled(
+                    format!("F3:{}", auto_badge_text),
+                    Style::default()
+                        .fg(auto_badge_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ],
+            keys: vec![Span::styled(
+                format!("F3:{}", auto_badge_text),
+                Style::default()
+                    .fg(auto_badge_color)
+                    .add_modifier(Modifier::BOLD),
+            )],
+        },
+        Item {
+            pill: pill("Ctrl + P".to_string(), Color::Magenta, "Config"),
+            compact: compact("[^P]", Color::Magenta, "Config"),
+            keys: bare("[^P]", Color::Magenta),
+        },
+        Item {
+            pill: pill("Ctrl + B".to_string(), Color::Cyan, "Hosts"),
+            compact: compact("[^B]", Color::Cyan, "Hosts"),
+            keys: bare("[^B]", Color::Cyan),
+        },
+        Item {
+            pill: pill("Ctrl + M".to_string(), Color::Rgb(140, 100, 240), "MCP"),
+            compact: compact("[^M]", Color::Rgb(140, 100, 240), "MCP"),
+            keys: bare("[^M]", Color::Rgb(140, 100, 240)),
+        },
+        Item {
+            pill: pill("Ctrl + H".to_string(), Color::LightCyan, "Sessions"),
+            compact: compact("[^H]", Color::LightCyan, "Sess"),
+            keys: bare("[^H]", Color::LightCyan),
+        },
+        Item {
+            pill: pill("F4".to_string(), Color::Cyan, "Layout"),
+            compact: compact("[F4]", Color::Cyan, "Layout"),
+            keys: bare("[F4]", Color::Cyan),
+        },
+        Item {
+            pill: pill("F1".to_string(), Color::Cyan, help_label),
+            compact: compact("[F1]", Color::Cyan, help_label),
+            keys: bare("[F1]", Color::Cyan),
+        },
+    ];
 
-        right.push(Span::styled(
-            "[^P]",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
+    let spans_for = |style: usize, idx: usize| -> &Vec<Span<'static>> {
+        match style {
+            0 => &items[idx].pill,
+            1 => &items[idx].compact,
+            _ => &items[idx].keys,
+        }
+    };
+    let group_total = |style: usize, idxs: &[usize]| -> usize {
+        let body: usize = idxs
+            .iter()
+            .map(|&i| spans_for(style, i).iter().map(|s| s.width()).sum::<usize>())
+            .sum();
+        body + idxs.len().saturating_sub(1)
+    };
 
-        right.push(Span::styled(
-            "[^B]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White)));
+    // Essentials always present unless the terminal is extremely narrow.
+    let essential = [0usize, 1, 5, 6]; // F3, Config, F4, F1
+    let optional_by_importance = [4usize, 3, 2]; // Sessions, MCP, Hosts
 
-        right.push(Span::styled(
-            "[^M]",
-            Style::default()
-                .fg(Color::Rgb(140, 100, 240))
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" MCP ", Style::default().fg(Color::White)));
+    // Richest style whose essentials fit; falls back to bare keys.
+    let style = (0..3)
+        .find(|&s| group_total(s, &essential) <= available_width)
+        .unwrap_or(2);
 
-        right.push(Span::styled(
-            "[^H]",
-            Style::default()
-                .fg(Color::LightCyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Sess ", Style::default().fg(Color::White)));
+    let mut chosen: Vec<usize> = essential.to_vec();
 
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(
-            if lang == Language::Fr {
-                " Aide"
-            } else {
-                " Help"
-            },
-            Style::default().fg(Color::White),
-        ));
-    } else if available_width >= 36 {
-        // Tier 3: F3, ^P Config, ^B Hosts, F1 Aide
-        right.push(Span::styled(
-            format!("F3:{}", auto_badge_text),
-            Style::default()
-                .fg(auto_badge_color)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::raw(" "));
+    // Pull in optional groups (most useful first) whenever they still fit.
+    for &idx in &optional_by_importance {
+        let mut trial = chosen.clone();
+        trial.push(idx);
+        if group_total(style, &trial) <= available_width {
+            chosen = trial;
+        }
+    }
 
-        right.push(Span::styled(
-            "[^P]",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
+    // If even the bare keys do not fit, drop F3 then F4 then Config, keeping F1 for last.
+    if group_total(style, &chosen) > available_width {
+        for &drop in &[0usize, 5, 1] {
+            if group_total(style, &chosen) <= available_width {
+                break;
+            }
+            chosen.retain(|&i| i != drop);
+        }
+    }
 
-        right.push(Span::styled(
-            "[^B]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White)));
-
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(
-            if lang == Language::Fr {
-                " Aide"
-            } else {
-                " Help"
-            },
-            Style::default().fg(Color::White),
-        ));
-    } else if available_width >= 24 {
-        // Tier 4: F3, ^P Config, F1 Aide
-        right.push(Span::styled(
-            format!("F3:{}", auto_badge_text),
-            Style::default()
-                .fg(auto_badge_color)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::raw(" "));
-
-        right.push(Span::styled(
-            "[^P]",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
-
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(
-            if lang == Language::Fr {
-                " Aide"
-            } else {
-                " Help"
-            },
-            Style::default().fg(Color::White),
-        ));
-    } else if available_width >= 15 {
-        // Tier 5: [^P] Config [F1]
-        right.push(Span::styled(
-            "[^P]",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-    } else if available_width >= 9 {
-        // Tier 6: [^P] [F1]
-        right.push(Span::styled(
-            "[^P]",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::raw(" "));
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-    } else if available_width >= 4 {
-        // Tier 7: [F1]
-        right.push(Span::styled(
-            "[F1]",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    // Assemble in display order (ascending item index).
+    chosen.sort_unstable();
+    let mut right: Vec<Span<'static>> = Vec::new();
+    for (n, &idx) in chosen.iter().enumerate() {
+        if n > 0 {
+            right.push(Span::raw(" "));
+        }
+        right.extend(spans_for(style, idx).iter().cloned());
     }
 
     right
 }
-
 fn build_left_metrics(
     app: &App,
     lang: Language,
@@ -1115,14 +1075,11 @@ pub fn key_pill<'a>(key: impl Into<std::borrow::Cow<'a, str>>, color: Color) -> 
         Span::styled("[ ", Style::default().fg(color)),
         Span::styled(
             key.into(),
-            Style::default()
-                .fg(color)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ]", Style::default().fg(color)),
     ]
 }
-
 
 fn format_token_count(n: usize) -> String {
     if n >= 1_000_000 {
@@ -1133,5 +1090,58 @@ fn format_token_count(n: usize) -> String {
         format!("{:.1}k", n as f64 / 1_000.0)
     } else {
         format!("{}", n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AutoApproveLevel;
+
+    fn text(spans: &[Span<'static>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn footer_prioritizes_f3_config_f4_f1() {
+        let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 200);
+        let t = text(&spans);
+        for expected in ["F3", "Config", "F4", "F1"] {
+            assert!(t.contains(expected), "footer missing `{expected}`: {t}");
+        }
+        let i_f3 = t.find("F3").expect("F3");
+        let i_cfg = t.find("Config").expect("Config");
+        let i_f4 = t.find("F4").expect("F4");
+        let i_f1 = t.find("F1").expect("F1");
+        assert!(
+            i_f3 < i_cfg && i_cfg < i_f4 && i_f4 < i_f1,
+            "footer order must be F3 -> Config -> F4 -> F1: {t}"
+        );
+    }
+
+    #[test]
+    fn footer_keeps_essentials_when_narrow() {
+        // Mid width: optional groups are dropped first, essentials remain.
+        let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 60);
+        let mt = text(&mid);
+        for expected in ["F3", "Config", "F4", "F1"] {
+            assert!(
+                mt.contains(expected),
+                "essential `{expected}` dropped: {mt}"
+            );
+        }
+        assert!(!mt.contains("MCP"), "optional MCP should be dropped: {mt}");
+
+        // Very narrow: only F1 survives.
+        let tiny = text(&right_shortcut_spans(
+            Language::En,
+            AutoApproveLevel::Safe,
+            5,
+        ));
+        assert!(tiny.contains("F1"));
+        assert!(!tiny.contains("F4"));
+
+        // Below the floor: nothing is rendered.
+        assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 2).is_empty());
     }
 }

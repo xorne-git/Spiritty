@@ -72,11 +72,21 @@ async fn main() -> Result<()> {
     // Calculate initial split dimensions for the PTY (full screen height)
     let term_size = terminal.size()?;
     let initial_config = spiritty::config::Config::load();
-    let split_ratio = initial_config.get_split_ratio();
-    let initial_rows = term_size.height.saturating_sub(3).max(1);
-    let initial_cols = (((term_size.width as u32 * (100 - split_ratio as u32)) / 100) as u16)
-        .saturating_sub(1)
-        .max(1);
+    let split_orientation = initial_config.get_split_orientation();
+    let split_ratio = initial_config.get_split_ratio_for(split_orientation);
+    let workspace_h = term_size.height.saturating_sub(3).max(1);
+    let (initial_rows, initial_cols) = match split_orientation {
+        spiritty::config::SplitOrientation::Vertical => (
+            workspace_h,
+            (((term_size.width as u32 * (100 - split_ratio as u32)) / 100) as u16)
+                .saturating_sub(1)
+                .max(1),
+        ),
+        spiritty::config::SplitOrientation::Horizontal => (
+            (((workspace_h as u32 * (100 - split_ratio as u32)) / 100) as u16).max(1),
+            term_size.width.saturating_sub(1).max(1),
+        ),
+    };
 
     // Create event loop and application state
     let tick_rate = Duration::from_millis(90); // ~11 FPS for smooth, balanced spinner cadence
@@ -160,7 +170,9 @@ fn handle_app_event(
         AppEvent::Mouse(mouse) => {
             let total_width = terminal.size()?.width;
             app.handle_mouse(mouse, total_width);
-            if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) && !app.is_dragging_split {
+            if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved)
+                && !app.is_dragging_split
+            {
                 // Pure hover mouse motion without split-dragging does not change visual layout
             } else {
                 *should_render = true;
@@ -171,10 +183,7 @@ fn handle_app_event(
         }
         AppEvent::Resize(w, h) => {
             terminal.autoresize()?;
-            let split_cols = (((w as u32 * (100 - app.split_ratio as u32)) / 100) as u16)
-                .saturating_sub(1)
-                .max(1);
-            let split_rows = h.saturating_sub(3).max(1);
+            let (split_rows, split_cols) = app.compute_pty_size(w, h);
             for tab in &mut app.tabs {
                 let _ = tab.pty.resize(split_rows, split_cols);
             }
@@ -273,10 +282,7 @@ fn handle_app_event(
         }
         AppEvent::Tick => {
             app.on_tick();
-            if app.agent.is_generating
-                || app.active_pty_tool.is_some()
-                || app.is_dragging_split
-            {
+            if app.agent.is_generating || app.active_pty_tool.is_some() || app.is_dragging_split {
                 *should_render = true;
             }
         }
@@ -304,11 +310,23 @@ async fn run_loop(
             let mut should_render = false;
             let mut immediate_render = false;
 
-            handle_app_event(event, app, terminal, &mut should_render, &mut immediate_render)?;
+            handle_app_event(
+                event,
+                app,
+                terminal,
+                &mut should_render,
+                &mut immediate_render,
+            )?;
 
             // Drain any pending events that are already buffered in the channel before redrawing
             while let Ok(pending_event) = event_handler.try_recv() {
-                handle_app_event(pending_event, app, terminal, &mut should_render, &mut immediate_render)?;
+                handle_app_event(
+                    pending_event,
+                    app,
+                    terminal,
+                    &mut should_render,
+                    &mut immediate_render,
+                )?;
                 if app.should_quit {
                     break;
                 }
@@ -318,7 +336,8 @@ async fn run_loop(
                 render_pending = true;
             }
 
-            let can_render = immediate_render || (render_pending && last_render.elapsed() >= RENDER_THROTTLE);
+            let can_render =
+                immediate_render || (render_pending && last_render.elapsed() >= RENDER_THROTTLE);
 
             if can_render && !app.should_quit {
                 terminal.draw(|f| {

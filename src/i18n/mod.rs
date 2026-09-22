@@ -118,6 +118,7 @@ pub enum I18nKey {
     HelpDescMouseClick,
     HelpDescScroll,
     HelpDescResizePanels,
+    HelpDescToggleOrientation,
     HelpDescConfigModal,
     HelpDescSessionModal,
     HelpDescNewSession,
@@ -138,6 +139,7 @@ pub enum I18nKey {
     HelpFooterPromptPrefix,
     HelpFooterPromptMiddle,
     HelpFooterPromptSuffix,
+    HelpFooterScroll,
 
     // Sessions Modal
     SessionModalTitle,
@@ -182,6 +184,10 @@ pub enum I18nKey {
     TabRenamePrompt,
     TabRenameHelp,
     HelpDescRenameTab,
+
+    // Layout / split toasts
+    ToastLayoutHorizontal,
+    ToastLayoutVertical,
 
     // Agent System Prompts
     AgentLanguageInstruction,

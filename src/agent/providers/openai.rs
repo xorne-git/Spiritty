@@ -149,7 +149,7 @@ impl ReasoningBracket {
         if !self.closed {
             if let Some(rc) = reasoning.filter(|r| !r.is_empty()) {
                 if !self.in_reasoning && !self.content_started {
-                    out.push_str("<think>");
+                    out.push_str(crate::agent::tools::REASONING_OPEN);
                     self.in_reasoning = true;
                 }
                 if self.in_reasoning {
@@ -158,7 +158,7 @@ impl ReasoningBracket {
             }
             if let Some(c) = content.filter(|c| !c.is_empty()) {
                 if self.in_reasoning {
-                    out.push_str("</think>");
+                    out.push_str(crate::agent::tools::REASONING_CLOSE);
                     self.in_reasoning = false;
                 }
                 self.closed = true;
@@ -176,7 +176,7 @@ impl ReasoningBracket {
         if self.in_reasoning {
             self.in_reasoning = false;
             self.closed = true;
-            Some("</think>")
+            Some(crate::agent::tools::REASONING_CLOSE)
         } else {
             None
         }
@@ -407,6 +407,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     }
                     Err(err) => {
                         let err_msg = format!("SSE stream error: {}", err);
+                        if let Some(close_tag) = reasoning_bracket.finish() {
+                            let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+                        }
                         let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                         anyhow::bail!(err_msg);
                     }
@@ -418,6 +421,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     let err_msg =
                         "Délai d'inactivité de 90s dépassé sur le flux du modèle (timeout SSE)."
                             .to_string();
+                    if let Some(close_tag) = reasoning_bracket.finish() {
+                        let _ = event_tx.send(AppEvent::AgentChunk(close_tag.to_string()));
+                    }
                     let _ = event_tx.send(AppEvent::AgentError(err_msg.clone()));
                     anyhow::bail!(err_msg);
                 }
@@ -435,16 +441,20 @@ impl LlmProvider for OpenAiCompatibleProvider {
 #[cfg(test)]
 mod reasoning_bracket_tests {
     use super::ReasoningBracket;
+    use crate::agent::tools::{REASONING_CLOSE, REASONING_OPEN};
 
     #[test]
-    fn wraps_reasoning_then_content_in_think_block() {
+    fn wraps_reasoning_then_content_in_reasoning_block() {
         let mut b = ReasoningBracket::default();
         assert_eq!(
             b.on_delta(Some("Je réfléchis"), None),
-            "<think>Je réfléchis"
+            format!("{REASONING_OPEN}Je réfléchis")
         );
         assert_eq!(b.on_delta(Some(" profondément."), None), " profondément.");
-        assert_eq!(b.on_delta(None, Some("Voici la")), "</think>Voici la");
+        assert_eq!(
+            b.on_delta(None, Some("Voici la")),
+            format!("{REASONING_CLOSE}Voici la")
+        );
         assert_eq!(b.on_delta(None, Some(" réponse.")), " réponse.");
     }
 
@@ -453,7 +463,7 @@ mod reasoning_bracket_tests {
         let mut b = ReasoningBracket::default();
         assert_eq!(
             b.on_delta(Some("pense"), Some("réponds")),
-            "<think>pense</think>réponds"
+            format!("{REASONING_OPEN}pense{REASONING_CLOSE}réponds")
         );
     }
 

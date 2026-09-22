@@ -12,7 +12,7 @@ pub use bookmarks_modal::{
 };
 pub use config_modal::{ConfigModalAction, ConfigModalState};
 pub use export_modal::{ExportModal, ExportModalAction, ExportModalState};
-pub use help_modal::HelpModal;
+pub use help_modal::{HelpModal, HelpModalState};
 pub use mcp_modal::{AddMcpState, McpModal, McpModalAction, McpModalState};
 pub use rename_tab_modal::{RenameTabAction, RenameTabModalState};
 pub use session_modal::{SessionModalAction, SessionModalState};
@@ -43,7 +43,7 @@ pub enum ModalOutcome {
 pub enum ModalState {
     #[default]
     None,
-    Help,
+    Help(HelpModalState),
     Config(ConfigModalState),
     Sessions(SessionModalState),
     Bookmarks(BookmarksModalState),
@@ -71,8 +71,8 @@ impl ModalState {
     ) -> ModalOutcome {
         match self {
             ModalState::None => ModalOutcome::None,
-            ModalState::Help => {
-                if HelpModal::handle_key(key) {
+            ModalState::Help(state) => {
+                if HelpModal::handle_key(key, state) {
                     ModalOutcome::Close
                 } else {
                     ModalOutcome::None
@@ -133,7 +133,7 @@ impl ModalState {
             ModalState::Mcp(mcp_state) => mcp_state.handle_paste(text.to_string()),
             ModalState::RenameTab(rename_state) => rename_state.handle_paste(text),
             ModalState::None
-            | ModalState::Help
+            | ModalState::Help(_)
             | ModalState::Sessions(_)
             | ModalState::SshReconnect { .. } => {}
         }
@@ -148,7 +148,7 @@ impl ModalState {
     ) {
         match self {
             ModalState::None => {}
-            ModalState::Help => HelpModal::render_modal(area, buf, lang),
+            ModalState::Help(state) => HelpModal::render_modal(area, buf, lang, state),
             ModalState::Config(config_state) => config_state.render_modal(area, buf, lang),
             ModalState::Sessions(session_state) => session_state.render_modal(area, buf, lang),
             ModalState::Bookmarks(bm_state) => {
@@ -186,7 +186,7 @@ mod tests {
         );
 
         // 2. Help
-        modal = ModalState::Help;
+        modal = ModalState::Help(HelpModalState::new());
         assert!(modal.is_open());
         assert_eq!(
             modal.handle_key(key(KeyCode::Esc), &mut config, &mut hosts_store),
