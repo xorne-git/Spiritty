@@ -15,6 +15,10 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ## Unreleased
 
+---
+
+## v0.8.0 — 2026-09-22
+
 ### Added
 
 - **Adjustable split orientation — horizontal layout by default (`F4`)**:
