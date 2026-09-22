@@ -568,3 +568,72 @@ async fn test_auto_approve_command_proposal_lifecycle() {
     // Clean up test session so it never pollutes the user's saved sessions
     let _ = spiritty::session::SessionStorage::delete(&app.current_session.id);
 }
+
+#[tokio::test]
+async fn test_large_session_render_and_streaming() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::App;
+    use spiritty::session::SessionStorage;
+    use std::time::Instant;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 40, 140).expect("create app");
+
+    if let Ok(sess) = SessionStorage::load("sess_20260919_162053_975860_001") {
+        app.messages = sess.messages;
+        println!("Loaded large session with {} messages", app.messages.len());
+
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let t0 = Instant::now();
+        terminal.draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        }).unwrap();
+        println!("Draw frame 1 took: {:?}", t0.elapsed());
+
+        // Now simulate assistant streaming
+        app.messages.push(spiritty::app::ChatMessage {
+            role: spiritty::app::MessageRole::Assistant,
+            content: "<think>Planning to check the JSON file formatting...".to_string(),
+            command_proposal: None,
+            attachments: Vec::new(),
+        });
+        app.agent.is_generating = true;
+
+        let t1 = Instant::now();
+        for i in 0..100 {
+            app.on_agent_chunk(format!(" chunk_{}", i));
+            terminal.draw(|f| {
+                spiritty::ui::draw(f, &mut app);
+            }).unwrap();
+        }
+        let elapsed_100 = t1.elapsed();
+        println!("100 chunks + draws took: {:?} ({:?} / frame)", elapsed_100, elapsed_100 / 100);
+    }
+}
+
+#[tokio::test]
+async fn test_event_handler_drain() {
+    use spiritty::event::{AppEvent, EventHandler};
+    use std::time::Duration;
+
+    let mut handler = EventHandler::new(Duration::from_millis(100));
+    let sender = handler.sender();
+
+    for i in 0..10 {
+        sender.send(AppEvent::AgentChunk(format!("chunk_{}", i))).unwrap();
+    }
+
+    let first = handler.next().await;
+    assert!(first.is_some());
+
+    let mut count = 1;
+    while let Ok(_pending) = handler.try_recv() {
+        count += 1;
+    }
+    assert_eq!(count, 10);
+}
+
+

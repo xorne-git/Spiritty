@@ -1,945 +1,996 @@
 # Changelog — Spiritty
 
-Toutes les modifications notables de Spiritty sont documentées dans ce fichier.
+All notable changes to Spiritty are documented in this file.
 
 ## 📌 Convention
 
-Ce journal suit le format [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
+This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) format.
 
-- **Entre deux pushes** : les modifications s'accumulent dans la section **« Non publié »**.
-- **Au moment d'un release (tag `vX.Y.Z`)** : la section « Non publié » est renommée en
-  `## vX.Y.Z — YYYY-MM-DD` et une nouvelle section « Non publié » vide est ouverte au-dessus.
-- Les catégories utilisées : `Ajouté` · `Modifié` · `Corrigé` · `Performance` · `Sécurité`.
+- **Between two pushes**: changes accumulate in the **"Unreleased"** section.
+- **At release time (tag `vX.Y.Z`)**: the "Unreleased" section is renamed to
+  `## vX.Y.Z — YYYY-MM-DD` and a new empty "Unreleased" section is opened above it.
+- The categories used: `Added` · `Changed` · `Fixed` · `Performance` · `Security`.
 
 ---
 
-## Non publié
+## Unreleased
+
+### Added
+
+- **Direct validation of a pending command with a single press of [ Enter ]**:
+  - When a command awaits user confirmation (`pending_tool_approval`), a single press of `[ Enter ]` validates and runs the command directly if the input field (prompt) is empty (or contains an affirmative sentence such as `ok` / `oui`).
+  - If the user types text (question, new directive) before pressing `Enter`, the pending command is cleanly denied to unblock the agent, and the new message is immediately submitted to the model.
+  - Update of the footer of the approval command cards and of the prompt hint message to `[ Enter ] Allow  ·  [ Esc ] Deny`.
+
+### Fixed
+
+- **Elimination of the 100% CPU freeze during model streaming and terminal output**:
+  - **Batched event draining**: the main loop [`run_loop`](file:///home/xorne/Projets/Spiritty/src/main.rs) now immediately drains all pending events in memory (`try_recv()`) before triggering a render, eliminating queue congestion where each individual chunk or PTY byte triggered a full terminal redraw.
+  - **Frame rate throttling (~30 FPS)**: the periodic background redraw is limited to 30 ms for continuous streams (LLM chunks, PTY output), while keeping an instant 0 ms render for interactive keyboard input, pastes and mouse clicks.
+  - **Removal of spurious redraws on mouse hover (`Mouse(Moved)`)**: micro-movements of the mouse no longer cause a continuous full-window redraw when no split resize is active.
+- **Prevention of chunking panics on command cards (`chunks(0)`)**:
+  - Hardening of command line splitting in `compose_approval_card` and `render_command_card` (systematic `.max(1)` on `max_chunk_w`) preventing any crash when resizing very narrow windows.
+- **Update of the standalone production binary**:
+  - Clean release rebuild in `target/release/spiritty` incorporating all the UI overhauls and stability fixes.
+
+### Performance
+
+- **Caching of the thinking status (`has_thought`) in `ChatCacheEntry`**:
+  - Avoids the costly re-parsing and string allocations on all history messages (notably the large blocks of tens of thousands of characters) during the chat display pass.
+  - Ultra-fast detection of `<think>` tags without useless allocation.
+- **Optimization of `collapse_thought_to_single_line`**:
+  - Bounded analysis on the end of the reasoning stream (`max_w * 4` bytes) and $O(N)$ construction instead of a full split/recombine of blocks of several tens of thousands of characters.
+- **Filtering of command proposals during streaming**:
+  - Suspension of regex analysis and code-block parsing on pure reasoning fragments until a code or tool tag actually appears (` ``` `, `<tool:`...).
+
+### Changed
+
+- **General harmonization of buttons and shortcut keys (`key_pill`)**:
+  - Replacement of the solid Powerline pills with rounded edges (`...`) by the framed key format `[ key ]` (colored brackets and bold label without a solid background), guaranteeing a clean, universal rendering with no dependency on Nerd Fonts glyphs.
+  - Systematic unification of key combinations as a single key `[ Ctrl + Key ]` (instead of `[ Ctrl ] + [ Key ]` or `[ Ctrl ] [ Key ]`) in the F1 help modal, the configuration modal, the footer and the previews.
+  - Centralization of `key_pill` in [`src/ui/mod.rs`](file:///home/xorne/Projets/Spiritty/src/ui/mod.rs) with support for `Cow<'a, str>` (static or dynamically composed strings) and direct reuse in the terminal panel and all modals.
+- **Addition of a permanent vertical divider between the two windows (Chat and Terminal)**:
+  - Drawing of a thin continuous `│` line over the entire height of the workspace separating the left panel (AI chat) and the right panel (PTY terminal), in a sober shade (`palette.border_unfocused`), highlighted in bold yellow (`palette.warning`) during a mouse drag (`is_dragging_split`).
+  - Straight, clean drawing preserving the continuity of the horizontal divider without a jarring T-junction.
+- **Visual harmonization of passive code blocks and tool output in the chat**:
+  - Systematic framing of passive Markdown snippets and terminal outputs in [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) via a double rounded border container (`render_framed_snippet_box`), reusing the dark bluish frame of the command cards (`Color::Rgb(40, 56, 80)` and `Color::Rgb(28, 42, 62)`).
+  - Typed internal header with an adapted icon (`📄` CODE or `⚙` OUTPUT), a framed language or stream badge (`[ RUST ]`, `[ BASH ]`, `[ STDOUT ]`) and an inner box dedicated to the code in bright cyan (`Color::LightCyan`).
+  - Modernization of the interactive expand/collapse button for reasoning (`[ ▾ ]` / `[ ▸ ]`) and of the prompt interrupt button (`[ Esc ]`).
+- **Realignment of `ARCHITECTURE.md` with the actual implementation (v0.7.x)**:
+  - §4: four-level risk taxonomy (`Safe / Standard / Sudo / Risky`) and actual controls (`Alt + 1..9`, `F10`, `Enter` empty field, `F3` levels), replacing the obsolete 3 levels and `[Tab]`=copy.
+  - §5: "Planned Providers" → "Implemented Providers", addition of Z.ai/GLM and of the rule "any OpenAI format goes through `providers/openai.rs`" (`reasoning_content` → `<think>`).
+  - §6: language fallback corrected to **French** (`fr`) and order of the environment variables aligned with `Language::detect_system()` (`$LC_ALL` → `$LC_MESSAGES` → `$LANG`).
+  - §8: compaction described at request time (`compact_chat_messages`, 8 verbatim turns), saving preserving the full history, in place of the old 4-turn compaction executed at save time.
+- **Full English harmonization of the project documentation**:
+  - `AGENTS.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CHANGELOG.md` and `docs/plans/2026-08-20_phase4_ssh_detection_and_hosts_cache.md` translated to English and aligned on the code (module map completed, Phase 4 plan marked complete, `Ctrl + Space` focus shortcut, 4-level risk taxonomy, French i18n fallback).
+  - `README.fr.md` intentionally stays in French; `README.md`, `CONTEXT.md` and the ADRs were already English.
+
 
 ---
 
 ## v0.7.3 — 2026-09-10
 
-### Ajouté
+### Added
 
-- **Nouveau logo officiel et icône de bureau multi-résolutions (Génie céleste Spiritty)** :
-  - Intégration du nouveau logo officiel haute résolution dans [`assets/logo.png`](file:///home/xorne/Projets/Spiritty/assets/logo.png) et [`assets/icons/spiritty.png`](file:///home/xorne/Projets/Spiritty/assets/icons/spiritty.png) (génie céleste bleu et or aux volutes stellaires en forme de « S »).
-  - Déploiement de l'icône de bureau dans toutes les tailles standard FreeDesktop (`16x16`, `32x32`, `48x48`, `64x64`, `128x128`, `256x256`, `512x512` et SVG vectoriel `scalable`).
-  - Embarquement direct dans [`src/brand.rs`](file:///home/xorne/Projets/Spiritty/src/brand.rs) (`ICON_PNG` et `ICON_SVG`).
-  - Intégration visuelle dans `README.md`, `README.fr.md`, le script d'installation `install.sh` et le pipeline CI de release.
-- **Refonte visuelle et conteneur encadré des cartes de commandes (fidèle au design du site web)** :
-  - Refonte complète de [`render_command_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) et [`compose_approval_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) :
-    - Conteneur externe englobant aux coins arrondis (`╭─...─╮`, `│...│`, `╰─...─╯`).
-    - En-tête interne : éclair `⚡` et `COMMANDE #N` ambrés avec badge de risque sobre encadré (`[ SAFE ]`, `[ RISQUÉ ]`).
-    - Boîte intérieure encadrée dédiée au code avec texte en cyan lumineux (`Color::LightCyan`).
-    - Pied de carte épuré : libellé de statut (`"Validation requise avant exécution"`) à gauche et bouton touche `[ Alt + N ]` ambré à droite (sans suffixe verbeux `"Exécuter"`).
-    - Harmonisation de la carte d'approbation d'outils avec touches encadrées `[ F10 ]` et `[ Esc ]`.
+- **New official logo and multi-resolution desktop icon (Spiritty celestial genie)**:
+  - Integration of the new high-resolution official logo in [`assets/logo.png`](file:///home/xorne/Projets/Spiritty/assets/logo.png) and [`assets/icons/spiritty.png`](file:///home/xorne/Projets/Spiritty/assets/icons/spiritty.png) (blue-and-gold celestial genie with starry scrolls shaped like an "S").
+  - Deployment of the desktop icon in all standard FreeDesktop sizes (`16x16`, `32x32`, `48x48`, `64x64`, `128x128`, `256x256`, `512x512` and the vector SVG `scalable`).
+  - Direct embedding in [`src/brand.rs`](file:///home/xorne/Projets/Spiritty/src/brand.rs) (`ICON_PNG` and `ICON_SVG`).
+  - Visual integration in `README.md`, `README.fr.md`, the `install.sh` install script and the release CI pipeline.
+- **Visual redesign and framed container for command cards (faithful to the website design)**:
+  - Complete redesign of [`render_command_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) and [`compose_approval_card`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs):
+    - Outer surrounding container with rounded corners (`╭─...─╮`, `│...│`, `╰─...─╯`).
+    - Internal header: amber lightning bolt `⚡` and `COMMAND #N` with a framed sober risk badge (`[ SAFE ]`, `[ RISKY ]`).
+    - Inner framed box dedicated to the code with text in bright cyan (`Color::LightCyan`).
+    - Clean card footer: status label (`"Validation required before execution"`) on the left and amber `[ Alt + N ]` key button on the right (without the verbose `"Execute"` suffix).
+    - Harmonization of the tool approval card with framed keys `[ F10 ]` and `[ Esc ]`.
 
-### Corrigé
+### Fixed
 
-- **Sélection et copie souris de la dernière ligne du prompt multiligne** :
-  - Correction dans [`src/ui/mod.rs`](file:///home/xorne/Projets/Spiritty/src/ui/mod.rs) du calcul du rectangle de sélection (`inner.height = panel_area.height.saturating_sub(1)` au lieu de `saturating_sub(2)`).
-  - Auparavant, la double soustraction de bordure (`height - 2` puis `clamp(..., bottom - 1)`) tronquait la sélection à `panel_area.bottom() - 2`, empêchant la sélection et la copie de la 3ème ligne d'un prompt multiligne (ou de toute ligne inférieure du prompt et du terminal).
-  - La sélection à la souris peut désormais englober sans coupure l'intégralité du prompt multiligne jusqu'à la dernière ligne (`panel_area.bottom() - 1`).
+- **Mouse selection and copy of the last line of the multiline prompt**:
+  - Fix in [`src/ui/mod.rs`](file:///home/xorne/Projets/Spiritty/src/ui/mod.rs) of the selection rectangle calculation (`inner.height = panel_area.height.saturating_sub(1)` instead of `saturating_sub(2)`).
+  - Previously, the double border subtraction (`height - 2` then `clamp(..., bottom - 1)`) truncated the selection at `panel_area.bottom() - 2`, preventing selection and copy of the 3rd line of a multiline prompt (or of any lower line of the prompt and of the terminal).
+  - Mouse selection can now cover, without truncation, the entire multiline prompt down to the last line (`panel_area.bottom() - 1`).
 
 ---
 
 ## v0.7.2 — 2026-09-10
 
-### Corrigé
+### Fixed
 
-- **Isolation des sessions de tests et élimination de la pollution de l'historique de sessions** :
-  - Correction d'un effet de bord où l'exécution de la suite de tests (`cargo test`) enregistrait des sessions temporaires de test directement dans `~/.config/spiritty/sessions/` sans les supprimer.
-  - La commande `spiritty -c` reprenait alors ces sessions de test orphelines (ex. `Session #141311` avec la commande dummy `sed -n '1,10p' Cargo.toml`) au lieu de la dernière vraie conversation utilisateur, et polluait le gestionnaire de sessions.
-  - Ajout du support de la variable `SPIRITTY_SESSIONS_DIR` dans [`src/session/storage.rs`](file:///home/xorne/Projets/Spiritty/src/session/storage.rs) pour isoler les tests, suppression systématique des artefacts de tests, et purge des sessions tests orphelines.
-- **Robustesse du découpage des blocs de code Markdown et élimination des fausses propositions de commandes** :
-  - Correction d'un bogue subtil dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) et [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) où la présence de triple backticks dans une chaîne littérale à l'intérieur d'un bloc de code (ex. `remaining.find("```")`) ou de backticks inline dans le texte conversationnel tronquait prématurément le bloc et interprétait des mots ordinaires du texte explicatif (ex. le mot « Pour ») comme des propositions de commandes shell exécutables.
-  - Implémentation des analyseurs syntaxiques rigoureux `find_opening_code_fence` et `find_closing_code_fence` vérifiant qu'une fence d'ouverture ou de fermeture commence en début de ligne (avec espaces optionnels) et possède une balise info valide, ignorant les backticks inline ou contenus dans des chaînes littérales.
-  - Amélioration de `repair_prematurely_closed_code_blocks` : lorsqu'un bloc vide prématurément fermé est détecté, si le texte suivant contient déjà des fences valides, la fence vide est supprimée sans ré-emballer les explications textuelles suivantes dans un faux bloc bash.
-  - Filtrage renforcé dans `is_clean_command_line` rejetant les mots de liaison conversationnels isolés (« pour », « suite », « attention », « voici », « cela »).
-- **Auto-approbation des propositions de commandes selon le niveau configuré (Safe / Sudo / Yolo)** :
-  - Correction d'une incohérence où les commandes shell proposées par l'assistant sous forme de bloc Markdown interactif (`⚡ COMMANDE #1`) imposaient systématiquement une validation manuelle (`Alt + 1`), même lorsque le mode d'approbation actif (`F3 Safe` ou `F3 Sudo`) autorisait explicitement le niveau de risque de la commande (ex. commandes en lecture seule `Safe` comme `sed`, `cat`, `grep`, `df` ou commandes administratives `Sudo`).
-  - Évaluation automatique dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) (`on_agent_done`) des propositions uniques éligibles via `should_auto_approve_command(&cmd, level)` avec injection et exécution directe dans le terminal PTY.
-  - Préservation stricte du contrôle utilisateur : les commandes destructrices (`Risky`) exigent toujours une validation manuelle (sauf en mode `Yolo`), les propositions alternatives multiples attendent le choix de l'utilisateur, et un garde-fou borne les enchaînements automatiques à 10 exécutions consécutives maximum avec notification toast i18n (`AutoApproveMaxConsecutiveReached`).
-- **Restauration du prompt système pour les fournisseurs OpenAI-compatibles (DeepSeek, Grok, GLM, LM Studio)** :
-  - Correction d'un bogue critique de masquage de variable (`let mut api_messages = Vec::new()`) dans [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs) qui écrasait et réinitialisait la liste des messages à vide juste après l'insertion du message système.
-  - Les modèles DeepSeek reçoivent à nouveau le prompt système complet de Spiritty (identifiant le rôle, le terminal split-screen, les outils `tool:run_command`, `tool:web_search`, `tool:read_file`, etc.) et peuvent naviguer sur le web et inspecter le système au lieu de refuser en affirmant qu'ils n'ont pas d'accès Internet.
-  - Extraction de la fonction pure `build_api_messages` couverte par une suite de tests unitaires dédiés.
-- **Détection de la fenêtre de contexte pour toute la gamme DeepSeek (131k tokens)** :
-  - Correction de la détection de la fenêtre de contexte maximale dans [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) : le test ciblait restrictivement `model.contains("deepseek-v4")`, provoquant la dégradation de `deepseek-flash`, `deepseek-chat` et `deepseek-reasoner` vers la fenêtre locale par défaut de 8,2k tokens.
-  - Élargissement à `model.contains("deepseek")` garantissant la fenêtre complète de 131 072 tokens (131k) pour tous les modèles de la famille DeepSeek.
-- **Durcissement et sécurisation du parsing des blocs d'outils (`tool:run_command`, `web_search`, `read/write/edit_file`)** :
-  - Correction d'un comportement critique dans [`src/agent/tools.rs`](file:///home/xorne/Projets/Spiritty/src/agent/tools.rs) où l'absence de délimiteur fermant ``` ou la mention inline d'un nom d'outil dans une phrase explicative provoquait la capture de l'intégralité du reste de la réponse Markdown comme commande shell exécutée en direct dans le PTY.
-  - Exigence stricte d'un début de ligne (avec indentation optionnelle), d'une ligne d'en-tête propre terminée par un saut de ligne, et d'un délimiteur fermant obligatoire ``` (ou `</tool:...>`).
-  - Filtrage des faux positifs : rejet systématique des commandes placeholders (`...`, `<command>`, `<unit>`, `cmd`, `commande`) et des blocs tronqués à mi-parcours.
-  - Ajustement dans [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) et [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) pour préserver le texte conversationnel mentionnant des outils sans le tronquer arbitrairement.
+- **Isolation of test sessions and elimination of session history pollution**:
+  - Fix of a side effect where running the test suite (`cargo test`) recorded temporary test sessions directly in `~/.config/spiritty/sessions/` without deleting them.
+  - The `spiritty -c` command then resumed these orphan test sessions (e.g. `Session #141311` with the dummy command `sed -n '1,10p' Cargo.toml`) instead of the last real user conversation, and polluted the session manager.
+  - Addition of support for the `SPIRITTY_SESSIONS_DIR` variable in [`src/session/storage.rs`](file:///home/xorne/Projets/Spiritty/src/session/storage.rs) to isolate the tests, systematic deletion of test artifacts, and purging of orphan test sessions.
+- **Robustness of Markdown code block splitting and elimination of false command proposals**:
+  - Fix of a subtle bug in [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) and [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) where the presence of triple backticks in a string literal inside a code block (e.g. `remaining.find("```")`) or of inline backticks in the conversational text prematurely truncated the block and interpreted ordinary words of the explanatory text (e.g. the word "Pour") as executable shell command proposals.
+  - Implementation of rigorous syntactic parsers `find_opening_code_fence` and `find_closing_code_fence` verifying that an opening or closing fence starts at the beginning of a line (with optional spaces) and has a valid info tag, ignoring inline backticks or those contained in string literals.
+  - Improvement of `repair_prematurely_closed_code_blocks`: when a prematurely closed empty block is detected, if the following text already contains valid fences, the empty fence is removed without re-wrapping the following textual explanations in a false bash block.
+  - Strengthened filtering in `is_clean_command_line` rejecting isolated conversational linking words ("pour", "suite", "attention", "voici", "cela").
+- **Auto-approval of command proposals according to the configured level (Safe / Sudo / Yolo)**:
+  - Fix of an inconsistency where shell commands proposed by the assistant as an interactive Markdown block (`⚡ COMMAND #1`) systematically enforced manual validation (`Alt + 1`), even when the active approval mode (`F3 Safe` or `F3 Sudo`) explicitly authorized the command's risk level (e.g. read-only `Safe` commands such as `sed`, `cat`, `grep`, `df` or administrative `Sudo` commands).
+  - Automatic evaluation in [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) (`on_agent_done`) of eligible single proposals via `should_auto_approve_command(&cmd, level)` with injection and direct execution in the PTY terminal.
+  - Strict preservation of user control: destructive commands (`Risky`) always require manual validation (except in `Yolo` mode), multiple alternative proposals wait for the user's choice, and a guardrail caps automatic sequences at a maximum of 10 consecutive executions with an i18n toast notification (`AutoApproveMaxConsecutiveReached`).
+- **Restoration of the system prompt for OpenAI-compatible providers (DeepSeek, Grok, GLM, LM Studio)**:
+  - Fix of a critical variable-shadowing bug (`let mut api_messages = Vec::new()`) in [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs) that overwrote and reset the message list to empty right after inserting the system message.
+  - DeepSeek models again receive Spiritty's full system prompt (identifying the role, the split-screen terminal, the `tool:run_command`, `tool:web_search`, `tool:read_file`, etc. tools) and can browse the web and inspect the system instead of refusing while claiming they have no Internet access.
+  - Extraction of the pure function `build_api_messages` covered by a dedicated unit test suite.
+- **Context window detection for the entire DeepSeek range (131k tokens)**:
+  - Fix of the maximum context window detection in [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs): the test restrictively targeted `model.contains("deepseek-v4")`, causing the degradation of `deepseek-flash`, `deepseek-chat` and `deepseek-reasoner` to the default local window of 8.2k tokens.
+  - Broadening to `model.contains("deepseek")` guaranteeing the full window of 131,072 tokens (131k) for all models in the DeepSeek family.
+- **Hardening and securing of tool block parsing (`tool:run_command`, `web_search`, `read/write/edit_file`)**:
+  - Fix of a critical behavior in [`src/agent/tools.rs`](file:///home/xorne/Projets/Spiritty/src/agent/tools.rs) where the absence of a closing delimiter ``` or the inline mention of a tool name in an explanatory sentence caused the capture of the entire remainder of the Markdown response as a shell command executed live in the PTY.
+  - Strict requirement of a start of line (with optional indentation), of a clean header line terminated by a newline, and of a mandatory closing delimiter ``` (or `</tool:...>`).
+  - Filtering of false positives: systematic rejection of placeholder commands (`...`, `<command>`, `<unit>`, `cmd`, `commande`) and of blocks truncated midway.
+  - Adjustment in [`src/ui/chat_panel.rs`](file:///home/xorne/Projets/Spiritty/src/ui/chat_panel.rs) and [`src/app.rs`](file:///home/xorne/Projets/Spiritty/src/app.rs) to preserve conversational text mentioning tools without arbitrarily truncating it.
 
-### Ajouté
+### Added
 
-- **Support du modèle DeepSeek V4.1 Flash (`deepseek-flash`) et alignement tarifaire (10 sept. 2026)** :
-  - Alignement sur l'identifiant réel de l'API DeepSeek : bien que l'annonce titre « V4.1 Flash », la passerelle officielle `api.deepseek.com` n'accepte que `deepseek-flash`, `deepseek-v4-flash` et `deepseek-v4-pro` (rejetant `deepseek-v4.1-flash` en HTTP 400).
-  - Définition de `deepseek-flash` comme modèle officiel par défaut dans [`src/config/mod.rs`](file:///home/xorne/Projets/Spiritty/src/config/mod.rs).
-  - Mappage automatique et systématique de toute sélection ou saisie d'un modèle `v4*` (`deepseek-v4`, `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4.1-flash`) vers `deepseek-flash` au chargement de la configuration, dans la modale de configuration (F2/Ctrl+P) et sur le réseau dans [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs).
-  - Mise à jour des tarifs officiels dans [`assets/pricing.json`](file:///home/xorne/Projets/Spiritty/assets/pricing.json) et [`src/pricing/mod.rs`](file:///home/xorne/Projets/Spiritty/src/pricing/mod.rs) ($0.30 / 1M input cache-miss, $1.20 / 1M output au plein tarif peak, avec réduction dynamique à $0.15 / $0.60 en heures creuses off-peak et week-ends).
+- **Support for the DeepSeek V4.1 Flash model (`deepseek-flash`) and pricing alignment (Sept. 10, 2026)**:
+  - Alignment with the real DeepSeek API identifier: although the announcement is titled "V4.1 Flash", the official gateway `api.deepseek.com` only accepts `deepseek-flash`, `deepseek-v4-flash` and `deepseek-v4-pro` (rejecting `deepseek-v4.1-flash` with an HTTP 400).
+  - Definition of `deepseek-flash` as the official default model in [`src/config/mod.rs`](file:///home/xorne/Projets/Spiritty/src/config/mod.rs).
+  - Automatic and systematic mapping of any selection or entry of a `v4*` model (`deepseek-v4`, `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-v4.1-flash`) to `deepseek-flash` on configuration load, in the configuration modal (F2/Ctrl+P) and on the network in [`src/agent/providers/openai.rs`](file:///home/xorne/Projets/Spiritty/src/agent/providers/openai.rs).
+  - Update of the official rates in [`assets/pricing.json`](file:///home/xorne/Projets/Spiritty/assets/pricing.json) and [`src/pricing/mod.rs`](file:///home/xorne/Projets/Spiritty/src/pricing/mod.rs) ($0.30 / 1M input cache-miss, $1.20 / 1M output at full peak rate, with a dynamic reduction to $0.15 / $0.60 during off-peak hours and weekends).
 
 ---
 
 ## v0.7.1 — 2026-09-09
 
-### Ajouté
+### Added
 
-- **Niveau de réflexion / raisonnement configurable par provider (`ReasoningEffort`)** :
-  - **Sélecteur interactif dans la modale de configuration (`F2`)** : nouveau champ `5. Réflexion IA ❯ [←] Badge [→]` permettant d'ajuster le niveau de réflexion du modèle à la volée parmi 5 crans : `Default` (défaut du modèle), `Off` (désactivé pour vitesse maximale), `Low` (faible, budget ~1k tokens), `Medium` (moyen, budget ~4k tokens) et `High` (élevé, budget ~16k tokens), avec couleurs dynamiques et descriptions localisées (FR/EN).
-  - **Intégration API multi-providers** :
-    - *Google Gemini* : transmission de `generationConfig.thinkingConfig.thinkingBudget` (0 pour désactiver, 1024, 4096, 16384 ou omis par défaut).
-    - *OpenAI / Compatible* : transmission du paramètre standard `reasoning_effort` (`low`, `medium`, `high`) dans les requêtes de complétion.
-    - *Anthropic Claude* : activation de `thinking: { type: "enabled", budget_tokens: ... }` avec calcul automatique du plafond `max_tokens` (jusqu'à 20480 tokens) et repliement transparent des blocs `thinking_delta` dans les balises de réflexion `<think>...</think>`.
-  - **Persistance par provider** : enregistrement propre dans `~/.config/spiritty/config.toml` sous chaque provider (`reasoning_effort = "..."`), omis automatiquement lorsque réglé sur `default`.
-  - **Indicateur visuel dans la barre d'état** : affichage en temps réel du niveau de réflexion directement à droite du nom du modèle (` 🧠 Auto `, ` 🧠 Off `, ` 🧠 Low `, ` 🧠 Med `, ` 🧠 High `) avec code couleur dédié et adaptation responsive selon la largeur du terminal.
+- **Configurable thinking / reasoning level per provider (`ReasoningEffort`)**:
+  - **Interactive selector in the configuration modal (`F2`)**: new field `5. AI Reasoning ❯ [←] Badge [→]` allowing the model's reasoning level to be adjusted on the fly among 5 notches: `Default` (model default), `Off` (disabled for maximum speed), `Low` (low, ~1k token budget), `Medium` (medium, ~4k token budget) and `High` (high, ~16k token budget), with dynamic colors and localized descriptions (FR/EN).
+  - **Multi-provider API integration**:
+    - *Google Gemini*: transmission of `generationConfig.thinkingConfig.thinkingBudget` (0 to disable, 1024, 4096, 16384 or omitted by default).
+    - *OpenAI / Compatible*: transmission of the standard `reasoning_effort` parameter (`low`, `medium`, `high`) in completion requests.
+    - *Anthropic Claude*: activation of `thinking: { type: "enabled", budget_tokens: ... }` with automatic calculation of the `max_tokens` ceiling (up to 20480 tokens) and transparent folding of `thinking_delta` blocks into reasoning tags `<think>...</think>`.
+  - **Per-provider persistence**: clean recording in `~/.config/spiritty/config.toml` under each provider (`reasoning_effort = "..."`), automatically omitted when set to `default`.
+  - **Visual indicator in the status bar**: real-time display of the reasoning level directly to the right of the model name (` 🧠 Auto `, ` 🧠 Off `, ` 🧠 Low `, ` 🧠 Med `, ` 🧠 High `) with a dedicated color code and responsive adaptation to the terminal width.
 
-- **Actualisation dynamique des modèles et tarifs LLM en direct (`R` / `Ctrl+R` / `F5` dans la modale Configuration `F2`)** :
-  - **Découverte dynamique multi-providers** : interrogation asynchrone non-bloquante des API officielles de chaque provider (Google Gemini via `/v1beta/models`, Anthropic via `/v1/models`, Ollama via `/api/tags`, providers OpenAI-compatibles via `/v1/models`) avec prise en compte instantanée des clés API et URLs personnalisées saisies dans la modale.
-  - **Mise à jour et persistance automatique** : enregistrement immédiat des nouveaux modèles découverts dans la configuration de l'utilisateur (`~/.config/spiritty/config.toml`), mise à jour du sélecteur interactif de modèles et déclenchement simultané de la mise à jour des grilles tarifaires de tokens.
-  - **Retour d'état visuel et i18n complète** : badge interactif `[ R ] Actualiser modèles` dans le pied de la modale avec messages de statut dynamiques (interrogation en cours, succès avec nombre de modèles découverts, ou cause d'échec explicite en cas de clé API manquante ou d'erreur réseau) en français et anglais.
-  - **Affichage responsive et élargi du pied de modale** : élargissement de la largeur de la modale (`clamp(88, 130)` colonnes) et agencement réactif (mono-ligne aéré sur écran large, ou bi-lignes équilibré sur écran compact) garantissant la visibilité intégrale de l'ensemble des boutons et raccourcis (`Tab / ↑↓ Naviguer`, `Ctrl+S Enregistrer`, `R Actualiser modèles`, `U Tarifs en ligne`, `Échap Fermer`) sans aucun débordement ni troncature.
-- **Support du modèle `gemini-3.8-flash` pour Google Gemini** :
-  - Ajout de `gemini-3.8-flash` comme modèle par défaut et en tête de liste des modèles recommandés pour Google Gemini.
-  - Intégration de la grille tarifaire (0.75 $ entrée / 3.75 $ sortie par million de tokens) dans le registre dynamique et le fallback embarqué (`assets/pricing.json`).
-- **Robustesse des applications interactives ncurses & plein écran (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`)** :
-  - **SGR Mouse Reporting natif** : détection dynamique du protocole souris xterm/SGR (`\x1b[?1000h` / `\x1b[?1006h`) et retransmission instantanée des clics, relâchements, glissés et molettes vers le processus PTY (`htop`, `vim` avec `:set mouse=a`, `fzf`). Le maintien de la touche `Shift` permet de contourner la souris applicative pour sélectionner et copier du texte localement.
-  - **Défilement molette intelligent dans l'alternate screen** : lorsqu'une application plein écran s'exécute sans protocole souris (`less`, `man`, `vim`), la molette de la souris émet automatiquement des touches fléchées vers le PTY au lieu de défiler un historique de scrollback vide.
-  - **Encodage étendu xterm des touches de navigation avec modificateurs** : support complet de `Ctrl+Flèches` (saut de mot dans readline/zsh/nano), `Shift+Flèches`, `Alt+Flèches`, `Ctrl+Home`/`End`, `Ctrl+Delete`, et touches de fonction `F1..F12` avec modificateurs.
-  - **Non-interception de `PageUp` / `PageDown` et `Ctrl+V` en alternate screen** : les touches `PageUp` et `PageDown` parviennent désormais directement à l'application active. `Ctrl+V` (sans Shift) est transmis à `vim` pour déclencher la sélection de bloc visuel (`^V`), tandis que `Ctrl+Shift+V` reste dédié au collage.
-  - **Support natif du Bracketed Paste (`\x1b[?2004h`)** : encadrement automatique du texte collé par les marqueurs VT (`\x1b[200~` ... `\x1b[201~`) évitant les effets d'escalier d'indentation dans `vim`/`nano` et l'exécution prématurée de commandes multilignes.
-- **Renommage d'onglets et persistance multi-onglets dans les sessions (`Alt+R`)** :
-  - **Modale de renommage dédiée (`Alt+R`)** : permet d'attribuer un libellé métier clair à chaque onglet (ex: `bdd-prod`, `logs-nginx`) avec i18n complète (FR/EN) ou de revenir au titre dynamique par défaut avec une saisie vide. Raccourci documenté dans la modale d'aide (`F1` / `?`).
-  - **Persistance des titres personnalisés et contextes SSH** : les onglets et leurs libellés sont sauvegardés de manière transparente au sein du fichier de session (`Session.tabs`) et fidèlement réappliqués lors du rechargement d'une session.
+- **Dynamic live refresh of models and LLM pricing (`R` / `Ctrl+R` / `F5` in the Configuration modal `F2`)**:
+  - **Dynamic multi-provider discovery**: non-blocking asynchronous querying of each provider's official APIs (Google Gemini via `/v1beta/models`, Anthropic via `/v1/models`, Ollama via `/api/tags`, OpenAI-compatible providers via `/v1/models`) with instant consideration of the API keys and custom URLs entered in the modal.
+  - **Automatic update and persistence**: immediate recording of the newly discovered models in the user's configuration (`~/.config/spiritty/config.toml`), update of the interactive model selector and simultaneous triggering of the token pricing grid update.
+  - **Visual status feedback and full i18n**: interactive badge `[ R ] Refresh models` in the modal footer with dynamic status messages (query in progress, success with the number of models discovered, or explicit cause of failure in case of a missing API key or a network error) in French and English.
+  - **Responsive and widened display of the modal footer**: widening of the modal width (`clamp(88, 130)` columns) and reactive layout (airy single line on a wide screen, or balanced two lines on a compact screen) guaranteeing full visibility of all buttons and shortcuts (`Tab / ↑↓ Navigate`, `Ctrl+S Save`, `R Refresh models`, `U Online pricing`, `Esc Close`) without any overflow or truncation.
+- **Support for the `gemini-3.8-flash` model for Google Gemini**:
+  - Addition of `gemini-3.8-flash` as the default model and at the top of the list of recommended models for Google Gemini.
+  - Integration of the pricing grid ($0.75 input / $3.75 output per million tokens) in the dynamic registry and the embedded fallback (`assets/pricing.json`).
+- **Robustness of interactive ncurses & full-screen applications (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`)**:
+  - **Native SGR Mouse Reporting**: dynamic detection of the xterm/SGR mouse protocol (`\x1b[?1000h` / `\x1b[?1006h`) and instant retransmission of clicks, releases, drags and wheels to the PTY process (`htop`, `vim` with `:set mouse=a`, `fzf`). Holding the `Shift` key bypasses the application mouse to select and copy text locally.
+  - **Smart wheel scrolling in the alternate screen**: when a full-screen application runs without a mouse protocol (`less`, `man`, `vim`), the mouse wheel automatically emits arrow keys to the PTY instead of scrolling an empty scrollback history.
+  - **Extended xterm encoding of navigation keys with modifiers**: full support for `Ctrl+Arrows` (word jump in readline/zsh/nano), `Shift+Arrows`, `Alt+Arrows`, `Ctrl+Home`/`End`, `Ctrl+Delete`, and function keys `F1..F12` with modifiers.
+  - **No interception of `PageUp` / `PageDown` and `Ctrl+V` in the alternate screen**: the `PageUp` and `PageDown` keys now reach the active application directly. `Ctrl+V` (without Shift) is transmitted to `vim` to trigger visual block selection (`^V`), while `Ctrl+Shift+V` remains dedicated to pasting.
+  - **Native support for Bracketed Paste (`\x1b[?2004h`)**: automatic wrapping of pasted text with the VT markers (`\x1b[200~` ... `\x1b[201~`) avoiding staircase indentation effects in `vim`/`nano` and the premature execution of multiline commands.
+- **Tab renaming and multi-tab persistence in sessions (`Alt+R`)**:
+  - **Dedicated rename modal (`Alt+R`)**: allows assigning a clear business label to each tab (e.g. `bdd-prod`, `logs-nginx`) with full i18n (FR/EN) or returning to the default dynamic title with an empty input. Shortcut documented in the help modal (`F1` / `?`).
+  - **Persistence of custom titles and SSH contexts**: tabs and their labels are saved transparently within the session file (`Session.tabs`) and faithfully reapplied when a session is reloaded.
 
-### Modifié
+### Changed
 
-- **Affichage ultra-compact des sessions dans la barre d'état et espacement garanti** :
-  - Remplacement de l'ancien message verbeux de restauration de session (qui contenait le titre complet, le nombre de messages, le statut SSH et le rappel d'approbation `⚡ Sudo` redondant) par une étiquette ultra-courte : `📂 Session #151237` (~17 caractères au total).
-  - Élimination des collisions de texte dans le pied de page : réservation d'un espacement minimal garanti d'au moins 2 espaces entre les métriques de gauche et les raccourcis de droite (`build_right_shortcuts`), évitant tout chevauchement ou accolement de texte (`SudoApprobation`).
-- **Architecture : unification et approfondissement des modales TUI ([`src/ui/components/`](file:///home/xorne/Projets/Spiritty/src/ui/components/))** :
-  - Centralisation de la gestion des frappes (`handle_key`), du collage presse-papier (`handle_paste`) et du rendu visuel (`render`) de l'ensemble des 7 modales (`Help`, `Config`, `Sessions`, `Bookmarks`, `Export`, `Mcp`, `RenameTab`, `SshReconnect`) au sein de l'enum unifiée `ModalState` et de la machine à états de transition `ModalOutcome`.
-  - Élimination de plus de 280 lignes de logique dispersée entre `src/app.rs` et `src/ui/mod.rs`, réduisant les blocs ad-hoc à de simples délégations composables et testables de façon isolée.
-- **Architecture : création du superviseur système et hôtes SSH ([`src/system/supervisor.rs`](file:///home/xorne/Projets/Spiritty/src/system/supervisor.rs))** :
-  - Encapsulation complète de la surveillance `/proc` des processus en avant-plan (`SystemSupervisor`), de la détection de session SSH/Docker/locale, de la synchronisation de répertoire courant et branche Git, ainsi que de l'exécution en arrière-plan des sondes d'inspection de distribution (`ssh -o BatchMode=yes ...`).
-  - Découplage des onglets via le trait `InspectableTab` permettant de tester la détection de processus, l'état multi-onglets et le profilage système sans dépendance sur la boucle TUI ni le PTY réel. Déduplication active des sondes SSH en vol pour éviter toute saturation réseau.
-- **Architecture : extraction et approfondissement du sous-système `ToolCapture` ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
-  — allègement substantiel de `src/app.rs` (-690 lignes) par l'encapsulation complète de la capture d'outils, du décodage UTF-8 incrémental avec carry buffer, du balayage de sentinelles (`OSC 777`), du plafond d'overflow 1 Mio, de la détection des invites interactives (`InteractionKind`) et de l'annulation propre `SIGINT` au sein d'une machine à états pure `ToolCaptureSession` 100% testable en mode headless.
+- **Ultra-compact display of sessions in the status bar and guaranteed spacing**:
+  - Replacement of the old verbose session restore message (which contained the full title, the message count, the SSH status and the redundant `⚡ Sudo` approval reminder) by an ultra-short label: `📂 Session #151237` (~17 characters in total).
+  - Elimination of text collisions in the footer: reservation of a guaranteed minimal spacing of at least 2 spaces between the left metrics and the right shortcuts (`build_right_shortcuts`), avoiding any overlap or text adjacency (`SudoApproval`).
+- **Architecture: unification and deepening of the TUI modals ([`src/ui/components/`](file:///home/xorne/Projets/Spiritty/src/ui/components/))**:
+  - Centralization of key handling (`handle_key`), clipboard pasting (`handle_paste`) and visual rendering (`render`) of all 7 modals (`Help`, `Config`, `Sessions`, `Bookmarks`, `Export`, `Mcp`, `RenameTab`, `SshReconnect`) within the unified enum `ModalState` and the transition state machine `ModalOutcome`.
+  - Elimination of more than 280 lines of logic scattered between `src/app.rs` and `src/ui/mod.rs`, reducing ad-hoc blocks to simple composable and isolatedly testable delegations.
+- **Architecture: creation of the system and SSH hosts supervisor ([`src/system/supervisor.rs`](file:///home/xorne/Projets/Spiritty/src/system/supervisor.rs))**:
+  - Complete encapsulation of the `/proc` monitoring of foreground processes (`SystemSupervisor`), of SSH/Docker/local session detection, of current directory and Git branch synchronization, as well as the background execution of distribution inspection probes (`ssh -o BatchMode=yes ...`).
+  - Decoupling of the tabs via the `InspectableTab` trait allowing testing of process detection, multi-tab state and system profiling without depending on the TUI loop or the real PTY. Active deduplication of in-flight SSH probes to avoid any network saturation.
+- **Architecture: extraction and deepening of the `ToolCapture` subsystem ([`src/pty/capture.rs`](file:///home/xorne/Projets/Spiritty/src/pty/capture.rs))**
+  — substantial lightening of `src/app.rs` (-690 lines) by the complete encapsulation of tool capture, incremental UTF-8 decoding with carry buffer, sentinel scanning (`OSC 777`), the 1 MiB overflow ceiling, detection of interactive prompts (`InteractionKind`) and clean `SIGINT` cancellation within a pure `ToolCaptureSession` state machine that is 100% testable in headless mode.
 
-- **Élimination des blocages sur les pagers interactifs (`systemctl`, `journalctl`, `git`, `less`)** :
-  - **Injection automatique de `--no-pager` (`ensure_non_interactive_command`)** : détection et injection systématique de l'option `--no-pager` lors de l'exécution de commandes système (`systemctl`, `journalctl`, `git log/diff/show/branch`) aussi bien en local qu'en session SSH ou sous `sudo`. Évite que des commandes de statut ou d'inspection ne lancent `less` en arrière-plan et ne bloquent le terminal sur une invite `lines ... (END)`.
-  - **Détection et auto-acquittement des pagers (`InteractionKind::Pager`)** : extension de la détection d'invites interactives dans `src/pty/capture.rs` (`lines ... (END)`, `--More--`, etc.) et envoi automatique immédiat du caractère `q` au PTY afin de libérer le terminal sans requérir d'intervention manuelle de l'utilisateur.
-  - **Filtrage des résidus de statut dans les sorties PTY** : suppression des lignes de statut de pager (`lines 1-25/25 (END)`) dans `clean_pty_output` pour ne pas polluer le contexte renvoyé à l'agent IA.
-  - **Règle explicite dans le prompt système** : instruction formelle à l'agent IA d'éviter les commandes interactives et de toujours adjoindre `--no-pager` ou de rediriger vers `cat`/`head`.
-- **Affichage de la réflexion en streaming pour Google Gemini (`includeThoughts: true`)** :
-  - Transmission du paramètre `includeThoughts: true` au sein de `thinkingConfig` dans les requêtes vers l'API Google Gemini (lorsque `ReasoningEffort` est configuré sur `Low`, `Medium`, `High` ou `Default`). Sans ce drapeau explicite, l'API Gemini omettait les fragments de réflexion (`thought: true`) du flux SSE, empêchant l'affichage de la ligne animée `💭 Réflexion · ...` dans la fenêtre de chat.
-  - Clôture propre du bloc de réflexion via `bracket.finish()` en fin de flux lorsqu'une réponse se termine par une phase de raisonnement.
-- **Auto-approbation des commandes de diagnostic multi-lignes et enchaînées (`Safe` / `Sudo`)** :
-  - **Découpage intelligent des chaînes de commandes (`split_chained_commands`)** : prise en charge complète des retours à la ligne (`\n`), des opérateurs logiques `&&`, `||`, des points-virgules `;` ainsi que des parenthèses de sous-shell `(...)` couramment générées par les modèles LLM lors de diagnostics complexes.
-  - **Enrichissement du catalogue d'inspection sûre (`safe_prefixes`)** : classification automatique comme `Safe` des binaires et options de diagnostic usuels (`nproc`, `free`, `php -v/-m/-i`, `apache2 -v`, `apachectl -M/-S/-v`, `httpd`, `mysql --version`, `mariadb --version`, `dpkg -l/-s/--list`, `awk`, `sed` en lecture seule sans `-i`). Les audits système ne sont plus faussement dégradés en commandes soumises à validation manuelle.
-- **Sécurisation par défaut de l'auto-approbation à `Safe`** :
-  - Remplacement du comportement hérité où `auto_approve = true`, `all` ou `auto` activait le mode `Yolo`. La valeur booléenne `true` ou la chaîne `auto` bascule désormais strictement en `Safe` (commandes en lecture seule auto-approuvées, modifications système soumises à confirmation). Seule la valeur explicite `yolo` active le mode YOLO.
-  - La reprise d'une session contenant un niveau YOLO n'écrase plus le fichier de configuration global `config.toml`, protégeant le réglage utilisateur par défaut entre les sessions.
-- **Persistance et mémorisation du dernier modèle sélectionné** :
-  - L'actualisation des modèles (`R`) synchronise immédiatement le modèle actuellement saisi ou sélectionné dans la configuration avant écriture sur disque, évitant toute régression vers un modèle antérieur.
-  - La navigation entre différents fournisseurs (`←`/`→`) au sein de la modale `F2` conserve en mémoire tampon les modèles et paramètres choisis pour chaque fournisseur, persistant l'ensemble des modifications lors de la sauvegarde.
-- **Prise en compte des modifications manuelles dans `config.toml`** : suppression de la réattribution inconditionnelle du modèle/fournisseur depuis la dernière session au démarrage. `config.toml` redevient la source de vérité au lancement de Spiritty, la restauration d'une session étant réservée à l'option explicite `-c` / `--continue`.
-- **Synchronisation automatique des modèles recommandés** : `Config::load` fusionne désormais automatiquement les nouveaux modèles populaires (comme `gemini-3.8-flash`) en tête de liste dans les fichiers de configuration existants, tout en conservant les modèles personnalisés de l'utilisateur.
-- **Ajout de modèle personnalisé dans la modale de configuration (`F2`)** : la confirmation d'ajout (`Enter`) ferme proprement le sous-menu de saisie pour afficher directement le modèle sélectionné, et la sauvegarde (`Ctrl+S` / `F2`) enregistre automatiquement le modèle dans le tableau `models` du fournisseur.
+- **Elimination of hangs on interactive pagers (`systemctl`, `journalctl`, `git`, `less`)**:
+  - **Automatic injection of `--no-pager` (`ensure_non_interactive_command`)**: systematic detection and injection of the `--no-pager` option when executing system commands (`systemctl`, `journalctl`, `git log/diff/show/branch`) both locally and in an SSH session or under `sudo`. Prevents status or inspection commands from launching `less` in the background and blocking the terminal on a `lines ... (END)` prompt.
+  - **Detection and auto-acknowledgement of pagers (`InteractionKind::Pager`)**: extension of interactive prompt detection in `src/pty/capture.rs` (`lines ... (END)`, `--More--`, etc.) and immediate automatic sending of the `q` character to the PTY to release the terminal without requiring manual user intervention.
+  - **Filtering of status residue in PTY output**: removal of pager status lines (`lines 1-25/25 (END)`) in `clean_pty_output` so as not to pollute the context returned to the AI agent.
+  - **Explicit rule in the system prompt**: formal instruction to the AI agent to avoid interactive commands and to always append `--no-pager` or redirect to `cat`/`head`.
+- **Streaming reasoning display for Google Gemini (`includeThoughts: true`)**:
+  - Transmission of the `includeThoughts: true` parameter within `thinkingConfig` in requests to the Google Gemini API (when `ReasoningEffort` is configured to `Low`, `Medium`, `High` or `Default`). Without this explicit flag, the Gemini API omitted the reasoning fragments (`thought: true`) from the SSE stream, preventing the display of the animated line `💭 Reasoning · ...` in the chat window.
+  - Clean closure of the reasoning block via `bracket.finish()` at the end of the stream when a response ends with a reasoning phase.
+- **Auto-approval of multiline and chained diagnostic commands (`Safe` / `Sudo`)**:
+  - **Intelligent splitting of command chains (`split_chained_commands`)**: full support for newlines (`\n`), logical operators `&&`, `||`, semicolons `;` as well as subshell parentheses `(...)` commonly generated by LLM models during complex diagnostics.
+  - **Enrichment of the safe inspection catalog (`safe_prefixes`)**: automatic classification as `Safe` of the usual diagnostic binaries and options (`nproc`, `free`, `php -v/-m/-i`, `apache2 -v`, `apachectl -M/-S/-v`, `httpd`, `mysql --version`, `mariadb --version`, `dpkg -l/-s/--list`, `awk`, `sed` read-only without `-i`). System audits are no longer falsely downgraded to commands subject to manual validation.
+- **Secure-by-default auto-approval at `Safe`**:
+  - Replacement of the legacy behavior where `auto_approve = true`, `all` or `auto` activated `Yolo` mode. The boolean value `true` or the string `auto` now strictly switches to `Safe` (read-only commands auto-approved, system modifications subject to confirmation). Only the explicit value `yolo` activates YOLO mode.
+  - Resuming a session containing a YOLO level no longer overwrites the global configuration file `config.toml`, protecting the user's default setting between sessions.
+- **Persistence and memorization of the last selected model**:
+  - The model refresh (`R`) immediately synchronizes the model currently entered or selected in the configuration before writing to disk, preventing any regression to a previous model.
+  - Navigation between different providers (`←`/`→`) within the `F2` modal keeps the models and parameters chosen for each provider in a buffer, persisting all the modifications on save.
+- **Consideration of manual modifications in `config.toml`**: removal of the unconditional reassignment of the model/provider from the last session at startup. `config.toml` becomes the source of truth again at Spiritty startup, session restoration being reserved for the explicit `-c` / `--continue` option.
+- **Automatic synchronization of recommended models**: `Config::load` now automatically merges the new popular models (such as `gemini-3.8-flash`) at the top of the list in existing configuration files, while preserving the user's custom models.
+- **Addition of a custom model in the configuration modal (`F2`)**: confirmation of the addition (`Enter`) cleanly closes the input submenu to directly display the selected model, and saving (`Ctrl+S` / `F2`) automatically records the model in the provider's `models` array.
 
 ---
 
 ## v0.7.0 — 2026-09-03
 
-### Ajouté
+### Added
 
-- **Multi-onglets interactifs dans le terminal split-screen (`Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` / `Alt+1..9`)**
-  — prise en charge native de plusieurs sessions PTY et serveurs en parallèle dans le panneau droit :
-  - **Gestion des onglets** : création rapide avec `Ctrl+T` (ou clic sur `[+]`), fermeture avec `Ctrl+W` (ou clic sur `×`), navigation séquentielle `Ctrl+Tab` / `Ctrl+Shift+Tab` / `Ctrl+PgUp` / `Ctrl+PgDn`, et sélection directe `Alt+1..9`.
-  - **Barre d'onglets dynamique & indicateurs** : affichage de chaque onglet avec son titre contextuel (`1: 💻 local`, `2: 🌐 vps-prod`, etc.) et pastille `●` en cas d'activité ou de sortie en arrière-plan.
-  - **Synchronisation contextuelle avec l'agent IA** : le basculement d'onglet met à jour immédiatement le contexte système actif (`SSH`, `Docker`, `local`, dossier de travail, branche Git), assurant que l'agent IA assiste toujours l'environnement visible à l'écran.
-  - **Multi-tâches non-bloquant** : chaque onglet maintient son propre processus PTY et son écran virtuel VT100 en arrière-plan sans bloquer l'interface.
+- **Interactive multi-tabs in the split-screen terminal (`Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` / `Alt+1..9`)**
+  — native support for several PTY sessions and servers in parallel in the right panel:
+  - **Tab management**: quick creation with `Ctrl+T` (or click on `[+]`), closing with `Ctrl+W` (or click on `×`), sequential navigation `Ctrl+Tab` / `Ctrl+Shift+Tab` / `Ctrl+PgUp` / `Ctrl+PgDn`, and direct selection `Alt+1..9`.
+  - **Dynamic tab bar & indicators**: display of each tab with its contextual title (`1: 💻 local`, `2: 🌐 vps-prod`, etc.) and `●` dot in case of activity or background output.
+  - **Contextual synchronization with the AI agent**: switching tabs immediately updates the active system context (`SSH`, `Docker`, `local`, working directory, Git branch), ensuring the AI agent always assists the environment visible on screen.
+  - **Non-blocking multitasking**: each tab maintains its own PTY process and its own VT100 virtual screen in the background without blocking the interface.
 
-- **Persistance et restauration du mode d'approbation (`auto_approve`) par session**
-  — le niveau d'approbation automatique actif (`Safe`, `Sudo`, `YOLO`, `Off`) est désormais sauvegardé avec la session (`~/.config/spiritty/sessions/`) et restauré fidèlement lors d'un `spiritty -c` ou du chargement d'une session via `Ctrl+H`. La modale des sessions affiche l'indicateur visuel associé et les options en ligne de commande (`--yolo`, `--safe`, `--auto-approve <lvl>`) conservent la priorité absolue en cas de reprise forcée.
+- **Persistence and restoration of the approval mode (`auto_approve`) per session**
+  — the active automatic approval level (`Safe`, `Sudo`, `YOLO`, `Off`) is now saved with the session (`~/.config/spiritty/sessions/`) and faithfully restored during a `spiritty -c` or when loading a session via `Ctrl+H`. The sessions modal displays the associated visual indicator and the command-line options (`--yolo`, `--safe`, `--auto-approve <lvl>`) keep absolute priority in case of forced resume.
 
-- **Prise en charge native du flux de réflexion Gemini 3.7 / 2.5 (`thought: true`)**
-  — encapsulation automatique des chunks de réflexion du fournisseur Google Gemini en blocs `<think>…</think>` pour un rendu visuel repliable et animé identique aux modèles DeepSeek / OpenAI.
+- **Native support for the Gemini 3.7 / 2.5 reasoning stream (`thought: true`)**
+  — automatic wrapping of the Google Gemini provider's reasoning chunks into `<think>…</think>` blocks for a collapsible and animated visual rendering identical to the DeepSeek / OpenAI models.
 
-- **Journalisation automatique des plantages et paniques dans `~/.config/spiritty/crash.log`**
-  — enregistrement systématique des erreurs fatales avec horodatage et backtrace complet.
+- **Automatic logging of crashes and panics in `~/.config/spiritty/crash.log`**
+  — systematic recording of fatal errors with timestamp and full backtrace.
 
-- **Édition et gestion de fichiers distants en session SSH & conteneurs (`tool:read_file` / `edit_file` / `write_file`)**
-  — les outils de fichiers dédiés fonctionnent désormais de manière transparente et sécurisée
-  sur les machines distantes lors d'une session active `SSH`, `Docker` ou `Podman` :
-  - `tool:read_file` : lecture distante via pipeline `base64` silencieux dans le flux PTY avec
-    décodage mémoire et gestion du plafond de sécurité (100 Ko).
-  - `tool:edit_file` : lecture préalable du fichier distant, validation stricte de l'unicité
-    du fragment `old_string` en mémoire côté Rust, et réécriture atomique via `base64 -d | [sudo tee]`.
-  - `tool:write_file` : écriture/écrasement complet distant avec encodage Base64 et élévation `sudo tee`
-    automatique sur les chemins système (`/etc/`, `/var/`, `/usr/`, etc.).
-  - Préservation de la sécurité human-in-the-loop : classification des risques (`Safe`, `Standard`,
-    `Sudo`, `Risky`) et demande de confirmation utilisateur respectées sur tous les chemins distants.
+- **Editing and management of remote files in SSH session & containers (`tool:read_file` / `edit_file` / `write_file`)**
+  — the dedicated file tools now work transparently and securely
+  on remote machines during an active `SSH`, `Docker` or `Podman` session:
+  - `tool:read_file`: remote reading via silent `base64` pipeline in the PTY stream with
+    memory decoding and handling of the safety ceiling (100 KB).
+  - `tool:edit_file`: prior reading of the remote file, strict validation of the uniqueness
+    of the `old_string` fragment in memory on the Rust side, and atomic rewriting via `base64 -d | [sudo tee]`.
+  - `tool:write_file`: full remote write/overwrite with Base64 encoding and automatic `sudo tee`
+    elevation on system paths (`/etc/`, `/var/`, `/usr/`, etc.).
+  - Preservation of human-in-the-loop safety: risk classification (`Safe`, `Standard`,
+    `Sudo`, `Risky`) and user confirmation requests respected on all remote paths.
 
-- **Détection automatique des invites interactives et bascule de focus (`[y/n]`, confirmation, mots de passe)**
-  — extension du détecteur de flux PTY pour identifier non seulement les demandes `sudo`/mots de passe, mais également les confirmations interactives courantes (`[y/n]`, `[o/n]`, `(yes/no)`, `Press [Enter] to continue`, `Are you sure you want to continue connecting`). Lorsque l'agent IA déclenche une commande nécessitant une réponse humaine, le focus clavier bascule automatiquement sur le terminal avec un toast explicite et le délai d'inactivité est augmenté à 120s pour laisser le temps à l'utilisateur de répondre.
+- **Automatic detection of interactive prompts and focus switching (`[y/n]`, confirmation, passwords)**
+  — extension of the PTY stream detector to identify not only `sudo`/password requests, but also common interactive confirmations (`[y/n]`, `[o/n]`, `(yes/no)`, `Press [Enter] to continue`, `Are you sure you want to continue connecting`). When the AI agent triggers a command requiring a human response, the keyboard focus automatically switches to the terminal with an explicit toast and the inactivity delay is increased to 120s to give the user time to respond.
 
-- **Indicateur d'exécution en cours et invite d'interaction (`⚡ En cours · Shift+Tab`) dans le terminal**
-  — lors de l'exécution d'un outil par l'agent IA, la barre d'en-tête du terminal affiche désormais un badge visible signalant qu'une commande est active et rappelant le raccourci universel `Shift+Tab` pour basculer instantanément dans le shell et interagir.
+- **In-progress execution indicator and interaction prompt (`⚡ In progress · Shift+Tab`) in the terminal**
+  — during execution of a tool by the AI agent, the terminal header bar now displays a visible badge signaling that a command is active and recalling the universal `Shift+Tab` shortcut to instantly switch into the shell and interact.
 
-### Corrigé
+### Fixed
 
-- **Défilement automatique en bas du terminal lors de l'injection d'outils et commandes**
-  — si le terminal était défilé vers le haut (historique), l'affichage du terminal restait figé sur les anciennes lignes pendant l'exécution des commandes d'outils de l'agent. Le défilement est désormais automatiquement remis à zéro (`reset_scroll`) dès qu'une commande est injectée, rendant immédiatement visible la sortie en direct.
+- **Automatic scrolling to the bottom of the terminal when injecting tools and commands**
+  — if the terminal was scrolled up (history), the terminal display remained frozen on the old lines during execution of the agent's tool commands. Scrolling is now automatically reset (`reset_scroll`) as soon as a command is injected, immediately making the live output visible.
 
-- **Interruption propre des processus PTY suspendus lors de l'arrêt de génération (`Esc` / `Ctrl+C`)**
-  — lorsqu'une commande bloquait dans le terminal (par exemple un `ssh` en attente ou un script interactif), appuyer sur `Esc` ou arrêter la génération annulait la tâche dans Spiritty mais laissait le processus actif en arrière-plan dans le terminal. Spiritty injecte désormais un signal d'interruption `\x03` (SIGINT) au PTY pour tuer proprement la commande et rendre immédiatement le prompt à l'utilisateur.
+- **Clean interruption of suspended PTY processes when stopping generation (`Esc` / `Ctrl+C`)**
+  — when a command was blocking in the terminal (for example an `ssh` waiting or an interactive script), pressing `Esc` or stopping generation cancelled the task in Spiritty but left the process active in the background in the terminal. Spiritty now injects an interrupt signal `\x03` (SIGINT) into the PTY to cleanly kill the command and immediately return the prompt to the user.
 
-- **Correction du raccourci de fermeture d'onglet et préservation de l'effacement de mot (`Ctrl+W`)**
-  — dans le terminal et l'entrée de chat, la combinaison `Ctrl+W` sert traditionnellement à effacer le mot précédent (`werase`). L'interception globale de `Ctrl+W` provoquait la fermeture intempestive de Spiritty quand un seul onglet était actif. Le raccourci de fermeture d'onglet est désormais `Ctrl+Shift+W` (ou clic sur `×`), `Ctrl+W` assure l'effacement de mot, et la fermeture d'onglet ne quitte plus l'application lorsque le dernier onglet est actif.
+- **Fix of the tab close shortcut and preservation of word erase (`Ctrl+W`)**
+  — in the terminal and the chat input, the combination `Ctrl+W` traditionally serves to erase the previous word (`werase`). The global interception of `Ctrl+W` caused Spiritty to close unexpectedly when only one tab was active. The tab close shortcut is now `Ctrl+Shift+W` (or click on `×`), `Ctrl+W` performs word erase, and closing a tab no longer quits the application when the last tab is active.
 
-- **Isolation des scripts multi-lignes et commandes contenant `exit` / `set -e` dans un sous-shell (`bash -c '...'`)**
-  — lorsqu'une proposition de script IA contenait `exit 1` ou `set -e` (par exemple un script de test avec `if [ -z "$KEY" ]; then exit 1; fi`), son exécution directe dans le shell interactif tuait le processus racine du PTY (`$SHELL`), provoquant la fermeture subite de Spiritty. Ces scripts sont désormais automatiquement encapsulés dans un sous-shell isolé, préservant la session interactive et capturant proprement la sortie et le code de retour sans quitter Spiritty.
+- **Isolation of multiline scripts and commands containing `exit` / `set -e` in a subshell (`bash -c '...'`)**
+  — when an AI script proposal contained `exit 1` or `set -e` (for example a test script with `if [ -z "$KEY" ]; then exit 1; fi`), its direct execution in the interactive shell killed the root process of the PTY (`$SHELL`), causing Spiritty to close suddenly. These scripts are now automatically wrapped in an isolated subshell, preserving the interactive session and cleanly capturing the output and return code without quitting Spiritty.
 
-- **Support complet du balisage d'outils DSML DeepSeek (`<skill>`, `<command>`)**
-  — les modèles DeepSeek émettant des appels d'outils XML personnalisés sont désormais correctement interprétés comme des propositions de commandes interactives et leurs balises techniques sont filtrées de la vue de chat.
+- **Full support for DeepSeek DSML tool markup (`<skill>`, `<command>`)**
+  — DeepSeek models emitting custom XML tool calls are now correctly interpreted as interactive command proposals and their technical tags are filtered from the chat view.
 
-- **Robustesse du découpage des blocs de raisonnement et variantes de balises (`</thunk>`, `</thought>`, `</thinking`, `</th`)**
-  — certains modèles de raisonnement (DeepSeek, GLM, Grok) émettent parfois des variantes de balises de fin de pensée (typo `</thunk>`, `</thought>`, `</thinking` sans chevron fermant ou coupure partielle `</th`) tout en plaçant un `</think>` fermant à la toute fin du message après l'appel d'outil. L'analyseur considérait l'ensemble du message (y compris le texte de réponse et l'invocation d'outil DSML) comme faisant partie de la réflexion privée, masquant la réponse et laissant la TUI figée sur *Deep thinking*. L'extraction des pensées et le découpage des outils gèrent désormais toutes ces anomalies de formatage et garantissent l'extraction immédiate des propositions de commandes.
+- **Robustness of reasoning block splitting and tag variants (`</thunk>`, `</thought>`, `</thinking`, `</th`)**
+  — some reasoning models (DeepSeek, GLM, Grok) sometimes emit variants of end-of-thought tags (typo `</thunk>`, `</thought>`, `</thinking` without a closing chevron or partial cut `</th`) while placing a closing `</think>` at the very end of the message after the tool call. The parser considered the entire message (including the response text and the DSML tool invocation) as part of the private reasoning, hiding the response and leaving the TUI frozen on *Deep thinking*. Thought extraction and tool splitting now handle all these formatting anomalies and guarantee the immediate extraction of command proposals.
 
-- **Prise en charge des phrases d'approbation composées (`oui vas y`, `ok vas y`, `oui stp`) et déblocage des outils**
-  — lorsqu'une demande d'approbation d'outil était en attente, les expressions composées courantes comme `oui vas y` ou `ok vas y` n'étaient pas reconnues comme une validation, et l'envoi d'un nouveau message laissait la tâche d'arrière-plan bloquée sur l'attente du consentement. L'analyseur d'approbation naturelle gère désormais toutes les locutions courantes et libère proprement la tâche en cours si une nouvelle directive est saisie.
+- **Support for compound approval phrases (`oui vas y`, `ok vas y`, `oui stp`) and unblocking of tools**
+  — when a tool approval request was pending, common compound expressions such as `oui vas y` or `ok vas y` were not recognized as a validation, and sending a new message left the background task blocked waiting for consent. The natural approval parser now handles all common locutions and cleanly releases the task in progress if a new directive is entered.
 
-- **Rétablissement de l'indicateur universel `💭 Deep thinking…` et du shimmer de réflexion active**
-  — l'animation de pensée et le chronomètre de réflexion en temps réel restent visibles pendant toute la durée du calcul du modèle (y compris avant la réception du premier token et pendant le déroulement de la réflexion).
+- **Restoration of the universal `💭 Deep thinking…` indicator and the active reasoning shimmer**
+  — the thinking animation and the real-time reasoning timer remain visible throughout the model computation (including before the first token is received and during the reasoning).
 
-- **Résolution des timeouts SSE (passage à 45s connexion / 90s flux) pour les modèles de raisonnement**
-  — les modèles raisonneurs (DeepSeek-R1 / V3, Gemini 3.7 Thinking, Claude 3.7 Thinking, o3-mini) et les longues sessions sous forte charge provoquaient des erreurs prématurées `Délai d'inactivité de 25s dépassé sur le flux du modèle (timeout SSE)`. Les timeouts ont été portés à 45s pour la connexion et 90s pour le streaming de pensée sur tous les fournisseurs (OpenAI, DeepSeek, Gemini, Anthropic, Ollama).
+- **Resolution of SSE timeouts (increased to 45s connection / 90s stream) for reasoning models**
+  — reasoning models (DeepSeek-R1 / V3, Gemini 3.7 Thinking, Claude 3.7 Thinking, o3-mini) and long sessions under heavy load caused premature errors `25s inactivity timeout exceeded on the model stream (SSE timeout)`. The timeouts have been raised to 45s for the connection and 90s for the thought streaming on all providers (OpenAI, DeepSeek, Gemini, Anthropic, Ollama).
 
-- **Optimisation du compactage de contexte LLM pour les très longues sessions (200+ tours)**
-  — les sessions volumineuses saturaient le budget de tokens et allongeaient le TTFT :
-  - **Filtrage des erreurs transitoires** : suppression automatique des messages d'erreur résiduels (`⚠️ Erreur : ...`) lors de la préparation de la conversation envoyée à l'API.
-  - **Écrêtage des sorties géantes de commandes** : les sorties brutes volumineuses (> 6 000 caractères) sont automatiquement résumées avec préservation du début et de la fin de la sortie (`[sortie tronquée pour le contexte LLM]`).
-  - **Plafonnement de la synthèse d'historique** : limitation du résumé des tours anciens à 25 points clés pour garantir une latence minimale.
+- **Optimization of LLM context compaction for very long sessions (200+ turns)**
+  — large sessions saturated the token budget and lengthened the TTFT:
+  - **Filtering of transient errors**: automatic removal of residual error messages (`⚠️ Error: ...`) during preparation of the conversation sent to the API.
+  - **Trimming of giant command outputs**: large raw outputs (> 6,000 characters) are automatically summarized while preserving the beginning and end of the output (`[output truncated for the LLM context]`).
+  - **Capping of the history summary**: limiting the summary of older turns to 25 key points to guarantee minimal latency.
 
 ## v0.6.4 — 2026-08-30
 
-### Corrigé
+### Fixed
 
-- **Résolution des variables d'environnement des clés API au lancement GUI**
-  — lors du lancement de Spiritty via un lanceur d'applications de bureau (sans passer
-  par un terminal interactif existant), les clés d'API déclarées dans `~/.zshrc` ou
-  `~/.bashrc` (`export GEMINI_API_KEY=...`, `DEEPSEEK_API_KEY`, etc.) n'étaient pas
-  chargées car la sonde exécutait le shell en mode login non-interactif (`-l`). La sonde
-  exécute désormais le shell en mode login interactif (`-l -i`) avec délimiteurs étanches,
-  garantissant le chargement transparent des clés configurées dans votre shell rc.
-- **Script d'installation (`install.sh`) : chemin absolu de l'exécutable dans le lanceur XDG (`Exec`)**
-  — le fichier `spiritty.desktop` généré contenait `Exec=spiritty` relatif. Lorsque Spiritty
-  est installé dans `~/.local/bin` (installation utilisateur sans sudo), les lanceurs de bureau
-  et émulateurs de terminal (Ghostty, etc.) échouaient avec l'erreur `Failed to find executable spiritty`
-  car `~/.local/bin` n'est pas présent dans le `$PATH` global de la session graphique. Le script
-  utilise désormais le chemin absolu exact `${INSTALL_DIR}/${BINARY_NAME}`.
+- **Resolution of API key environment variables at GUI launch**
+  — when launching Spiritty via a desktop application launcher (without going
+  through an existing interactive terminal), the API keys declared in `~/.zshrc` or
+  `~/.bashrc` (`export GEMINI_API_KEY=...`, `DEEPSEEK_API_KEY`, etc.) were not
+  loaded because the probe executed the shell in non-interactive login mode (`-l`). The probe
+  now executes the shell in interactive login mode (`-l -i`) with tight delimiters,
+  guaranteeing transparent loading of the keys configured in your shell rc.
+- **Install script (`install.sh`): absolute path of the executable in the XDG launcher (`Exec`)**
+  — the generated `spiritty.desktop` file contained a relative `Exec=spiritty`. When Spiritty
+  is installed in `~/.local/bin` (user installation without sudo), the desktop launchers
+  and terminal emulators (Ghostty, etc.) failed with the error `Failed to find executable spiritty`
+  because `~/.local/bin` is not present in the global `$PATH` of the graphical session. The script
+  now uses the exact absolute path `${INSTALL_DIR}/${BINARY_NAME}`.
 
 ## v0.6.3 — 2026-08-30
 
-### Ajouté
+### Added
 
-- **Script d'installation (`install.sh`) : détection de bureau et création du lanceur XDG**
-  — sur Linux, l'installateur détecte désormais l'environnement de bureau actif
-  (GNOME, KDE Plasma, XFCE, Hyprland, Sway, DankMaterialShell / DMS, etc.) et
-  propose interactivement d'installer :
-  - L'icône SVG dans `~/.local/share/icons/hicolor/scalable/apps/spiritty.svg`
-  - Le lanceur `~/.local/share/applications/spiritty.desktop`
-  - L'actualisation automatique des bases de données de lanceurs et de caches
-    d'icônes (`update-desktop-database`, `gtk-update-icon-cache`, et redémarrage
-    du service `dms` si actif).
-- **Packaging CI (`release.yml`)** : l'archive tarball release inclut désormais
-  l'icône `assets/icons/spiritty.svg`.
+- **Install script (`install.sh`): desktop detection and creation of the XDG launcher**
+  — on Linux, the installer now detects the active desktop environment
+  (GNOME, KDE Plasma, XFCE, Hyprland, Sway, DankMaterialShell / DMS, etc.) and
+  interactively offers to install:
+  - The SVG icon in `~/.local/share/icons/hicolor/scalable/apps/spiritty.svg`
+  - The launcher `~/.local/share/applications/spiritty.desktop`
+  - The automatic refresh of the launcher databases and icon
+    caches (`update-desktop-database`, `gtk-update-icon-cache`, and restart
+    of the `dms` service if active).
+- **CI packaging (`release.yml`)**: the release tarball archive now includes
+  the icon `assets/icons/spiritty.svg`.
 
 ## v0.6.2 — 2026-08-30
 
-### Ajouté
+### Added
 
-- **Icône SVG officielle embarquée + module `brand`** — l'icône « lampe à
-  génie » `assets/icons/spiritty.svg` est poussée comme asset de marque du dépôt
-  et **embarquée** dans le binaire via `include_str!` (nouveau `src/brand.rs` :
-  `BRAND_GLYPH`, `brand_title()`, `ICON_SVG`). Le titre du panneau chat utilise
-  `brand::brand_title()` et toute l'app partage un seul marqueur. La TUI
-  n'affiche pas le SVG (un terminal ne peut pas dessiner un vecteur) — l'emoji
-  🧞 reste le marqueur in-TUI.
-- Documentation alignée sur le glyphe 🧞 (install.sh, README, README.fr,
+- **Official embedded SVG icon + `brand` module** — the "genie lamp"
+  icon `assets/icons/spiritty.svg` is pushed as the repository's brand asset
+  and **embedded** in the binary via `include_str!` (new `src/brand.rs`:
+  `BRAND_GLYPH`, `brand_title()`, `ICON_SVG`). The chat panel title uses
+  `brand::brand_title()` and the whole app shares a single marker. The TUI
+  does not display the SVG (a terminal cannot draw a vector) — the emoji
+  🧞 remains the in-TUI marker.
+- Documentation aligned with the 🧞 glyph (install.sh, README, README.fr,
   ROADMAP).
 
 ## v0.6.1 — 2026-08-30
 
-### Modifié
+### Changed
 
-- **Emoji de marque : fantôme → lampe bleue 🧞** — le fantôme `👻` devient la
-  **lampe bleue 🧞** (référence à la « lampe à génie »), partout dans l'app :
-  titre du panneau chat, préfixe des réponses assistant, aide CLI, rapports
-  Markdown exportés et résumés de session.
+- **Brand emoji: ghost → blue lamp 🧞** — the ghost `👻` becomes the
+  **blue lamp 🧞** (reference to the "genie lamp"), everywhere in the app:
+  chat panel title, assistant response prefix, CLI help, exported Markdown
+  reports and session summaries.
 
 ## v0.6.0 — 2026-08-30
 
-### Ajouté
+### Added
 
-- **Collage d'images / screenshots pour les modèles vision (`Ctrl+Shift+V`)**
-  — lecture d'image depuis le presse-papiers (arboard `get_image` → pixels RGBA →
-  PNG → base64), attachée au prochain prompt utilisateur. Le flux :
-  - `Ctrl+Shift+V` déclenche une lecture asynchrone (thread dédié, garde
-    anti-empilement) et stocke l'image dans `pending_image` — le toast
-    « 🖼️ Image attachée… » confirme, puis l'image est jointe au prochain envoi.
+- **Image / screenshot pasting for vision models (`Ctrl+Shift+V`)**
+  — image reading from the clipboard (arboard `get_image` → RGBA pixels →
+  PNG → base64), attached to the next user prompt. The flow:
+  - `Ctrl+Shift+V` triggers an asynchronous read (dedicated thread, anti-stacking
+    guard) and stores the image in `pending_image` — the toast
+    "🖼️ Image attached…" confirms, then the image is attached to the next send.
   - `ChatMessage.attachments` (`Vec<MessageAttachment>`, `mime_type` +
-    `data_base64`) transporte l'image ; `.data_uri()` expose la forme
-    `data:<mime>;base64,…`. ⚠️ rétro-compatible : les sessions JSON sans la clé
-    `attachments` se désérialisent toujours (attribut `#[serde(default)]`).
-  - `prepare_conversation` conserve désormais un tour « image seule » (texte
-    vide + pièce jointe) au lieu de le jeter comme vide — le provider reçoit
-    bien la capture.
-  - **Trois providers vision** : `openai.rs` (bloc `image_url` + data-URI),
-    `gemini.rs` (part `inline_data`, base64 sans préfixe), `anthropic.rs`
-    (bloc `image.source` base64). Le texte reste un part `text` pour satisfaire
-    les API qui refusent un tour 100 % image.
-  - Nouvelles dépendances : `base64` et `image` (feature `png`).
-  - Tests : encodage PNG RGBA + base64, schéma JSON des trois blocs vision,
-    data-URI, et survie d'un tour attachment-seule dans `prepare_conversation`.
+    `data_base64`) carries the image; `.data_uri()` exposes the form
+    `data:<mime>;base64,…`. ⚠️ backward-compatible: JSON sessions without the
+    `attachments` key still deserialize (`#[serde(default)]` attribute).
+  - `prepare_conversation` now keeps an "image-only" turn (empty text +
+    attachment) instead of discarding it as empty — the provider does receive
+    the capture.
+  - **Three vision providers**: `openai.rs` (`image_url` block + data-URI),
+    `gemini.rs` (`inline_data` part, base64 without prefix), `anthropic.rs`
+    (`image.source` block base64). The text remains a `text` part to satisfy
+    APIs that reject a 100% image turn.
+  - New dependencies: `base64` and `image` (feature `png`).
+  - Tests: RGBA PNG + base64 encoding, JSON schema of the three vision blocks,
+    data-URI, and survival of an attachment-only turn in `prepare_conversation`.
 
-- **Aperçu TUI de l'image collée (half-blocks)** — l'image en attente est
-  rendue en direct au-dessus de la zone d'input par half-blocks (`▀` = 2 pixels
-  par cellule, haut = fg, bas = bg), downsampling nearest-neighbour
-  (letterboxé, ratio conservé, ~32×8 cellules). Aucun widget image ni dépendance
-  ajoutée. Une ligne de statut affiche les dimensions et les raccourcis :
-  `[Entrée] l'envoie` · `[Ctrl+Shift+⌫] retire`. `pending_image` porte
-  désormais un `PendingImage` (le `MessageAttachment` pour l'envoi + les pixels
-  RGBA décodés une fois au collage, aucun re-décodage par frame). Alpha
-  aplati sur un fond sombre. Tests `render_halfblock_marks_cells…` /
+- **TUI preview of the pasted image (half-blocks)** — the pending image is
+  rendered live above the input area with half-blocks (`▀` = 2 pixels
+  per cell, top = fg, bottom = bg), nearest-neighbour downsampling
+  (letterboxed, ratio preserved, ~32×8 cells). No image widget or dependency
+  added. A status line displays the dimensions and the shortcuts:
+  `[Enter] sends it` · `[Ctrl+Shift+⌫] removes it`. `pending_image` now carries
+  a `PendingImage` (the `MessageAttachment` for sending + the RGBA pixels
+  decoded once at paste time, no re-decoding per frame). Alpha
+  flattened on a dark background. Tests `render_halfblock_marks_cells…` /
   `flatten_over_dark…`.
 
-- **`Ctrl+V` intelligent image/texte + lecture image Wayland réparée** — le
-  collage image se fait désormais via **`Ctrl+V`** (global, actif des deux
-  panneaux), et non `Ctrl+Shift+V` que Ghostty et la plupart des émulateurs de
-  terminal capturent avant l'app. Trois corrections :
-  - **Feature `wayland-data-control` activée** sur `arboard` (tire
-    `wl-clipboard-rs`) — sous Wayland, `arboard::get_image()` échouait
-    silencieusement faute de cette feature (arboard retombait sur le backend
-    X11, qui ne voit pas la copie Wayland), d'où le collage du chemin au lieu
-    de la vignette.
-  - **`Ctrl+V` déplacé dans `handle_key`** (global) au lieu du seul paneau chat :
-    en focus Terminal il était renvoyé tel quel au PTY, injectant le chemin de
-    l'image dans le shell (local ou **SSH distant**) — pire sur un VPS.
-    `handle_terminal_key` n'envoie plus `Ctrl+V` au PTY.
-  - **`spawn_smart_paste_request`** : lit le presse-papiers une fois (arboard),
-    priorité à l'image (`get_image`) → `PasteImage` (aperçu), sinon texte →
-    `Paste` (collé dans le paneau actif). Diagnostics confirmés : le presse-
-    papiers contient à la fois des pixels d'image (392×575) et un URI de fichier
-    — l'image est bien lue en priorité.
-  - **`Ctrl+Shift+V` capté par le terminal = image quand même** : Ghostty
-    convertit `Ctrl+Shift+V` en un paste **texte** (l'URI/chemin du fichier).
-    `handle_paste` détecte désormais que le texte collé est un chemin/URI
-    d'image (`looks_like_image_path`) et relit le presse-papiers pour attacher
-    l'image au lieu de coller le chemin dans le paneau (pire sur un VPS).
-    Nouvel événement `PasteInto` (insertion sans re-détection) pour éviter toute
-    récursion. Tests `image_path_detection`.
+- **Smart image/text `Ctrl+V` + fixed Wayland image reading** — image
+  pasting is now done via **`Ctrl+V`** (global, active from both
+  panels), and not `Ctrl+Shift+V` which Ghostty and most terminal emulators
+  capture before the app. Three fixes:
+  - **`wayland-data-control` feature enabled** on `arboard` (pulls
+    `wl-clipboard-rs`) — under Wayland, `arboard::get_image()` failed
+    silently for lack of this feature (arboard fell back to the X11 backend,
+    which does not see the Wayland copy), hence the paste of the path instead
+    of the thumbnail.
+  - **`Ctrl+V` moved into `handle_key`** (global) instead of the chat panel
+    only: in Terminal focus it was sent as-is to the PTY, injecting the image
+    path into the shell (local or **remote SSH**) — worse on a VPS.
+    `handle_terminal_key` no longer sends `Ctrl+V` to the PTY.
+  - **`spawn_smart_paste_request`**: reads the clipboard once (arboard),
+    priority to the image (`get_image`) → `PasteImage` (preview), otherwise text →
+    `Paste` (pasted into the active panel). Confirmed diagnostics: the clipboards
+    contain both image pixels (392×575) and a file URI
+    — the image is indeed read first.
+  - **`Ctrl+Shift+V` captured by the terminal = image anyway**: Ghostty
+    converts `Ctrl+Shift+V` into a **text** paste (the file URI/path).
+    `handle_paste` now detects that the pasted text is an image path/URI
+    (`looks_like_image_path`) and re-reads the clipboard to attach
+    the image instead of pasting the path into the panel (worse on a VPS).
+    New `PasteInto` event (insertion without re-detection) to avoid any
+    recursion. Tests `image_path_detection`.
 
-### Ajouté
+### Added
 
-- **Outils d'édition de fichiers dédiés** (`tool:read_file` / `tool:edit_file` /
-  `tool:write_file`) — le modèle se rabattait sur des pipelines `sed`/`awk`/
-  heredoc pour modifier un fichier, source de corruption (heredocs mangés) et
-  d'erreurs 127 sur les sessions réelles. Trois outils structurés, dispatchés
-  dans la boucle d'outils (`src/agent/mod.rs`) et documentés dans le system
-  prompt (`src/agent/prompt.rs`) :
-  - `tool:read_file` : affiche le fichier (tronqué à 100 Ko avec compteur), auto-approuvé (lecture seule).
-  - `tool:edit_file` : remplacement d'une chaîne exacte unique (`old`→`new`, séparateur `---`), atomique — échoue bruyamment si le texte est introuvable **ou** apparaît plusieurs fois, au lieu d'appliquer un substitut partiel.
-  - `tool:write_file` : écriture/écrasement d'un fichier complet, contenu verbatim (jamais d'ellipse/placeholder).
-  - Le parseur (`parse_file_edit_fence`, `src/agent/tools.rs`) refuse un `edit_file` avec `old_string` vide et ignore les fences dans les blocs `<think>`.
-  - **Classification par chemin** (`classify_file_edit`, `src/agent/safety.rs`) :
-    fichiers utilisateur/`~/.config`/projets → Standard (auto-approuvé), `/etc`,
-    `/usr`, `/var`, `/root`, `/boot`... → Sudo (demande confirmation hors niveau Sudo),
-    chemins sensibles (`.ssh`, `.zshrc`, `fstab`, `sudoers`, `ssh` config) → Risky
-    (uniquement auto-approuvé en YOLO).
-  - Tests : parsing des fences (read/write/edit, multi-lignes, `<think>`, old vide),
-    classification par chemin, et round-trip lecture/écriture/édition (replacement
-    unique, ambigu, introuvable).
-  - **Refus en session distante (SSH/container)** : les outils d'édition agissent sur
-    le système **local** de Spiritty, pas sur le serveur distant. La boucle d'outils
-    détecte désormais la session via `sys_ctx.active_session` (SSH/container) et refuse
-    `read_file`/`edit_file`/`write_file` avec un message explicite invitant à revenir
-    aux commandes shell (`cat`/`sed`/`tee`/heredoc/`scp`) via `tool:run_command` —
-    plutôt que d'éditer silencieusement un fichier local qui n'est pas celui que
-    l'utilisateur visualise. Règle ajoutée au system prompt.
+- **Dedicated file editing tools** (`tool:read_file` / `tool:edit_file` /
+  `tool:write_file`) — the model fell back on `sed`/`awk`/heredoc pipelines
+  to modify a file, a source of corruption (mangled heredocs) and
+  of 127 errors on real sessions. Three structured tools, dispatched
+  in the tool loop (`src/agent/mod.rs`) and documented in the system
+  prompt (`src/agent/prompt.rs`):
+  - `tool:read_file`: displays the file (truncated to 100 KB with a counter), auto-approved (read-only).
+  - `tool:edit_file`: replacement of a unique exact string (`old`→`new`, separator `---`), atomic — fails loudly if the text cannot be found **or** appears several times, instead of applying a partial substitute.
+  - `tool:write_file`: write/overwrite of a complete file, verbatim content (never ellipsis/placeholder).
+  - The parser (`parse_file_edit_fence`, `src/agent/tools.rs`) refuses an `edit_file` with an empty `old_string` and ignores fences inside `<think>` blocks.
+  - **Classification by path** (`classify_file_edit`, `src/agent/safety.rs`):
+    user files/`~/.config`/projects → Standard (auto-approved), `/etc`,
+    `/usr`, `/var`, `/root`, `/boot`... → Sudo (requests confirmation outside the Sudo level),
+    sensitive paths (`.ssh`, `.zshrc`, `fstab`, `sudoers`, `ssh` config) → Risky
+    (only auto-approved in YOLO).
+  - Tests: fence parsing (read/write/edit, multiline, `<think>`, empty old),
+    classification by path, and read/write/edit round-trip (unique,
+    ambiguous, not-found replacement).
+  - **Refusal in remote session (SSH/container)**: the editing tools act on
+    Spiritty's **local** system, not on the remote server. The tool loop
+    now detects the session via `sys_ctx.active_session` (SSH/container) and refuses
+    `read_file`/`edit_file`/`write_file` with an explicit message inviting a return
+    to shell commands (`cat`/`sed`/`tee`/heredoc/`scp`) via `tool:run_command` —
+    rather than silently editing a local file that is not the one the
+    user is viewing. Rule added to the system prompt.
 
-### Corrigé
+### Fixed
 
-- **Détection SSH depuis le panneau shell : faux `Ssh` forgé sur cible invalide**
-  — `parse_ssh_args` (`src/system/process_watcher.rs`) acceptait n'importe quel
-  premier token non-flag comme cible ssh. Un processus de premier plan dont
-  `argv[0]` se résout en `ssh` mais avec un argument non-cible (durée/`sleep`,
-  numéro isolé, `-N` sans destination, reaper) produisait un faux
-  `ActiveSession::Ssh { target: "30", host: "30" }`, faussant la détection
-  Local↔SSH en course. Ajout d'une validation stricte `is_valid_ssh_host` : la
-  cible doit être un hostname (lettres/chiffres/`.`/`-`/`_`, pas purement
-  numérique), une IPv4, ou une IPv6 (entre `[]` ou avec `:`). Tests
+- **SSH detection from the shell panel: false `Ssh` forged on an invalid target**
+  — `parse_ssh_args` (`src/system/process_watcher.rs`) accepted any
+  non-flag first token as an ssh target. A foreground process whose
+  `argv[0]` resolves to `ssh` but with a non-target argument (duration/`sleep`,
+  isolated number, `-N` without destination, reaper) produced a false
+  `ActiveSession::Ssh { target: "30", host: "30" }`, skewing the
+  Local↔SSH detection in the race. Addition of a strict `is_valid_ssh_host` validation: the
+  target must be a hostname (letters/digits/`.`/`-`/`_`, not purely
+  numeric), an IPv4, or an IPv6 (between `[]` or with `:`). Tests
   `test_ssh_without_valid_target_is_rejected` / `test_ssh_with_valid_targets_is_accepted`.
 
-- **Modal de reconnexion SSH proposé à tort sur une session locale** — le cas
-  où le modèle *émet* une commande `ssh …` (proposition/exemple) faisait
-  apparaître la modale de reconnexion au rechargement d'une session en fait
-  locale. L'heuristique `extract_ssh_target` (`src/session/mod.rs`) considérait
-  tout message `💻 \`ssh …\`` comme preuve d'une session distante, alors qu'il
-  ne prouve rien (la commande peut avoir simplement tourné, ou le `ssh` suivi
-  d'un `exit`). La seule preuve fiable qu'une session s'est terminée sur un
-  shell distant est le **reste de prompt** (`user@host:~$`) : le signal
-  « commande `ssh` nue » est supprimé, l'inference ne se fait plus que par un
-  prompt distant. Test `infers_target_from_ssh_command_message` renommé
-  `bare_ssh_command_message_does_not_infer_target`, et `newest_message_wins`
-  réécrit sur des prompts distants.
+- **SSH reconnect modal wrongly offered on a local session** — the case
+  where the model *emits* an `ssh …` command (proposal/example) caused the
+  reconnect modal to appear when reloading a session that was in fact
+  local. The `extract_ssh_target` heuristic (`src/session/mod.rs`) considered
+  any message `💻 \`ssh …\`` as proof of a remote session, whereas it
+  proves nothing (the command may simply have run, or the `ssh` followed
+  by an `exit`). The only reliable proof that a session ended on a remote
+  shell is the **prompt remainder** (`user@host:~$`): the
+  "bare `ssh` command" signal is removed, the inference is now made only via a
+  remote prompt. Test `infers_target_from_ssh_command_message` renamed
+  `bare_ssh_command_message_does_not_infer_target`, and `newest_message_wins`
+  rewritten on remote prompts.
 
 
-- **`<think><think>` imbriqués dans la réflexion affichée** (audit session
-  20260830) — certains modèles raisonneurs (GLM/Z.ai/DeepSeek) émettent leur
-  propre `<think>` **dans** le contenu visible, en plus du wrapper que Spiritty
-  ajoute pour `reasoning_content` : l'extracteur de raisonnement
-  (`extract_thought_block`, `src/ui/chat_panel.rs`) captait alors `<think>…`
-  avec le tag littéral en tête. Le `thought` extrait est désormais passé par un
-  nettoyage `strip_residual_reasoning_tags` qui retire tous les délimiteurs de
-  raisonnement résiduels (`<think>`/`<thought>`/`<reasoning>` et leurs fermetures)
-  — la délibération est affichée verbatim, le cas normal d'un simple bloc reste
-  inchangé. Test `nested_think_keeps_reasoning_verbatim`.
+- **`<think><think>` nested in the displayed reasoning** (session audit
+  20260830) — some reasoning models (GLM/Z.ai/DeepSeek) emit their
+  own `<think>` **inside** the visible content, in addition to the wrapper that Spiritty
+  adds for `reasoning_content`: the reasoning extractor
+  (`extract_thought_block`, `src/ui/chat_panel.rs`) then captured `<think>…`
+  with the literal tag at the head. The extracted `thought` is now passed through a
+  `strip_residual_reasoning_tags` cleanup that removes all residual
+  reasoning delimiters (`<think>`/`<thought>`/`<reasoning>` and their closings)
+  — the deliberation is displayed verbatim, the normal case of a single block remains
+  unchanged. Test `nested_think_keeps_reasoning_verbatim`.
 
-- **Heredocs multilignes mangés par le line-editor interactif local (zsh/bash)**
-  (audit session 20260830) — les scripts heredoc (`sudo tee … <<'EOF'` avec un
-  corps sur plusieurs lignes physiques) étaient injectés bruts dans le PTY :
-  l'éditeur de ligne du shell local découpait le fichier en plusieurs lignes et
-  en perdait le corps (fragments « `cmdand heredoc> =` », `<<''EOF'>`,
-  duplication de lettres constatée sur les sessions réelles). Désormais
-  `format_command_for_pty_with_session` route les commandes contenant un heredoc
-  (`<<`) dans `bash -c '…'` pour **tout shell local** (zsh/bash/dash, pas
-  seulement fish) : le bloc entier devient UNE seule ligne logique pour l'éditeur
-  interactif, et bash exécute le script verbatim. Les shells distants restent
-  inchangés (leur éditeur gère le multiligne, le wrapping risquait d'en changer
-  la sémantique), et la syntaxe bash « nue » sans heredoc reste native pour bash.
-  Tests `format_command_for_pty` étendus (heredoc zsh local → wrap, heredoc
-  remote → natif, bash-syntaxe non-heredoc → natif).
+- **Multiline heredocs mangled by the local interactive line-editor (zsh/bash)**
+  (session audit 20260830) — heredoc scripts (`sudo tee … <<'EOF'` with a
+  body over several physical lines) were injected raw into the PTY:
+  the local shell's line editor split the file into several lines and
+  lost the body (fragments "`cmdand heredoc> =`", `<<''EOF'>`,
+  letter duplication observed on real sessions). Now
+  `format_command_for_pty_with_session` routes commands containing a heredoc
+  (`<<`) into `bash -c '…'` for **any local shell** (zsh/bash/dash, not
+  only fish): the whole block becomes ONE single logical line for the interactive
+  editor, and bash executes the script verbatim. Remote shells remain
+  unchanged (their editor handles multiline, wrapping risked changing the
+  semantics), and the "bare" bash syntax without heredoc remains native for bash.
+  Tests `format_command_for_pty` extended (local zsh heredoc → wrap, remote
+  heredoc → native, non-heredoc bash syntax → native).
 
-- **Propositions de commande extraites du `<think>` du modèle exécutées à tort**
-  (audit session 20260830) — l'extracteur de propositions
-  (`extract_all_command_proposals`, `src/app.rs`) scannait les fences de code
-  au sein du bloc `<think>…</think>` du raisonnement, que le parseur d'appels
-  d'outils retirait déjà (`strip_think_blocks`, `src/agent/tools.rs`) mais pas
-  lui. Le raisonnement contient souvent des fences *d'exemple* non exécutables,
-  qui devenaient des cartes ⚡ et étaient exécutées en lieu et place de la
-  vraie commande : cas réel « automount `/dev/sdb1` » où seule la ligne de
-  contenu du heredoc (`UUID=… /mnt/data …`) a été injectée (`code 127`) en
-  place du `sudo mkdir … printf … | sudo tee -a /etc/fstab`, et cas `.desktop`
-  exécuté comme commande. `extract_all_command_proposals` retire désormais les
-  blocs `<think>`/`<thought>`/`<reasoning>` avant de scanner (réutilise
-  `strip_think_blocks`), avec test de non-régression sur le contenu réel.
+- **Command proposals extracted from the model's `<think>` wrongly executed**
+  (session audit 20260830) — the proposal extractor
+  (`extract_all_command_proposals`, `src/app.rs`) scanned the code fences
+  within the `<think>…</think>` reasoning block, which the tool-call parser
+  already removed (`strip_think_blocks`, `src/agent/tools.rs`) but it did
+  not. The reasoning often contains *example* fences that are not executable,
+  which became ⚡ cards and were executed in place of the
+  real command: real case "automount `/dev/sdb1`" where only the heredoc
+  content line (`UUID=… /mnt/data …`) was injected (`code 127`) in
+  place of `sudo mkdir … printf … | sudo tee -a /etc/fstab`, and the `.desktop`
+  case executed as a command. `extract_all_command_proposals` now removes the
+  `<think>`/`<thought>`/`<reasoning>` blocks before scanning (reuses
+  `strip_think_blocks`), with a non-regression test on the real content.
 
 ## v0.5.6 — 2026-08-29
 
 ### Performance
 
-- **Rendu fenêtré du panneau chat : fini la rame à 100% CPU sur les longues
-  sessions** — le rendu concaténait **toute** l'historique en un seul Paragraph
-  et re-comptait ses lignes wraps à chaque frame pour calculer le scroll : sur
-  une session de ~1000 messages / ~10 000 rangées, la vue bottom-ancrée
-  re-wrappait tout ce qui précède la fenêtre visible à 11 fps, saturant un
-  cœur CPU pendant la génération LLM. Pass B ne matérialise plus que les
-  messages recouvrant la fenêtre visible (géométrie par message mémorisée en
-  pass A) et le scroll est dérivé de la somme des hauteurs par message (toutes
-  deux calculées par ratatui : la vieille divergence venait du compteur *simulé*
-  depuis retiré). Mesure sur session de 9820 rangées : CPU de streaming
-  100 % → ~20 %.
+- **Windowed rendering of the chat panel: no more 100% CPU lag on long
+  sessions** — rendering concatenated **the entire** history into a single Paragraph
+  and re-counted its wrap lines at each frame to compute the scroll: on
+  a session of ~1000 messages / ~10,000 rows, the bottom-anchored view
+  re-wrapped everything above the visible window at 11 fps, saturating a
+  CPU core during LLM generation. Pass B now only materializes the
+  messages overlapping the visible window (per-message geometry memoized in
+  pass A) and scrolling is derived from the sum of per-message heights (both
+  computed by ratatui: the old divergence came from the *simulated* counter
+  since removed). Measurement on a 9820-row session: streaming CPU
+  100% → ~20%.
 
-### Corrigé
+### Fixed
 
-- **Dépliage de la réflexion aléatoire au clic** — après un toggle réussi, les
-  zones de clic (« 💭 Réflexion · ») étaient vidées jusqu'au prochain rendu
-  (~90 ms) : un second clic rapide (double-clic, clics rapprochés) tombait sur
-  une liste vide et démarrait une sélection de texte au lieu de basculer.
-  Les zones ne sont plus vidées manuellement (le rendu les recalcule de toute
-  façon à chaque frame) et la cible est élargie à 2 rangées quand la réflexion
-  est pliée (la rangée vide sous le toggle appartient à la cible ; en état
-  déplié, elle reste sélectionnable). Instrumentation de diagnostic
+- **Random reasoning expand on click** — after a successful toggle, the
+  click zones ("💭 Reasoning · ") were emptied until the next render
+  (~90 ms): a second quick click (double-click, rapid clicks) landed on
+  an empty list and started a text selection instead of toggling.
+  The zones are no longer emptied manually (rendering recomputes them anyway
+  at each frame) and the target is widened to 2 rows when the reasoning
+  is collapsed (the empty row under the toggle belongs to the target; in the
+  expanded state, it remains selectable). Diagnostic instrumentation
   `SPIRITTY_UI_DEBUG=1` (`/tmp/spiritty_ui_debug.log`).
 
 ## v0.5.5 — 2026-08-29
 
-### Modifié
+### Changed
 
-- **System prompt : une seule proposition de commande par réponse** — le §2
-  enseignait littéralement aux models d'émettre un bloc bash **par commande**
-  pour les « multi-step plans » : les models empilaient les étapes successives
-  en cartes Alt+1/Alt+2/Alt+3 à déclencher à l'aveugle. Désormais : une
-  proposition par réponse pour les étapes séquentielles (le résultat revient au
-  model avant l'étape suivante) ; plusieurs cartes uniquement pour des
-  **alternatives** d'une même action (pacman/apt/dnf → Alt+1/2/3) ; chaînage
-  `&&` pour les étapes trivialement atomiques. Synchronisé dans le prompt
-  intégré (`prompt.rs`) et le template par défaut (`config/mod.rs`).
+- **System prompt: a single command proposal per response** — §2
+  literally taught the models to emit one bash block **per command**
+  for "multi-step plans": the models stacked the successive steps
+  into Alt+1/Alt+2/Alt+3 cards to be triggered blindly. Now: one
+  proposal per response for sequential steps (the result returns to the
+  model before the next step); several cards only for
+  **alternatives** of the same action (pacman/apt/dnf → Alt+1/2/3); chaining
+  `&&` for trivially atomic steps. Synchronized in the integrated prompt
+  (`prompt.rs`) and the default template (`config/mod.rs`).
 
-### Corrigé
+### Fixed
 
-- **Appels d'outils émis en tag HTML par Gemini ignorés** — certains models
-  écrivent `<tool:run_command>` (tag XML, fermant omis, ``` isolé) au lieu du
-  bloc fencing ```` ```tool:run_command ```` enseigné : la commande n'était
-  jamais exécutée, le model se penait sur son propre format puis affichait un
-  *exemple* de syntaxe (💻 `commande`) que la politique d'auto-approbation
-  exécutait tel quel (`code 127`). Le parseur reconnaît désormais les tags
-  HTML-style (fermé, avec corps fence, ou tronqué) et n'extrait plus jamais
-  d'appel d'outil depuis les blocs `<think>` (le raisonnement n'est pas une
-  action). Règle system prompt ajoutée : syntaxe de bloc stricte + interdiction
-  des commandes factices/plageholders dans les exemples.
-- **Gemini : HTTP 400 « Requests ending with a model turn are not supported »** —
-  chaque requête embarquait le placeholder `Assistant("")` créé par l'UI comme
-  cible de streaming : l'historique se terminait donc par un tour `model`, que
-  l'API Gemini refuse (OpenAI-compatible tolère, d'où le passage inaperçu). La
-  préparation de la conversation (`prepare_conversation`) droppe désormais tous
-  les messages vides, tous rôles confondus ; le provider Gemini fusionne en plus
-  les contenus consécutifs de même rôle (résumés System mappés `user`, résultats
-  d'outils user/user) pour une requête canonique.
-- **Capture PTY : plus de timeout de 45s sur les commandes locales** — le scan
-  incrémental du sentinel de fin de commande (`OSC 777`) n'examinait que les
-  20 derniers caractères du buffer après chaque chunk. Quand l'echo + la sortie +
-  le sentinel coalescent dans une seule grosse lecture PTY (fréquent sur shell
-  local rapide, selon le scheduling), le sentinel passait inaperçu et la capture
-  attendait l'expiration du timeout dur. Le scan utilise désormais un watermark
-  (`sentinel_scan_upto`) qui rescanne uniquement le recouvrement nécessaire :
-  détection en ~4 ms au lieu de 45 s, coût amorti O(nouveaux octets) conservé.
+- **Tool calls emitted as HTML tags by Gemini ignored** — some models
+  write `<tool:run_command>` (XML tag, closing omitted, isolated ```) instead of the
+  taught fencing block ```` ```tool:run_command ````: the command was
+  never executed, the model got stuck on its own format then displayed an
+  *example* of syntax (💻 `command`) that the auto-approval policy
+  executed as-is (`code 127`). The parser now recognizes the HTML-style
+  tags (closed, with fence body, or truncated) and never extracts a
+  tool call from `<think>` blocks anymore (reasoning is not an
+  action). System prompt rule added: strict block syntax + prohibition
+  of dummy/placeholder commands in the examples.
+- **Gemini: HTTP 400 "Requests ending with a model turn are not supported"** —
+  each request embedded the `Assistant("")` placeholder created by the UI as
+  a streaming target: the history thus ended with a `model` turn, which
+  the Gemini API refuses (OpenAI-compatible tolerates it, hence the unnoticed passage). The
+  conversation preparation (`prepare_conversation`) now drops all
+  empty messages, regardless of role; the Gemini provider additionally merges
+  consecutive contents of the same role (System summaries mapped to `user`,
+  user/user tool results) for a canonical request.
+- **PTY capture: no more 45s timeout on local commands** — the
+  incremental scan of the command end sentinel (`OSC 777`) only examined the
+  last 20 characters of the buffer after each chunk. When the echo + the output +
+  the sentinel coalesce into a single large PTY read (frequent on a fast local
+  shell, depending on scheduling), the sentinel went unnoticed and the capture
+  waited for the hard timeout to expire. The scan now uses a watermark
+  (`sentinel_scan_upto`) that rescans only the necessary overlap:
+  detection in ~4 ms instead of 45 s, amortized O(new bytes) cost preserved.
 
-### Ajouté
+### Added
 
-- **Instrumentation de capture** (`SPIRITTY_CAPTURE_DEBUG=1`) : journal
-  d'événements du cycle de capture (armement, sighting du sentinel, conclusion,
-  dump du buffer à 5 s) dans `/tmp/spiritty_capture_debug.log` pour diagnostiquer
-  après coup les captures qui n'aboutissent pas.
+- **Capture instrumentation** (`SPIRITTY_CAPTURE_DEBUG=1`): event
+  log of the capture cycle (arming, sentinel sighting, conclusion,
+  buffer dump at 5 s) in `/tmp/spiritty_capture_debug.log` to diagnose
+  captures that do not complete after the fact.
 
 ## v0.5.4 — 2026-08-28
 
-### Changé
+### Changed
 
-- **CI release : retrait de la cible `x86_64-apple-darwin`** — les runners macOS
-  Intel hébergés (`macos-13`) sont retirés par GitHub ; le job restait bloqué en
-  file d'attente (0 step, aucun runner assigné) sans jamais produire de binaire.
-  La matrice ne build plus que Linux (`x86_64` + `aarch64`) et macOS Apple
+- **Release CI: removal of the `x86_64-apple-darwin` target** — the hosted Intel
+  macOS runners (`macos-13`) are removed by GitHub; the job remained stuck in
+  the queue (0 steps, no runner assigned) without ever producing a binary.
+  The matrix now only builds Linux (`x86_64` + `aarch64`) and macOS Apple
   Silicon (`aarch64`).
 
-### Corrigé
+### Fixed
 
-- **Footer : affichage du `Ctx` corrigé** — `get_context_used_tokens` estimait
-  l'historique complet de la session (rémanence de l'option C), d'où un
-  « Ctx: 178k / 131k (100%) » absurde (utilisé > fenêtre, clampé à 100%) et quasi
-  identique au compteur de tokens total. Le `Ctx` estime désormais le contexte
-  **compacté réellement envoyé** au modèle (résumé + 8 derniers tours verbatim),
-  cohérent avec la compaction à la requête ; le compteur « tok » reste le total
-  de la session.
+- **Footer: `Ctx` display fixed** — `get_context_used_tokens` estimated
+  the full session history (legacy of option C), hence an
+  absurd "Ctx: 178k / 131k (100%)" (used > window, clamped to 100%) and almost
+  identical to the total token counter. `Ctx` now estimates the context
+  **actually compacted and sent** to the model (summary + 8 last verbatim turns),
+  consistent with the request-time compaction; the "tok" counter remains the session
+  total.
 
 ## v0.5.3 — 2026-08-28
 
-### Changé
+### Changed
 
-- **System prompt : interdiction d'abréger les commandes avec `...` ou un placeholder** —
-  ajout d'une règle explicite dans `IMPORTANT RULES` : toujours coller le contenu
-  intégral d'un heredoc/script/fichier dans le bloc de code, jamais `...` /
-  `BASE64` / `[content]` comme raccourci (le bloc est exécuté tel quel — un
-  placeholder est écrit verbatim sur disque ou échoue ; il n'y a pas de
-  troncature côté outil). Corrige le cas où GLM (`glm-5.3-flash`) réduisait ses
-  commandes longues à `...`, puis attribuait à tort la casse à une
-  « troncature client ».
+- **System prompt: prohibition to abbreviate commands with `...` or a placeholder** —
+  addition of an explicit rule in `IMPORTANT RULES`: always paste the full
+  content of a heredoc/script/file in the code block, never `...` /
+  `BASE64` / `[content]` as a shortcut (the block is executed as-is — a
+  placeholder is written verbatim to disk or fails; there is no
+  truncation on the tool side). Fixes the case where GLM (`glm-5.3-flash`) reduced its
+  long commands to `...`, then wrongly attributed the breakage to a
+  "client truncation".
 
 ## v0.5.2 — 2026-08-28
 
-### Changé
+### Changed
 
-- 🟢 **Historique complet persisté, compactage réduit au contexte LLM** (option C,
-  « quand on remonte dans l'historique on ne voit plus la globalité des échanges ») :
-  `save_current_session` ne compacte plus — le JSON de session conserve **tous**
-  les échanges, et le rechargement restaure la globalité de la conversation (fini
-  le plafond « 1 résumé + 8 tours = 9 messages » hérité du compactage à la
-  sauvegarde). Le compactage déménage **au moment de la requête** :
-  `agent::send_prompt` applique désormais `compact_chat_messages` (extraction de
-  la logique de `Session::compact` en fonction pure dans `session/mod.rs`) — les
-  tours anciens roulent dans un résumé System et les 8 plus récents partent
-  verbatim au fournisseur, donc le budget de contexte reste borné sur les
-  sessions longues, avec un bénéfice immédiat : le contexte live est compacté à
-  chaque tour, pas seulement au rechargement. Les sessions JSON déjà compactées
-  par les versions précédentes restent telles quelles (l'historique perdu avant
-  cette version n'est pas reconstituable). Validé E2E dans un HOME isolé :
-  session de 15 messages → rechargement → re-sauvegarde → 15 messages sur
-  disque, aucun résumé persisté.
+- 🟢 **Full history persisted, compaction reduced to the LLM context** (option C,
+  "when scrolling back in the history we no longer see the whole of the exchanges"):
+  `save_current_session` no longer compacts — the session JSON keeps **all**
+  the exchanges, and reloading restores the whole conversation (no more
+  the "1 summary + 8 turns = 9 messages" ceiling inherited from save-time
+  compaction). Compaction moves **to request time**:
+  `agent::send_prompt` now applies `compact_chat_messages` (extraction of
+  the logic of `Session::compact` into a pure function in `session/mod.rs`) — the
+  older turns roll into a System summary and the 8 most recent go
+  verbatim to the provider, so the context budget remains bounded on
+  long sessions, with an immediate benefit: the live context is compacted at
+  each turn, not only on reload. The session JSONs already compacted
+  by previous versions remain as they are (the history lost before
+  this version is not reconstructible). Validated E2E in an isolated HOME:
+  session of 15 messages → reload → re-save → 15 messages on
+  disk, no summary persisted.
 
 ### Documentation
 
-- README.md / README.fr.md rafraîchis pour v0.5.x : le compactage est documenté
-  honnêtement (historique complet persisté et restauré — plus de plafond à 9
-  messages dans la liste des sessions —, et compactage limité au seul contexte
-  LLM : résumé structuré + 8 derniers tours verbatim), badges de classification
-  en 4 niveaux (🟢 Safe / 🟡 Standard /
-  🟣 Sudo / 🔴 Risky), modale de reconnexion SSH (`⏎ Se reconnecter`) et hint
-  `· 🔗 SSH (reprise)` ajoutés à la section SSH, raccourcis `F10` (autorisation
-  en un appui) et `F6` (focus) dans la table, et ASCII-art corrigé
-  (`Ctrl+Espace` pour le focus, `Alt+N` pour exécuter — l'ancien
-  « Enter: Execute | Tab: Edit » ne correspondait à aucun binding actuel).
+- README.md / README.fr.md refreshed for v0.5.x: compaction is documented
+  honestly (full history persisted and restored — no more ceiling of 9
+  messages in the session list —, and compaction limited to the LLM context
+  alone: structured summary + 8 last verbatim turns), four-level classification
+  badges (🟢 Safe / 🟡 Standard /
+  🟣 Sudo / 🔴 Risky), SSH reconnect modal (`⏎ Reconnect`) and hint
+  `· 🔗 SSH (resume)` added to the SSH section, `F10` (one-press
+  authorization) and `F6` (focus) shortcuts in the table, and ASCII art fixed
+  (`Ctrl+Space` for focus, `Alt+N` to execute — the old
+  "Enter: Execute | Tab: Edit" did not correspond to any current binding).
 
 ## v0.5.1 — 2026-08-28
 
-### Corrigé
+### Fixed
 
-- 🔴 **La modale de reconnexion SSH n'apparaissait pas au rechargement in-app**
-  (rapport « quand je charge [la session SSH] je n'ai pas la modal qui me propose
-  de me log en ssh ») : `load_session` posait bien l'offre `SshReconnect`, mais le
-  handler de la liste des sessions la **refermait immédiatement** (`modal = None`
-  après l'action `Load`) — l'offre ne survivait que sur le chemin `-c`
-  (démarrage), où rien ne la refermait ensuite. La liste se ferme désormais
-  **sauf si** l'offre de reconnexion vient d'être posée. Validé de bout en bout
-  sur une vraie session SSH rechargée in-app (modale « ⏎ Se reconnecter /
-  Esc Plus tard » affichée, titre `· 🔗 SSH (reprise)` restauré).
+- 🔴 **The SSH reconnect modal did not appear on in-app reload**
+  (report "when I load [the SSH session] I don't have the modal that offers
+  to log me in via ssh"): `load_session` did set the `SshReconnect` offer, but the
+  handler of the session list **closed it immediately** (`modal = None`
+  after the `Load` action) — the offer only survived on the `-c` path
+  (startup), where nothing closed it afterwards. The list now closes
+  **except if** the reconnect offer has just been set. Validated end to end
+  on a real SSH session reloaded in-app (modal "⏎ Reconnect /
+  Esc Later" displayed, title `· 🔗 SSH (resume)` restored).
 
 ## v0.5.0 — 2026-08-28
 
-### Ajouté
+### Added
 
-- **Indicateur de session SSH persistant** : le panneau terminal affiche déjà
-  `🌐 SSH: <cible>` quand une session distante est détectée ; il affiche désormais
-  aussi **`· 🔗 SSH <cible> (reprise)`** quand on reprend une session avec `-c` qui
-  **était en SSH** alors que le PTY est encore local (avant de se reconnecter). La
-  cible SSH est persistée dans le JSON de session (`last_ssh_target`, sticky — une
-  session qui a été distante reste marquée), et pour les sessions créées par une
-  version antérieure une heuristique conservative la déduit de l'historique (commande
-  `ssh …` explicite, prompts distants classiques `user@host:~$`/`user@host$` ou style
-  zsh à crochets `[user@host:/chemin] ±` — avec garde-fous anti git-remotes/e-mails).
-  Le titre se dégrade proprement selon la largeur du panneau (mesurée en cellules,
-  pas en octets) : `· 🔗 SSH <cible> (reprise)` → `· 🔗 <cible> (reprise)` →
-  `· 🔗 SSH (reprise)` → `· SSH (reprise)` — le hint prime sur le cwd/branche quand
-  la place manque. Le toast de restauration mentionne aussi la reprise SSH. Rien ne
-  s'affiche pour une session 100 % locale.
-- **Modale de reconnexion SSH** : au chargement d'une session `-c` qui était en SSH
-  alors que le PTY est local, une petite modale centrée propose **`⏎ Se reconnecter`**
-  à l'hôte enregistré (l'injection `ssh <cible>` dans le terminal + focus automatique)
-  ou **`Esc Plus tard`** (le hint du titre reste affiché). Jamais proposée si déjà
-  connecté ou pendant une capture PTY en cours ; i18n FR/EN.
-  La cible inférée depuis un reste de prompt (`user@hostname`, ex. `xorne@prod`) est
-  **résolue en adresse connectable** via le store d'hôtes (`prod` → `ducasse-seine.com`,
-  profil le plus récent en cas de collision, utilisateur conservé s'il diffère) — et le
-  hint persisté est auto-corrigé pour les prochaines reprises.
-- **Thinking sur une seule ligne + timer de réflexion + clic pour déplier** :
-  - Le raisonnement du modèle s'affiche désormais **une seule ligne** (`▸ 💭 Think · …` /
-    `▸ 💭 Réflexion · …`), montrant la **fin** du raisonnement (tronqué avec `…` si besoin)
-    au lieu du bloc multi-lignes qui poussait la réponse hors écran.
-  - **Ligne « 💭 Deep thinking… / Réflexion profonde… » conservée SOUS la ligne
-    Think** pendant tout le déroulé du raisonnement, avec le **timer `mm:ss` en
-    direct** (shimmer cyan animé) ; le timer disparaît dès que la réponse commence.
-  - **Clic sur la ligne** `▸/▾` pour **déplier/replier** le raisonnement complet. Le
-    hit-testing s'appuie sur les rangées autoritatives de ratatui (pas de dérive de wrap),
-    et le bouton bascule l'état par message (cache invalidé proprement, fin toujours
+- **Persistent SSH session indicator**: the terminal panel already displays
+  `🌐 SSH: <target>` when a remote session is detected; it now also displays
+  **`· 🔗 SSH <target> (resume)`** when resuming a session with `-c` that
+  **was in SSH** while the PTY is still local (before reconnecting). The
+  SSH target is persisted in the session JSON (`last_ssh_target`, sticky — a
+  session that has been remote remains marked), and for sessions created by an
+  earlier version a conservative heuristic infers it from the history (explicit
+  `ssh …` command, classic remote prompts `user@host:~$`/`user@host$` or
+  zsh bracket style `[user@host:/path] ±` — with anti git-remotes/e-mail guardrails).
+  The title degrades cleanly according to the panel width (measured in cells,
+  not bytes): `· 🔗 SSH <target> (resume)` → `· 🔗 <target> (resume)` →
+  `· 🔗 SSH (resume)` → `· SSH (resume)` — the hint takes precedence over the cwd/branch when
+  space is lacking. The restoration toast also mentions the SSH resume. Nothing is
+  displayed for a 100% local session.
+- **SSH reconnect modal**: when loading a `-c` session that was in SSH
+  while the PTY is local, a small centered modal offers **`⏎ Reconnect`**
+  to the recorded host (injection of `ssh <target>` into the terminal + automatic focus)
+  or **`Esc Later`** (the title hint remains displayed). Never offered if already
+  connected or during an ongoing PTY capture; i18n FR/EN.
+  The target inferred from a prompt remainder (`user@hostname`, e.g. `xorne@prod`) is
+  **resolved to a connectable address** via the host store (`prod` → `ducasse-seine.com`,
+  most recent profile in case of collision, user preserved if it differs) — and the
+  persisted hint is auto-corrected for future resumes.
+- **Single-line thinking + reasoning timer + click to expand**:
+  - The model's reasoning is now displayed **on a single line** (`▸ 💭 Think · …` /
+    `▸ 💭 Reasoning · …`), showing the **end** of the reasoning (truncated with `…` if needed)
+    instead of the multiline block that pushed the response off-screen.
+  - **Line "💭 Deep thinking… / Deep reasoning…" kept BELOW the Think line**
+    throughout the reasoning, with the **live `mm:ss` timer**
+    (animated cyan shimmer); the timer disappears as soon as the response begins.
+  - **Click on the line** `▸/▾` to **expand/collapse** the full reasoning. The
+    hit-testing relies on ratatui's authoritative rows (no wrap drift),
+    and the button toggles the state per message (cache properly invalidated, end always
     visible).
-- **F10 = Autoriser la commande en attente** : la validation `ok`/`oui` + Entrée devient
-  une simple touche **F10**, opérante depuis les deux panneaux (chat et terminal) — la
-  carte ⚡ affiche désormais `[F10] Autoriser · [oui/ok + ↵] · [Esc] Refuser`. Pensé pour
-  les longues sessions d'audit où l'approbation répétée devient fastidieuse.
-- **Wording « Réflexion profonde » animé** : pendant la phase silencieuse de réflexion d'un
-  modèle (aucun token reçu), le panneau chat affiche une ligne dédiée
-  `⟳ 🧞 💭 Réflexion profonde…` / `⟳ 🧞 💭 Deep thinking…` parcourue d'un **shimmer
-  dégradé cyan** (vague de lumière DarkGray→LightCyan balayant le texte à chaque tick,
-  avec pause aux extrémités) au lieu du seul ghost muet.
-- **Édition complète du prompt multi-lignes** :
-  - `↑` / `↓` naviguent désormais les rangées visuelles du champ prompt (lignes logiques
-    ET retours à la ligne soft-wrappés d'un paragraphe collé), en préservant la colonne
-    curseur (clampée à la largeur de la rangée cible). L'historique du prompt ne prend la
-    main qu'aux extrémités (première/dernière rangée), comme dans un vrai éditeur.
-  - `Ctrl+A` / `Ctrl+E` (mémoire readline) : début/fin de la **ligne logique courante**
-    (pas seulement du buffer entier).
-  - La zone de saisie suivait déjà le curseur verticalement (scroll borné à 8 lignes) —
-    désormais le curseur peut enfin y arriver.
-- Nouvelle segmentation partagée `prompt_visual_rows()` : source unique de vérité pour le
-  placement du curseur (`compute_prompt_cursor_and_lines` refactoré dessus) et la
-  navigation flèches — plus aucun risque de dérive entre affiché et édité.
+- **F10 = Allow the pending command**: the `ok`/`oui` + Enter validation becomes
+  a simple **F10** key, operative from both panels (chat and terminal) — the
+  ⚡ card now displays `[F10] Allow · [oui/ok + ↵] · [Esc] Deny`. Designed for
+  long audit sessions where repeated approval becomes tedious.
+- **Animated "Deep reasoning" wording**: during the silent reasoning phase of a
+  model (no token received), the chat panel displays a dedicated line
+  `⟳ 🧞 💭 Deep reasoning…` / `⟳ 🧞 💭 Deep thinking…` swept by a **cyan
+  gradient shimmer** (DarkGray→LightCyan light wave sweeping the text at each tick,
+  with a pause at the ends) instead of the silent ghost alone.
+- **Full multiline prompt editing**:
+  - `↑` / `↓` now navigate the visual rows of the prompt field (logical lines
+    AND soft-wrapped newlines of a pasted paragraph), preserving the cursor
+    column (clamped to the width of the target row). The prompt history only takes
+    over at the ends (first/last row), as in a real editor.
+  - `Ctrl+A` / `Ctrl+E` (readline memory): start/end of the **current logical
+    line** (not only of the whole buffer).
+  - The input area already followed the cursor vertically (scroll bounded to 8 lines) —
+    now the cursor can finally reach it.
+- New shared segmentation `prompt_visual_rows()`: single source of truth for
+  cursor placement (`compute_prompt_cursor_and_lines` refactored onto it) and
+  arrow navigation — no more risk of drift between displayed and edited.
 
-### Corrigé
+### Fixed
 
-- 🔴 **Doublon de proposition de commande « Alt+N » vs « F10 »** (rapport avec
-  capture : « il l'a proposé en alt+f1 et via f10 ») : les modèles à outils textuels
-  écrivent souvent la commande **dans leur texte** (fence → carte interactive
-  « ⚡ COMMANDE #N / Alt+N Exécuter ») **et** l'appellent via le protocole outil
-  (→ carte « ⚡ DEMANDE D'AUTORISATION / F10 Autoriser ») — la même commande se
-  retrouvait avec **deux affordances concurrentes**, et `Alt+N` pouvait exécuter en
-  court-circuitant le consentement en cours. Dorénavant : la fence identique à la
-  commande en attente est **démotée en snippet inerte** (le code reste visible, la
-  carte d'autorisation devient l'unique surface d'action), et `Alt+N` est **bloqué**
-  (toast explicite) tant qu'une autorisation est en attente **ou qu'une capture PTY
-  est en cours** — une injection pendant une capture aurait de plus écrasé la
-  capture active.
-- 🔴 **Le timer après « 💭 Deep thinking… » disparaissait dès le premier outil**
-  (rapport « le timer qui est après Deep thinking a disparu ») : l'`Instant` qui
-  l'alimente est **consommé** (`take()`) par le calcul tokens/s au moment du
-  tool call et n'était **jamais ré-armé** pour les tours de continuation — depuis le
-  premier outil jusqu'à la fin de la génération, la ligne restait sans chrono.
-  Ré-armé à chaque `AgentNewTurn` (continuation après un outil MCP/web/commande) et
-  dans `record_command_result` (analyse après commande utilisateur, chemin sans
-  événement), avec remise à zéro des compteurs de segment (tokens/s corrects par
-  segment). Bug latent de la vague shimmer+timer, devenu visible maintenant que la
-  boucle d'outils s'exécute à nouveau.
-- 🔴 **Freeze complet de l'UI pendant une exécution d'outil** (rapport « l'app a
-  freeze complet, j'ai kill le process mais j'ai toujours des sorties sur mon
-  terminal ») — trois trous structurels corrigés ensemble :
-  1. **Écritures PTY bloquantes sur la boucle UI** : chaque frappe, collage et
-     injection d'outil écrivait *directement* dans le master PTY depuis le thread
-     d'événements. Une écriture master **bloque** tant que l'aval ne consomme plus
-     (pipe SSH calé, buffer d'entrée du tty distant plein, shell distant figé) — un
-     seul write bloqué gelait toute l'application. Les écritures passent désormais
-     par un **thread écrivain dédié** (file FIFO, `write_all` n'enqueue plus jamais,
-     l'ordre \x15→commande→sentinelle est préservé) ; les réponses aux queries
-     terminales (DA1/DSR/CPR/OSC) transitent par la même file.
-  2. **`clean_pty_output` O(N) relancé à chaque tick** (~11×/s) sur le buffer de
-     capture, qui n'avait **aucune limite de taille** : une commande bavarde rendait
-     le coût par frame quadratique (UI progressivement figée). Le nettoyage n'est
-     plus déclenché que quand la sortie s'est stabilisée ou au hard-timeout, avec
-     un **cache indexé par la longueur** du buffer (tick sur buffer calme = gratuit),
-     et la capture est **plafonnée à 1 Mio** : au-delà, les octets sont comptés sans
-     être bufferisés, une petite queue roulante continue de détecter la sentinelle
-     OSC 777 (match sur vrai octet ESC — l'écho `printf '\033]777…'` ne peut pas
-     faux-positiver) et le résultat porte un avis explicite « ⚠️ Sortie tronquée ».
-  3. **SIGTERM/SIGINT/SIGHUP sans restauration de terminal** : un `kill` externe
-     quittait le tty en raw mode, curseur caché, écran alterné collé (d'où les
-     « sorties résiduelles » nécessitant un `reset` manuel). Un hook de signaux
-     (signal-hook) restaure raw-mode/écran/curseur/protocole kitty puis sort avec le
-     statut conventionnel `128+signal` — même quand la boucle principale est figée.
-     `kill -9` reste impossible à intercepter (`reset` reste la parade).
-- 🔴 **Markup brut de tool-call affiché dans le chat** : certains modèles émettent
-  leur appel d'outil en XML inline (`<tool_calls><invoke name="exec_command"><parameter
-  …>…`) dans le flux visible au lieu du protocole d'outil. La commande était bien
-  exécutée (carte + bloc de commande), mais le XML fuitait et s'affichait en gris
-  sous la réponse. Ces blocs (`<tool_calls>`, `<DSML>`, `<invoke>`, `<parameter>`)
-  sont désormais **strippés**, y compris les blocs non fermés (stream coupé en plein
-  milieu), en préservant la réponse réelle et les blocs de code markdown. Le
-  marqueur hybride est désormais **normalisé avant découpe** (`<｜｜DSML｜｜invoke …>`
-  → `<invoke …>`, marqueur sans chevron → devient le chevron) : l'ancien ouvreur
-  ne matchait qu'à la 2ᵉ pipe pleine-largeur et laissait un résidu `<｜` affiché
-  (rapport « affichage de `< |` ») ; un fragment de balise tronqué en fin de message
-  (`<`, `<|`, `</`) est aussi jeté, sans toucher aux `<` légitimes en plein texte.
-- 🔴 **Écho corrompu reporté comme « sortie » de commande** (rapport « le modèle
-  n'arrive pas à récupérer le résultat des commandes ») : sur session SSH, les
-  redraws du line-editor distant injectent des fragments dans l'écho brut et
-  **doublent des caractères en plein milieu** (`logs/` → `llogs/`, `…8ecd…` →
-  `…8ecdd…`). Le nettoyeur d'écho exigeait une correspondance exacte avec la
-  commande envoyée → l'écho corrompu survivait au nettoyage et était reporté au
-  modèle comme la sortie réelle. Le modèle en déduisait que « le client altère
-  systématiquement les commandes » (hallucination documentée dans son reasoning)
-  et contournait avec scripts/heredocs au lieu de lire les vrais résultats.
-  Désormais l'écho est aussi reconnu par **sous-séquence** (une corruption par
-  insertions conserve tous les caractères envoyés dans l'ordre, comparaison sur
-  projection alphanumérique, fenêtre de longueur ±50 %) : écho corrompu strippé,
-  vraie sortie préservée, première ligne légitime non touchée. Un `grep` sans
-  résultat reporte maintenant un honnête « ⚠️ Aucune sortie capturée » au lieu
-  d'un faux écho exploitable.
-- 🔴 **Appels d'outils DSML hybrides jamais exécutés** (rapport « le modèle ne fait
-  plus rien ») : le modèle GLM/Z.ai a dérivé vers son échafaudage natif
-  `<｜｜DSML｜｜invoke name="exec_command">` (pipes pleine-largeur U+FF5C) émis en
-  texte, format que le parseur ne reconnaissait pas — aucun outil détecté, aucune
-  carte de commande, le tour se terminait en silence. Le parseur (`parse_tool_call`)
-  normalise désormais ces marqueurs (`｜`→`|`, retrait `|DSML|`) et extrait la
-  structure HTML-style `<invoke name="…">` + `<parameter name="command">…</parameter>`
-  (tolère les streams tronqués), pour `RunCommand` et `WebSearch`. Les formats
-  existants (` ```bash `, `<tool_call>`, `<|tool_calls|>`, JSON) restent prioritaires
-  et inchangés.
-- 🔴 **Captures « vides-succès » sur commandes distantes lentes** : le settle (3 s de
-  silence, ou 800 ms sur prompt réaffiché) pouvait conclure la capture pendant que
-  **seul l'écho de la commande** était arrivé — la vraie sortie (latence SSH, handshake
-  mysql…) atterrissait après, et le résultat reportait un mensongeux
-  « Commande exécutée avec succès dans le terminal », sur lequel le modèle raisonnait
-  (deux commandes consécutives à vide sur le VPS, rapport utilisateur). Désormais une
-  capture nettoyée **vide** ne conclut jamais sur le settle : elle attend la vraie
-  sortie jusqu'au hard-cap (45 s / 120 s), puis reporte un **avertissement explicite**
-  (« ⚠️ Aucune sortie capturée… ») qui pousse le modèle à vérifier le terminal et
-  relancer, au lieu d'inventer un succès. Le chemin sentinelle locale (code de sortie
-  reçu) n'est pas concerné : là, « succès sans sortie » est véridique.
-- 🔴 **Le thinking du modèle était invisible** (provider OpenAI-compatible) : le reasoning
-  streamé par GLM / Z.ai / DeepSeek arrive dans le champ **`reasoning_content`** des chunks
-  SSE — séparé de `content` — et Spiritty le **jetait silencieusement**. Le parser
-  `<think>` de l'UI n'a donc jamais rien reçu : aucune ligne « Think », seulement le
-  ghost shimmer. Le provider capture désormais `reasoning_content` et le ré-encapsule à
-  la volée en bloc `<think>…</think>` dans le stream (machine à état `ReasoningBracket` :
-  ouverture au premier chunk de reasoning, fermeture avant le premier chunk de réponse,
-  reasoning parasite post-réponse ignoré) — l'UI existante l'affiche sans changement.
-- ⚙️ **Timer de réflexion sur la même ligne** : pas de ligne dédiée — le temps
-  `mm:ss` depuis la dernière interaction est appended **après le wording**
-  (`💭 Deep thinking… 8m 29s` / `💭 Réflexion profonde… 8m 29s`), et sur la ligne
-  think repliée après la fin du raisonnement (`▸ 💭 Think · <fin> · 8m 29s`).
-- 🔴 **« Le décalage s'accentuait, je ne vois plus la fin des réponses » (y compris au
-  relancement avec `-c`)** : `max_scroll` du panneau chat était calculé en sommant, par
-  message, un nombre de rangées issu d'une **simulation maison** du word-wrap — qui diverge
-  (sous-compte) du wrap réel de ratatui sur les tableaux markdown, cartes heredoc et glyphes
-  larges. Chaque message accumulait son erreur : le bas de la conversation devenait
-  **inatteignable par scroll** (l'offset saturait avant la fin), et la queue des réponses
-  disparaissait sous le pli — reproduit et prouvé sur la session réelle de l'utilisateur.
-  `max_scroll` et le badge de lignes dérivent désormais de **`Paragraph::line_count()`**
-  (le même WordWrapper que le rendu, feature `unstable-rendered-line-info` activée) — un
-  seul `Paragraph` sert au comptage et au rendu, zéro clone supplémentaire par frame.
-  Tests end-to-end : fin de la dernière réponse visible dans le buffer peint, session
-  rechargée comprise.
-- 🔴 **Capture PTY potentiellement bloquée à l'infini** (`on_tick`) : quand la queue de sortie
-  *ressemblait* à une invite de mot de passe (mot-clé `password:`/`passphrase` — y compris un
-  faux positif, ex. écho d'un fichier de config contenant `password:`), le timeout passait à
-  `u64::MAX` **et** le fallback de settle était désactivé — sur une session SSH distante sans
-  sentinelle OSC, la capture ne se terminait **jamais** : l'agent restait bloqué en attente du
-  résultat, UI figée, seule issue = relancer l'app. L'attente mot de passe reste généreuse mais
-  est désormais bornée (`PASSWORD_WAIT_HARD_CAP_SECS = 120 s`).
-- ⚡ **Lenteur des commandes distantes (SSH)** : chaque commande payait le fallback de settle
-  (3 s de silence minimum) faute de sentinelle OSC côté remote. Nouveau **settle accéléré
-  piloté par le prompt** : quand la queue de sortie se termine par une ligne ressemblant au
-  PS1 réaffiché par le shell distant (`user@host:path$`, `#`, `>`…) et est silencieuse depuis
-  800 ms, la capture se termine immédiatement (~1 s au lieu de ~3,8 s par commande) — c'est la
-  moitié du temps perçu dans les boucles d'édition de fichiers distantes. Les commandes sans
-  prompt final (streams, `tail -f`) gardent le fallback 3 s ; les shells locaux hookés
-  continuent d'attendre leur sentinelle OSC 777.
-- 🔴 **Bloc ```` ```bash ```` affiché « bash » + commande mais non exécutable** (reprise du
-  bug historique, nouvelle variante) : l'heuristique anti-flèches (`->`) rejetait tout bloc
-  dont une commande contenait une flèche **dans un titre quoté** — ex. réel :
-  `echo "=== CLONE DB resa-v3 -> resa_pp ==="` (session prod Stripe/reséa). Le bloc était
-  rétrogradé en boîte snippet étiquetée `bash`, donc sans raccourci d'exécution. Les tags
-  shell explicites (`bash`/`sh`/`zsh`…) court-circuitent désormais les heuristiques de
-  format (flèches, formulations conversationnelles) : le tag est une intention d'auteur ;
-  les fences **non taguées** restent protégées par ces mêmes heuristiques.
-- 🔴 **Flèches mortes dans `vi`/`vim` dans le panneau terminal** : le shell passait son
-  clavier en mode application-cursor (DECCKM via `smkx`, `ESC[?1h`) et attendait les
-  flèches en SS3 (`ESC O A`), mais Spiritty n'envoyait que du CSI (`ESC [ A`) — flèches OK
-  dans le shell, mortes dans vi. L'état DECCKM du child est maintenant suivi en scannant
-  son flux de sortie, et l'encodeur de touches bascule CSI↔SS3 en conséquence
-  (flèches + Home/End).
-- 🔴 **Régression « scroll de lignes vides pendant le stream »** (introduite par le cache de
-  rendu, détectée au premier test utilisateur) : la queue assistant en cours de streaming
-  n'était pas stockée dans le cache alors que la passe de clonage puise exclusivement dedans
-  → ses rangées manquaient au widget mais restaient comptées par le scroll (`max_scroll`
-  surdimensionné = défilement dans le vide), jusqu'au « réaffichage complet » à la fin du
-  stream. La tail est maintenant stockée inconditionnellement — le prédicat de fraîcheur la
-  re-compose déjà à chaque frame pendant `is_generating`, donc zéro stalence possible.
-- Ghost de réflexion invisible pendant le stream : même cause racine (la ligne loader vivait
-  dans la tail non-clonée).
+- 🔴 **Duplicate command proposal "Alt+N" vs "F10"** (report with
+  screenshot: "it proposed it in alt+f1 and via f10"): models with textual tools
+  often write the command **in their text** (fence → interactive card
+  "⚡ COMMAND #N / Alt+N Execute") **and** call it via the tool protocol
+  (→ card "⚡ AUTHORIZATION REQUEST / F10 Allow") — the same command ended up
+  with **two concurrent affordances**, and `Alt+N` could execute while
+  bypassing the ongoing consent. Henceforth: the fence identical to the
+  pending command is **demoted to an inert snippet** (the code remains visible, the
+  authorization card becomes the sole action surface), and `Alt+N` is **blocked**
+  (explicit toast) as long as an authorization is pending **or a PTY capture
+  is in progress** — an injection during a capture would moreover overwrite the
+  active capture.
+- 🔴 **The timer after "💭 Deep thinking…" disappeared from the first tool**
+  (report "the timer that is after Deep thinking has disappeared"): the `Instant` that
+  feeds it is **consumed** (`take()`) by the tokens/s computation at the time of the
+  tool call and was **never re-armed** for the continuation turns — from the
+  first tool to the end of generation, the line remained without a chrono.
+  Re-armed on each `AgentNewTurn` (continuation after an MCP/web/command tool) and
+  in `record_command_result` (analysis after user command, path without an
+  event), with reset of the segment counters (correct tokens/s per
+  segment). Latent bug of the shimmer+timer wave, now visible since the
+  tool loop runs again.
+- 🔴 **Complete UI freeze during a tool execution** (report "the app
+  froze completely, I killed the process but I still have outputs on my
+  terminal") — three structural holes fixed together:
+  1. **Blocking PTY writes on the UI loop**: each keystroke, paste and
+     tool injection wrote *directly* into the PTY master from the events
+     thread. A master write **blocks** as long as the downstream no longer consumes
+     (stalled SSH pipe, remote tty input buffer full, remote shell frozen) — a
+     single blocked write froze the whole application. Writes now go
+     through a **dedicated writer thread** (FIFO queue, `write_all` never enqueues
+     anymore, the \x15→command→sentinel order is preserved); responses to
+     terminal queries (DA1/DSR/CPR/OSC) transit through the same queue.
+  2. **`clean_pty_output` O(N) restarted at each tick** (~11×/s) on the capture
+     buffer, which had **no size limit**: a chatty command made
+     the per-frame cost quadratic (UI progressively frozen). The cleanup is no
+     longer triggered only when the output has stabilized or at the hard-timeout, with
+     a **cache indexed by the buffer length** (tick on a calm buffer = free),
+     and the capture is **capped at 1 MiB**: beyond that, the bytes are counted without
+     being buffered, a small rolling queue continues to detect the OSC 777
+     sentinel (match on a real ESC byte — the echo `printf '\033]777…'` cannot
+     false-positive) and the result carries an explicit notice "⚠️ Output truncated".
+  3. **SIGTERM/SIGINT/SIGHUP without terminal restoration**: an external `kill`
+     left the tty in raw mode, cursor hidden, alternate screen stuck (hence the
+     "residual outputs" requiring a manual `reset`). A signal hook
+     (signal-hook) restores raw-mode/screen/cursor/kitty protocol then exits with the
+     conventional status `128+signal` — even when the main loop is frozen.
+     `kill -9` remains impossible to intercept (`reset` remains the workaround).
+- 🔴 **Raw tool-call markup displayed in the chat**: some models emit
+  their tool call as inline XML (`<tool_calls><invoke name="exec_command"><parameter
+  …>…`) in the visible stream instead of the tool protocol. The command was indeed
+  executed (card + command block), but the XML leaked and was displayed in gray
+  under the response. These blocks (`<tool_calls>`, `<DSML>`, `<invoke>`, `<parameter>`)
+  are now **stripped**, including unclosed blocks (stream cut in the middle),
+  while preserving the real response and the markdown code blocks. The
+  hybrid marker is now **normalized before splitting** (`<｜｜DSML｜｜invoke …>`
+  → `<invoke …>`, marker without a chevron → becomes the chevron): the old opener
+  only matched at the 2nd full-width pipe and left a displayed `<｜` residue
+  (report "display of `< |`"); a tag fragment truncated at the end of the message
+  (`<`, `<|`, `</`) is also discarded, without touching legitimate `<` in plain text.
+- 🔴 **Corrupted echo reported as command "output"** (report "the model
+  cannot retrieve the result of the commands"): on an SSH session, the
+  redraws of the remote line editor inject fragments into the raw echo and
+  **double characters in the middle** (`logs/` → `llogs/`, `…8ecd…` →
+  `…8ecdd…`). The echo cleaner required an exact match with the
+  command sent → the corrupted echo survived the cleanup and was reported to the
+  model as the real output. The model concluded that "the client systematically
+  alters the commands" (hallucination documented in its reasoning)
+  and worked around it with scripts/heredocs instead of reading the real results.
+  Now the echo is also recognized by **subsequence** (a corruption by
+  insertions preserves all the characters sent in order, comparison on an
+  alphanumeric projection, length window ±50%): corrupted echo stripped,
+  real output preserved, first legitimate line untouched. A `grep` with no
+  result now reports an honest "⚠️ No output captured" instead of a
+  false exploitable echo.
+- 🔴 **Hybrid DSML tool calls never executed** (report "the model does
+  nothing anymore"): the GLM/Z.ai model drifted to its native scaffolding
+  `<｜｜DSML｜｜invoke name="exec_command">` (U+FF5C full-width pipes) emitted as
+  text, a format the parser did not recognize — no tool detected, no command
+  card, the turn ended in silence. The parser (`parse_tool_call`)
+  now normalizes these markers (`｜`→`|`, removal of `|DSML|`) and extracts the
+  HTML-style structure `<invoke name="…">` + `<parameter name="command">…</parameter>`
+  (tolerates truncated streams), for `RunCommand` and `WebSearch`. The existing
+  formats (` ```bash `, `<tool_call>`, `<|tool_calls|>`, JSON) remain priority
+  and unchanged.
+- 🔴 **"Empty-success" captures on slow remote commands**: the settle (3 s of
+  silence, or 800 ms on a redisplayed prompt) could conclude the capture while
+  **only the command's echo** had arrived — the real output (SSH latency, mysql
+  handshake…) landed afterwards, and the result reported a lying
+  "Command executed successfully in the terminal", on which the model reasoned
+  (two consecutive empty commands on the VPS, user report). Now a cleaned
+  capture that is **empty** never concludes on the settle: it waits for the real
+  output until the hard-cap (45 s / 120 s), then reports an **explicit
+  warning** ("⚠️ No output captured…") that pushes the model to check the terminal and
+  retry, instead of inventing a success. The local sentinel path (exit code
+  received) is not affected: there, "success without output" is truthful.
+- 🔴 **The model's thinking was invisible** (OpenAI-compatible provider): the reasoning
+  streamed by GLM / Z.ai / DeepSeek arrives in the **`reasoning_content`** field of the SSE
+  chunks — separate from `content` — and Spiritty **silently discarded it**. The UI's
+  `<think>` parser therefore never received anything: no "Think" line, only the
+  ghost shimmer. The provider now captures `reasoning_content` and re-wraps it on
+  the fly into a `<think>…</think>` block in the stream (`ReasoningBracket` state
+  machine: opening on the first reasoning chunk, closing before the first response chunk,
+  stray post-response reasoning ignored) — the existing UI displays it without change.
+- ⚙️ **Reasoning timer on the same line**: no dedicated line — the
+  `mm:ss` time since the last interaction is appended **after the wording**
+  (`💭 Deep thinking… 8m 29s` / `💭 Deep reasoning… 8m 29s`), and on the
+  collapsed think line after the end of the reasoning (`▸ 💭 Think · <end> · 8m 29s`).
+- 🔴 **"The offset got worse, I can no longer see the end of the responses" (including when
+  re-launching with `-c`)**: `max_scroll` of the chat panel was computed by summing, per
+  message, a number of rows derived from a **home-made simulation** of word-wrap — which diverges
+  (undercounts) from ratatui's real wrap on markdown tables, heredoc cards and wide
+  glyphs. Each message accumulated its error: the bottom of the conversation became
+  **unreachable by scrolling** (the offset saturated before the end), and the tail of the responses
+  disappeared under the fold — reproduced and proven on the user's real session.
+  `max_scroll` and the line badge now derive from **`Paragraph::line_count()`**
+  (the same WordWrapper as the rendering, feature `unstable-rendered-line-info` enabled) — a
+  single `Paragraph` serves for counting and rendering, zero additional clone per frame.
+  End-to-end tests: end of the last response visible in the painted buffer, reloaded
+  session included.
+- 🔴 **PTY capture potentially blocked forever** (`on_tick`): when the output tail
+  *resembled* a password prompt (keyword `password:`/`passphrase` — including a
+  false positive, e.g. echo of a config file containing `password:`), the timeout switched to
+  `u64::MAX` **and** the settle fallback was disabled — on a remote SSH session without an
+  OSC sentinel, the capture **never** finished: the agent remained blocked waiting for the
+  result, UI frozen, the only way out being to restart the app. The password wait remains generous but
+  is now bounded (`PASSWORD_WAIT_HARD_CAP_SECS = 120 s`).
+- ⚡ **Slowness of remote commands (SSH)**: each command paid the settle fallback
+  (3 s of silence minimum) for lack of an OSC sentinel on the remote side. New
+  **prompt-driven accelerated settle**: when the output tail ends with a line resembling the
+  PS1 redisplayed by the remote shell (`user@host:path$`, `#`, `>`…) and has been silent for
+  800 ms, the capture finishes immediately (~1 s instead of ~3.8 s per command) — it is
+  half the time perceived in remote file editing loops. Commands without a final
+  prompt (streams, `tail -f`) keep the 3 s fallback; hooked local shells
+  continue to wait for their OSC 777 sentinel.
+- 🔴 **```` ```bash ```` block displayed as "bash" + command but not executable** (recurrence of the
+  historical bug, new variant): the anti-arrow heuristic (`->`) rejected any block
+  whose command contained an arrow **in a quoted title** — real example:
+  `echo "=== CLONE DB resa-v3 -> resa_pp ==="` (Stripe/resa prod session). The block was
+  downgraded to a snippet box labeled `bash`, hence without an execution shortcut. Explicit
+  shell tags (`bash`/`sh`/`zsh`…) now short-circuit the format heuristics
+  (arrows, conversational phrasings): the tag is an author's intention;
+  **untagged** fences remain protected by these same heuristics.
+- 🔴 **Dead arrows in `vi`/`vim` in the terminal panel**: the shell switched its
+  keyboard to application-cursor mode (DECCKM via `smkx`, `ESC[?1h`) and expected the
+  arrows in SS3 (`ESC O A`), but Spiritty only sent CSI (`ESC [ A`) — arrows OK
+  in the shell, dead in vi. The DECCKM state of the child is now tracked by scanning
+  its output stream, and the key encoder switches CSI↔SS3 accordingly
+  (arrows + Home/End).
+- 🔴 **Regression "scrolling over empty lines during the stream"** (introduced by the render
+  cache, detected on the first user test): the assistant tail being streamed
+  was not stored in the cache whereas the cloning pass draws exclusively from it
+  → its rows were missing from the widget but remained counted by the scroll (`max_scroll`
+  oversized = scrolling into the void), until the "full redisplay" at the end of the
+  stream. The tail is now stored unconditionally — the freshness predicate
+  already recomposes it at each frame during `is_generating`, so zero staleness possible.
+- Reasoning ghost invisible during the stream: same root cause (the loader line lived
+  in the non-cloned tail).
 
 ### Performance
 
-- **Cache de rendu par message pour le panneau chat** (chantier « virtualisation M4 », option A) :
-  chaque frame ne re-parse plus TOUT l'historique (markdown, cartes ⚡, blocs réflexion,
-  wrap-simulation) mais uniquement les messages réellement modifiés depuis la frame
-  précédente.
-  - Nouveau `ChatRenderCache` sur `App` (interne `RefCell`, thread UI uniquement) :
-    artefacts rendus par message validés par clé de génération structurée
-    `(largeur panneau · langue · mode debug · thème)` + rôle + longueur d'octet du contenu ;
-    la queue en streaming est recomposée à chaud sans polluer le cache.
-  - Extraction verbatim des branches System/User/Assistant en composeurs purs
-    (`compose_single_message`) + carte d'approbation hors cache — zéro divergence visuelle
-    vis-à-vis de l'ancienne boucle inline.
-  - Passe B conservée en clonage complet depuis le cache : l'optimisation « fenêtre visible
-    seule » a été tentée puis rejetée faute de pouvoir reproduire fidèlement le wrap paragraphe
-    d'une ligne tronquée à sa tête (commentaire détaillé dans le code). Le gain majeur reste
-    la suppression des re-parse/re-wrap/réallocations par frame.
-  - Invalidation massive aux bons endroits : resize/changement thème-langue-debug (clé),
-    changement complet de session et reset chat (`hard_reset()`).
-  - Filet de sécurité : goldens du compteur de wrap vs rendu réel ratatui (6 largeurs × 5
-    fixtures ASCII/CJK/emoji/spans stylés) + découverte documentée : `Line::from(String)`
-    normalise les `\n` internes en spans séparés dès la construction.
-  - Suite portée à **92 tests verts**, clippy `-D warnings` clean.
+- **Per-message render cache for the chat panel** (the "M4 virtualization" effort, option A):
+  each frame no longer re-parses the WHOLE history (markdown, ⚡ cards, reasoning blocks,
+  wrap-simulation) but only the messages actually modified since the previous
+  frame.
+  - New `ChatRenderCache` on `App` (internal `RefCell`, UI thread only):
+    artifacts rendered per message validated by a structured generation key
+    `(panel width · language · debug mode · theme)` + role + content byte length;
+    the streaming tail is recomposed on the fly without polluting the cache.
+  - Verbatim extraction of the System/User/Assistant branches into pure composers
+    (`compose_single_message`) + approval card outside the cache — zero visual divergence
+    compared to the old inline loop.
+  - Pass B kept as a full clone from the cache: the "visible window
+    only" optimization was attempted then rejected for lack of being able to faithfully reproduce the paragraph
+    wrap of a line truncated at its head (detailed comment in the code). The major gain remains
+    the elimination of re-parse/re-wrap/reallocations per frame.
+  - Massive invalidation at the right places: resize/theme-language-debug change (key),
+    full session change and chat reset (`hard_reset()`).
+  - Safety net: goldens of the wrap counter vs the real ratatui rendering (6 widths × 5
+    ASCII/CJK/emoji/styled-spans fixtures) + documented discovery: `Line::from(String)`
+    normalizes internal `\n` into separate spans as soon as it is constructed.
+  - Suite raised to **92 green tests**, clippy `-D warnings` clean.
 
 ---
 
 ## v0.4.5 — 2026-08-27
 
-### Ajouté
+### Added
 
-- **Provider cloud Z.ai (GLM / Zhipu AI)** :
-  - Nouveau type `ProviderType::Zai` avec affichage « Z.ai (GLM) », clé API `ZAI_API_KEY`
-    (+ alias de secours `ZHIPU_API_KEY`) et base par défaut `https://api.z.ai/api/paas/v4`.
-  - Détection automatique depuis la config sauvegardée via les alias `zai`, `z.ai`, `z_ai`,
+- **Z.ai cloud provider (GLM / Zhipu AI)**:
+  - New `ProviderType::Zai` type with the display name "Z.ai (GLM)", API key `ZAI_API_KEY`
+    (+ fallback alias `ZHIPU_API_KEY`) and default base `https://api.z.ai/api/paas/v4`.
+  - Automatic detection from the saved config via the aliases `zai`, `z.ai`, `z_ai`,
     `z-ai`, `zhipu`, `glm`.
-  - Listing dynamique des modèles géré pour l'URL de base se terminant par `/v4`.
-  - Fenêtre de contexte auto-détectée à 131 072 tokens pour les modèles `glm*` / `*zai*`.
-  - Modèles populaires pré-listés (de `glm-5.3` à `glm-4-flash`) ; pricing GLM intégré
-    au cache local (`assets/pricing.json`).
-  - Tests unitaires/intégration étendus (`config_test.rs`, `pricing_test.rs`).
+  - Dynamic listing of the models handled for the base URL ending in `/v4`.
+  - Context window auto-detected at 131,072 tokens for the `glm*` / `*zai*` models.
+  - Popular models pre-listed (from `glm-5.3` to `glm-4-flash`); GLM pricing integrated
+    into the local cache (`assets/pricing.json`).
+  - Extended unit/integration tests (`config_test.rs`, `pricing_test.rs`).
 
-- **`CHANGELOG.md`** : suivi structuré des modifications entre chaque push (cette convention).
+- **`CHANGELOG.md`**: structured tracking of changes between each push (this convention).
 
-### Corrigé — audits sécurité & bugs utilisateur (51d880d)
+### Fixed — security audits & user bugs (51d880d)
 
-- 🔴 **Approbation accidentelle par Entrée-vide** : appuyer sur `Entrée` alors qu'une carte
-  ⚡ DEMANDE D'AUTORISATION est affichée exécutait la commande en attente — même classée
-  Risqué — car `""` était une phrase d'approbation naturelle. La carte affiche désormais
-  `[oui/ok + ↵] Autoriser`.
-- 🟠 **Proposition parasite `` `bash `` sans exécution** (screen rapporté) : un bloc ```bash
-  contenant une ligne `bash` littérale produisait une proposition injection multi-lignes qui
-  ouvrait un shell imbriqué au lieu d'exécuter la commande. Nouveau nettoyage
-  `sanitize_proposed_command()` appliqué aux deux chemins d'extraction (fences markdown et
-  `tool:run_command`) : lignes `bash/sh/zsh/shebang` supprimées, `exit`/`logout` orphelins en
-  queue également (auraient tué le shell de l'utilisateur).
-- 🟠 **Prose/token de sortie devenant « ⚡ COMMANDE #1 »** (screens « Mail queue is empty »,
-  listes d'IP) : rejet des blocs non-tagués sentences capitales sans méta-shell, seuil prose
-  abaissé de 7 à 5 mots.
-- **Badge de risque divergent** : la carte ⚡ et les cartes `COMMANDE #N` utilisent toutes
-  deux `safety::classify_command` comme source unique (avant : heuristiques ad-hoc montrant
-  « Safe » vert sur des `kill -9`/`chmod`).
+- 🔴 **Accidental approval via empty-Enter**: pressing `Enter` while a card
+  ⚡ AUTHORIZATION REQUEST is displayed executed the pending command — even one classified
+  Risky — because `""` was a natural approval phrase. The card now displays
+  `[oui/ok + ↵] Allow`.
+- 🟠 **Stray proposal `` `bash `` without execution** (reported screen): a ```bash block
+  containing a literal `bash` line produced a multiline injection proposal that
+  opened a nested shell instead of executing the command. New cleanup
+  `sanitize_proposed_command()` applied to both extraction paths (markdown fences and
+  `tool:run_command`): `bash/sh/zsh/shebang` lines removed, orphan `exit`/`logout` at the
+  tail as well (they would have killed the user's shell).
+- 🟠 **Output prose/token becoming "⚡ COMMAND #1"** (screens "Mail queue is empty",
+  IP lists): rejection of untagged blocks, capitalized sentences without a meta-shell, prose threshold
+  lowered from 7 to 5 words.
+- **Divergent risk badge**: the ⚡ card and the `COMMAND #N` cards both
+  use `safety::classify_command` as the single source (before: ad-hoc heuristics showing
+  green "Safe" on `kill -9`/`chmod`).
 
-### Sécurité — taxonomie de risque à 4 niveaux (51d880d)
+### Security — four-level risk taxonomy (51d880d)
 
-- Nouvelle classe `CommandRisk::Sudo` distincte de `Risky` : commandes élevées *non
-  destructives* (`sudo ls/grep/cat/certbot certificates/systemctl status …`).
-- Mapping d'auto-approbation revu : niveau `Sudo` ⇒ {Safe, Standard, Sudo} auto-approuvé ;
-  le destructif (`rm`, restarts, installs paquets) reste derrière confirmation jusqu'au
-  mode YOLO. Corrige le signalement utilisateur « je suis en approbation sudo et il me
-  demande d'approuver une cmd read-only ».
-- Ordre du classifieur inversé : la destructivité est évaluée avant l'élévation —
-  `sudo rm/pacman -S/apt install/chmod` restent toujours `Risky`.
-- `pacman/yay/paru` : détection tolère un préfixe `sudo/doas` (`sudo pacman -Syu` échappait
-  à la règle).
-- Clés API : `config.toml`, `hosts.json`, sessions JSON et cache pricing écrits en
-  **0600** (avant : 0664 selon umask). La modale Ctrl+P ne réaffiche plus jamais une clé
-  existante (champ vide = conserver ; frappe masquée en `••••` ; refs `ENV:` visibles).
+- New `CommandRisk::Sudo` class distinct from `Risky`: elevated but *non-destructive*
+  commands (`sudo ls/grep/cat/certbot certificates/systemctl status …`).
+- Auto-approval mapping revised: level `Sudo` ⇒ {Safe, Standard, Sudo} auto-approved;
+  the destructive ones (`rm`, restarts, package installs) remain behind confirmation up to
+  YOLO mode. Fixes the user report "I am in sudo approval and it asks me
+  to approve a read-only cmd".
+- Classifier order reversed: destructiveness is evaluated before elevation —
+  `sudo rm/pacman -S/apt install/chmod` always remain `Risky`.
+- `pacman/yay/paru`: detection tolerates a `sudo/doas` prefix (`sudo pacman -Syu` escaped
+  the rule).
+- API keys: `config.toml`, `hosts.json`, session JSON and pricing cache written in
+  **0600** (before: 0664 depending on umask). The Ctrl+P modal never displays an existing
+  key again (empty field = keep; typing masked as `••••`; `ENV:` refs visible).
 
 ### Performance
 
-- **Capture PTY incrémentale** : fin du re-décodage UTF-8 du buffer entier à chaque chunk
-  (O(n²) pendant les commandes verbeuses). Décodage avec carry multi-octets,
-  détection de mot de passe sudo sur fenêtre arrière bornée (1 ko), recherche du sentinel
-  OSC 777 avec watermark. Validé par tests (emoji splité en 4 chunks, octets invalides).
-- **Thread UI débloqué** (règle AGENTS.md « ne JAMAIS bloquer ») :
-  - Ctrl+V : lecture clipboard asynchrone fire-and-forget (garde anti-spam) au lieu d'un
-    `recv_timeout(1500ms)` bloquant ; modales bornées à 1 s.
-  - `$SHELL -l -c` (probe ENV) mémoïsé au niveau process : plus de spawn shell sous keydown
-    lors des reloads de provider.
-  - Fallback scan complet `/proc` du watcher mémoïsé 1,5 s par PID racine (au lieu de ×2
-    toutes les ~360 ms sur raté transient du kernel).
+- **Incremental PTY capture**: end of the UTF-8 re-decoding of the whole buffer at each chunk
+  (O(n²) during verbose commands). Decoding with multi-byte carry,
+  sudo password detection on a bounded backward window (1 KB), OSC 777 sentinel
+  search with a watermark. Validated by tests (emoji split into 4 chunks, invalid bytes).
+- **UI thread unblocked** (AGENTS.md rule "NEVER block"):
+  - Ctrl+V: asynchronous fire-and-forget clipboard read (anti-spam guard) instead of a
+    blocking `recv_timeout(1500ms)`; modals bounded to 1 s.
+  - `$SHELL -l -c` (ENV probe) memoized at process level: no more shell spawn on keydown
+    during provider reloads.
+  - Full `/proc` scan fallback of the watcher memoized 1.5 s per root PID (instead of ×2
+    every ~360 ms on a transient kernel miss).
 
-### Corrigé — cycle de vie PTY (3afca40)
+### Fixed — PTY lifecycle (3afca40)
 
-- Taper `exit` dans le panneau terminal figeait la TUI sur un PTY mort et laissait le shell
-  en zombie. Désormais : thread reaper dédié (`child.wait()`) + notification d'exit
-  single-shot (EOF lecteur ∪ wait child, garde `AtomicBool`) convertie en `AppEvent::PtyExit`
-  → sortie propre avec sauvegarde de session.
+- Typing `exit` in the terminal panel froze the TUI on a dead PTY and left the shell
+  as a zombie. Now: dedicated reaper thread (`child.wait()`) + single-shot exit
+  notification (reader EOF ∪ wait child, `AtomicBool` guard) converted into `AppEvent::PtyExit`
+  → clean exit with session save.
 
 ### Infra & distribution
 
-- `release.yml` : la LICENSE est maintenant incluse dans les tarballs publiés.
-- `install.sh` : vérification **sha256** de l'archive téléchargée (échec dur si mismatch,
-  warn-and-skip si le fichier checksum est absent).
-- Mise à jour du fallback `LATEST_TAG` → `v0.4.5`.
-- Repo entièrement normalisé `cargo fmt` (~530 hunks de dette effacés) ;
-  clippy `-D warnings` propre ; suite de tests portée à **88 tests verts**
-  (+8 : repro exacts des screens utilisateurs, matrice Sudo, décodeur UTF-8 fractionné,
-  helpers char-boundary).
+- `release.yml`: the LICENSE is now included in the published tarballs.
+- `install.sh`: **sha256** verification of the downloaded archive (hard failure on mismatch,
+  warn-and-skip if the checksum file is absent).
+- Update of the `LATEST_TAG` fallback → `v0.4.5`.
+- Repository fully normalized with `cargo fmt` (~530 hunks of debt erased);
+  clippy `-D warnings` clean; test suite raised to **88 green tests**
+  (+8: exact reproductions of user screens, Sudo matrix, split UTF-8 decoder,
+  char-boundary helpers).
 
-### Qualité interne (non visible)
+### Internal quality (not visible)
 
-- Fuite MCP corrigée : entrée `pending` retirée si l'écriture stdin échoue.
-- Position 600 appliquée aussi bien au save config qu'aux writers hosts/sessions/pricing.
+- MCP leak fixed: `pending` entry removed if the stdin write fails.
+- 600 mode applied to the config save as well as to the hosts/sessions/pricing writers.
 
 ---
 
 ## v0.4.3 — 2026-08-26
 
-### Corrigé
+### Fixed
 
-- Captures tronquées : drop des commentaires de heredoc en tête de proposition et rejet des
-  blocs tabulaires comme propositions de commande.
-- Fiabilisation de la capture silencieuse, intégration shell propre et jobs d'arrière-plan
-  (v0.4.2) ; durcissement robustesse & sécurité (v0.4.1).
+- Truncated captures: drop of heredoc comments at the head of a proposal and rejection of
+  tabular blocks as command proposals.
+- Reliability of silent capture, clean shell integration and background jobs
+  (v0.4.2); robustness & security hardening (v0.4.1).

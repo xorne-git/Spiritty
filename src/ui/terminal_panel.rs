@@ -9,6 +9,7 @@ use ratatui::{
 use crate::{
     app::{App, Focus},
     i18n::Language,
+    ui::key_pill,
 };
 
 pub struct TerminalPanel<'a> {
@@ -357,16 +358,3 @@ impl<'a> TerminalPanel<'a> {
     }
 }
 
-fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key.to_string(),
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
-}

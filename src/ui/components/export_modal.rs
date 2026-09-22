@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
 };
 
-use crate::i18n::Language;
+use crate::{i18n::Language, ui::key_pill};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportModalAction {
@@ -262,20 +262,6 @@ impl ExportModal {
         let p_footer = Paragraph::new(Line::from(footer)).alignment(Alignment::Center);
         p_footer.render(chunks[4], buf);
     }
-}
-
-fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key,
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
 }
 
 fn render_editable_text<'a>(

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::{
     config::{Config, ProviderConfig, ProviderType, ReasoningEffort},
     i18n::{I18nKey, Language},
-    ui::theme::ThemeId,
+    ui::{key_pill, theme::ThemeId},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,20 +92,6 @@ pub struct ConfigModalState {
     pub reasoning_effort: ReasoningEffort,
     pub pricing_status: Option<(std::time::Instant, String, Color)>,
     pub provider_edits: HashMap<String, (String, String, String, Option<String>, ReasoningEffort)>,
-}
-
-fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key,
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
 }
 
 fn spans_visual_len(spans: &[Span]) -> usize {
@@ -1251,9 +1237,7 @@ impl ConfigModalState {
         )));
 
         let mut save_spans = Vec::new();
-        save_spans.extend(key_pill("Ctrl", Color::Yellow));
-        save_spans.push(Span::styled("+", Style::default().fg(Color::Yellow)));
-        save_spans.extend(key_pill("S", Color::Yellow));
+        save_spans.extend(key_pill("Ctrl + S", Color::Yellow));
         save_spans.push(Span::raw(format!(" {}", lang.t(I18nKey::ConfigButtonSave))));
 
         let mut refresh_spans = Vec::new();

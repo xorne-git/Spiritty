@@ -86,17 +86,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    // 2.3 Show subtle split drag guide only when actively dragging
-    if app.is_dragging_split {
-        let split_x = chat_area.right().saturating_sub(1);
-        let drag_style = Style::default()
-            .fg(palette.warning)
-            .add_modifier(Modifier::BOLD);
-        for y in workspace_area.top()..workspace_area.bottom() {
-            buf.set_string(split_x, y, "│", drag_style);
-        }
-    }
-
     // Render Chat Panel (and get cursor)
     let chat_panel = ChatPanel::new(app);
     let chat_cursor = chat_panel.render_panel(chat_area, buf);
@@ -104,6 +93,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Render Terminal Panel (and get cursor)
     let terminal_panel = TerminalPanel::new(app);
     let term_cursor = terminal_panel.render_panel(terminal_area, buf);
+
+    // 2.3 Permanent vertical divider liseret between Chat and Terminal
+    let split_x = chat_area.right().saturating_sub(1);
+    let split_style = if app.is_dragging_split {
+        Style::default()
+            .fg(palette.warning)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(palette.border_unfocused)
+    };
+    for y in workspace_area.top()..workspace_area.bottom() {
+        buf.set_string(split_x, y, "│", split_style);
+    }
 
     // 2.5 Apply mouse selection highlight and copy to clipboard on release
     if let Some(ref sel) = app.mouse_selection.clone() {
@@ -203,19 +205,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // 3. Render Modal Overlays on top of the split screen if active
     if app.modal.is_open() {
         app.modal.render(size, frame.buffer_mut(), app.theme, lang);
-    } else {
-        // Position cursor on the active pane only when no modal is open
-        match app.focus {
-            Focus::Chat => {
-                if let Some((cx, cy)) = chat_cursor {
-                    frame.set_cursor_position((cx, cy));
-                }
-            }
-            Focus::Terminal => {
-                if let Some((cx, cy)) = term_cursor {
-                    frame.set_cursor_position((cx, cy));
-                }
-            }
+    }
+
+    // 4. Set Hardware Cursor on focused panel only when no modal is open
+    if !app.modal.is_open() {
+        let active_cursor = match app.focus {
+            Focus::Chat => chat_cursor,
+            Focus::Terminal => term_cursor,
+        };
+
+        if let Some((cx, cy)) = active_cursor {
+            frame.set_cursor_position(ratatui::layout::Position { x: cx, y: cy });
         }
     }
 }
@@ -289,8 +289,8 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
 
     let mut right = Vec::new();
 
-    if available_width >= 82 {
-        // Tier 1: Full Powerline pills with all shortcuts
+    if available_width >= 114 {
+        // Tier 1: Full bracketed key pills with all shortcuts
         right.push(Span::styled(
             lang.t(I18nKey::FooterApprovalLabel),
             Style::default().fg(Color::DarkGray),
@@ -304,9 +304,7 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
         ));
 
         right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl", Color::Magenta));
-        right.push(Span::raw(" "));
-        right.extend(key_pill("P", Color::Magenta));
+        right.extend(key_pill("Ctrl + P", Color::Magenta));
         right.push(Span::styled(
             " Config ",
             Style::default()
@@ -315,9 +313,7 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
         ));
 
         right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl", Color::Cyan));
-        right.push(Span::raw(" "));
-        right.extend(key_pill("B", Color::Cyan));
+        right.extend(key_pill("Ctrl + B", Color::Cyan));
         right.push(Span::styled(
             " Hosts ",
             Style::default()
@@ -326,9 +322,7 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
         ));
 
         right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl", Color::Rgb(140, 100, 240)));
-        right.push(Span::raw(" "));
-        right.extend(key_pill("M", Color::Rgb(140, 100, 240)));
+        right.extend(key_pill("Ctrl + M", Color::Rgb(140, 100, 240)));
         right.push(Span::styled(
             " MCP ",
             Style::default()
@@ -337,9 +331,7 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
         ));
 
         right.push(Span::raw(" "));
-        right.extend(key_pill("Ctrl", Color::LightCyan));
-        right.push(Span::raw(" "));
-        right.extend(key_pill("H", Color::LightCyan));
+        right.extend(key_pill("Ctrl + H", Color::LightCyan));
         right.push(Span::styled(
             " Sessions ",
             Style::default()
@@ -359,50 +351,50 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ));
-    } else if available_width >= 50 {
-        // Tier 2: Compact badges with all shortcuts
+    } else if available_width >= 56 {
+        // Tier 2: Compact bracketed badges with all shortcuts
         right.push(Span::styled(
             format!("F3:{}", auto_badge_text),
             Style::default()
                 .fg(auto_badge_color)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::raw("  "));
+        right.push(Span::raw(" "));
 
         right.push(Span::styled(
-            "^P",
+            "[^P]",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "^B",
+            "[^B]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "^M",
+            "[^M]",
             Style::default()
                 .fg(Color::Rgb(140, 100, 240))
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" MCP  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" MCP ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "^H",
+            "[^H]",
             Style::default()
                 .fg(Color::LightCyan)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Sess  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Sess ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -423,26 +415,26 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
                 .fg(auto_badge_color)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::raw("  "));
+        right.push(Span::raw(" "));
 
         right.push(Span::styled(
-            "^P",
+            "[^P]",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "^B",
+            "[^B]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Hosts  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Hosts ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -463,18 +455,18 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
                 .fg(auto_badge_color)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::raw("  "));
+        right.push(Span::raw(" "));
 
         right.push(Span::styled(
-            "^P",
+            "[^P]",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
-        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
+        right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
 
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -487,64 +479,40 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
             },
             Style::default().fg(Color::White),
         ));
-    } else if available_width >= 18 {
-        // Tier 5: Essential ^P Config + F1 Aide
+    } else if available_width >= 15 {
+        // Tier 5: [^P] Config [F1]
         right.push(Span::styled(
-            "^P",
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(" Config  ", Style::default().fg(Color::White)));
-
-        right.push(Span::styled(
-            "F1",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        right.push(Span::styled(
-            if lang == Language::Fr {
-                " Aide"
-            } else {
-                " Help"
-            },
-            Style::default().fg(Color::White),
-        ));
-    } else if available_width >= 12 {
-        // Tier 6: ^P Config F1
-        right.push(Span::styled(
-            "^P",
+            "[^P]",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
         right.push(Span::styled(" Config ", Style::default().fg(Color::White)));
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
-    } else if available_width >= 6 {
-        // Tier 7: ^P F1
+    } else if available_width >= 9 {
+        // Tier 6: [^P] [F1]
         right.push(Span::styled(
-            "^P",
+            "[^P]",
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
         right.push(Span::raw(" "));
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
-    } else if available_width >= 2 {
-        // Tier 8: F1
+    } else if available_width >= 4 {
+        // Tier 7: [F1]
         right.push(Span::styled(
-            "F1",
+            "[F1]",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -1142,19 +1110,19 @@ fn render_unknown_pricing_tooltip(
     p.render(inner, buf);
 }
 
-fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
+pub fn key_pill<'a>(key: impl Into<std::borrow::Cow<'a, str>>, color: Color) -> Vec<Span<'a>> {
     vec![
-        Span::styled("", Style::default().fg(color)),
+        Span::styled("[ ", Style::default().fg(color)),
         Span::styled(
-            key.to_string(),
+            key.into(),
             Style::default()
-                .bg(color)
-                .fg(Color::Black)
+                .fg(color)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("", Style::default().fg(color)),
+        Span::styled(" ]", Style::default().fg(color)),
     ]
 }
+
 
 fn format_token_count(n: usize) -> String {
     if n >= 1_000_000 {

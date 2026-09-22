@@ -8,7 +8,10 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
-use crate::i18n::{I18nKey, Language};
+use crate::{
+    i18n::{I18nKey, Language},
+    ui::key_pill,
+};
 
 pub struct HelpModal;
 
@@ -18,19 +21,6 @@ impl HelpModal {
     }
 }
 
-fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key,
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
-}
 
 fn make_help_row<'a>(mut keys: Vec<Span<'a>>, desc: &'a str, key_col_width: usize) -> Line<'a> {
     let key_width: usize = keys.iter().map(|s| s.width()).sum();
@@ -140,7 +130,7 @@ impl HelpModal {
             // === 2-COLUMN SPACIOUS CATEGORIZED LAYOUT ===
             let left_col_width = (center_x.saturating_sub(modal_area.left() + 3)) as usize;
             let right_col_width = (modal_area.right().saturating_sub(center_x + 3)) as usize;
-            let key_col_w_left = 32.min(left_col_width.saturating_sub(22));
+            let key_col_w_left = 38.min(left_col_width.saturating_sub(22));
             let key_col_w_right = 16.min(right_col_width.saturating_sub(22));
 
             // --- LEFT COLUMN ---
@@ -155,13 +145,23 @@ impl HelpModal {
             left_lines.push(Line::from(""));
 
             // Shift Tab ou Ctrl Espace
-            let mut l_focus = key_pill(lang.t(I18nKey::HelpKeyShift), Color::Cyan);
-            l_focus.push(Span::raw(" "));
-            l_focus.extend(key_pill(lang.t(I18nKey::HelpKeyTab), Color::Cyan));
+            let mut l_focus = key_pill(
+                format!(
+                    "{} + {}",
+                    lang.t(I18nKey::HelpKeyShift),
+                    lang.t(I18nKey::HelpKeyTab)
+                ),
+                Color::Cyan,
+            );
             l_focus.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
-            l_focus.extend(key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan));
-            l_focus.push(Span::raw(" "));
-            l_focus.extend(key_pill(lang.t(I18nKey::HelpKeySpace), Color::Cyan));
+            l_focus.extend(key_pill(
+                format!(
+                    "{} + {}",
+                    lang.t(I18nKey::HelpKeyCtrl),
+                    lang.t(I18nKey::HelpKeySpace)
+                ),
+                Color::Cyan,
+            ));
             left_lines.push(make_help_row(
                 l_focus,
                 lang.t(I18nKey::HelpDescToggleFocus),
@@ -187,9 +187,7 @@ impl HelpModal {
                 Color::Cyan,
             );
             l_scroll.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
-            l_scroll.extend(key_pill("PgUp", Color::Cyan));
-            l_scroll.push(Span::raw(" "));
-            l_scroll.extend(key_pill("PgDn", Color::Cyan));
+            l_scroll.extend(key_pill("PgUp / PgDn", Color::Cyan));
             left_lines.push(make_help_row(
                 l_scroll,
                 lang.t(I18nKey::HelpDescScroll),
@@ -198,9 +196,10 @@ impl HelpModal {
             left_lines.push(Line::from(""));
 
             // Alt Left/Right ou Glisser
-            let mut l_resize = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Cyan);
-            l_resize.push(Span::raw(" "));
-            l_resize.extend(key_pill("←/→", Color::Cyan));
+            let mut l_resize = key_pill(
+                format!("{} + ←/→", lang.t(I18nKey::HelpKeyAlt)),
+                Color::Cyan,
+            );
             l_resize.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
             l_resize.extend(key_pill(lang.t(I18nKey::HelpKeyDrag), Color::Cyan));
             left_lines.push(make_help_row(
@@ -211,46 +210,52 @@ impl HelpModal {
             left_lines.push(Line::from(""));
 
             // Ctrl T (Nouvel onglet)
-            let mut l_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
-            l_tab.push(Span::raw(" "));
-            l_tab.extend(key_pill("T", Color::Cyan));
             left_lines.push(make_help_row(
-                l_tab,
+                key_pill(
+                    format!("{} + T", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescNewTab),
                 key_col_w_left,
             ));
             left_lines.push(Line::from(""));
 
             // Ctrl Tab (Changer d'onglet)
-            let mut l_next_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
-            l_next_tab.push(Span::raw(" "));
-            l_next_tab.extend(key_pill(lang.t(I18nKey::HelpKeyTab), Color::Cyan));
             left_lines.push(make_help_row(
-                l_next_tab,
+                key_pill(
+                    format!(
+                        "{} + {}",
+                        lang.t(I18nKey::HelpKeyCtrl),
+                        lang.t(I18nKey::HelpKeyTab)
+                    ),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescNextTab),
                 key_col_w_left,
             ));
             left_lines.push(Line::from(""));
 
             // Ctrl Shift W (Fermer l'onglet)
-            let mut l_close_tab = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
-            l_close_tab.push(Span::raw(" "));
-            l_close_tab.extend(key_pill(lang.t(I18nKey::HelpKeyShift), Color::Cyan));
-            l_close_tab.push(Span::raw(" "));
-            l_close_tab.extend(key_pill("W", Color::Cyan));
             left_lines.push(make_help_row(
-                l_close_tab,
+                key_pill(
+                    format!(
+                        "{} + {} + W",
+                        lang.t(I18nKey::HelpKeyCtrl),
+                        lang.t(I18nKey::HelpKeyShift)
+                    ),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescCloseTab),
                 key_col_w_left,
             ));
             left_lines.push(Line::from(""));
 
             // Alt R (Renommer l'onglet)
-            let mut l_rename_tab = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Cyan);
-            l_rename_tab.push(Span::raw(" "));
-            l_rename_tab.extend(key_pill("R", Color::Cyan));
             left_lines.push(make_help_row(
-                l_rename_tab,
+                key_pill(
+                    format!("{} + R", lang.t(I18nKey::HelpKeyAlt)),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescRenameTab),
                 key_col_w_left,
             ));
@@ -267,9 +272,10 @@ impl HelpModal {
             // F3 / Ctrl Y
             let mut l_f3 = key_pill("F3", Color::Green);
             l_f3.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
-            l_f3.extend(key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Green));
-            l_f3.push(Span::raw(" "));
-            l_f3.extend(key_pill("Y", Color::Green));
+            l_f3.extend(key_pill(
+                format!("{} + Y", lang.t(I18nKey::HelpKeyCtrl)),
+                Color::Green,
+            ));
             left_lines.push(make_help_row(
                 l_f3,
                 lang.t(I18nKey::HelpDescAutoApprove),
@@ -278,13 +284,15 @@ impl HelpModal {
             left_lines.push(Line::from(""));
 
             // Alt D / Alt X
-            let mut l_diag = key_pill(lang.t(I18nKey::HelpKeyAlt), Color::Yellow);
-            l_diag.push(Span::raw(" "));
-            l_diag.extend(key_pill("D", Color::Yellow));
+            let mut l_diag = key_pill(
+                format!("{} + D", lang.t(I18nKey::HelpKeyAlt)),
+                Color::Yellow,
+            );
             l_diag.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
-            l_diag.extend(key_pill(lang.t(I18nKey::HelpKeyAlt), Color::DarkGray));
-            l_diag.push(Span::raw(" "));
-            l_diag.extend(key_pill("X", Color::DarkGray));
+            l_diag.extend(key_pill(
+                format!("{} + X", lang.t(I18nKey::HelpKeyAlt)),
+                Color::DarkGray,
+            ));
             left_lines.push(make_help_row(
                 l_diag,
                 lang.t(I18nKey::HelpDescDiagnoseError),
@@ -293,22 +301,22 @@ impl HelpModal {
             left_lines.push(Line::from(""));
 
             // Ctrl M (MCP)
-            let mut l_mcp = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Rgb(140, 100, 240));
-            l_mcp.push(Span::raw(" "));
-            l_mcp.extend(key_pill("M", Color::Rgb(140, 100, 240)));
             left_lines.push(make_help_row(
-                l_mcp,
+                key_pill(
+                    format!("{} + M", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Rgb(140, 100, 240),
+                ),
                 lang.t(I18nKey::HelpDescMcpModal),
                 key_col_w_left,
             ));
             left_lines.push(Line::from(""));
 
             // Ctrl F (Search)
-            let mut l_srch = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Yellow);
-            l_srch.push(Span::raw(" "));
-            l_srch.extend(key_pill("F", Color::Yellow));
             left_lines.push(make_help_row(
-                l_srch,
+                key_pill(
+                    format!("{} + F", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Yellow,
+                ),
                 lang.t(I18nKey::HelpDescChatSearch),
                 key_col_w_left,
             ));
@@ -335,55 +343,55 @@ impl HelpModal {
             right_lines.push(Line::from(""));
 
             // Ctrl P (Config)
-            let mut l_cfg = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Magenta);
-            l_cfg.push(Span::raw(" "));
-            l_cfg.extend(key_pill("P", Color::Magenta));
             right_lines.push(make_help_row(
-                l_cfg,
+                key_pill(
+                    format!("{} + P", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Magenta,
+                ),
                 lang.t(I18nKey::HelpDescConfigModal),
                 key_col_w_right,
             ));
             right_lines.push(Line::from(""));
 
             // Ctrl B (Bookmarks)
-            let mut l_bmk = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
-            l_bmk.push(Span::raw(" "));
-            l_bmk.extend(key_pill("B", Color::Cyan));
             right_lines.push(make_help_row(
-                l_bmk,
+                key_pill(
+                    format!("{} + B", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescBookmarksModal),
                 key_col_w_right,
             ));
             right_lines.push(Line::from(""));
 
             // Ctrl H (Sessions)
-            let mut l_sess = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::LightCyan);
-            l_sess.push(Span::raw(" "));
-            l_sess.extend(key_pill("H", Color::LightCyan));
             right_lines.push(make_help_row(
-                l_sess,
+                key_pill(
+                    format!("{} + H", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::LightCyan,
+                ),
                 lang.t(I18nKey::HelpDescSessionModal),
                 key_col_w_right,
             ));
             right_lines.push(Line::from(""));
 
             // Ctrl E (Export)
-            let mut l_exp = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Yellow);
-            l_exp.push(Span::raw(" "));
-            l_exp.extend(key_pill("E", Color::Yellow));
             right_lines.push(make_help_row(
-                l_exp,
+                key_pill(
+                    format!("{} + E", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Yellow,
+                ),
                 lang.t(I18nKey::HelpDescExportSession),
                 key_col_w_right,
             ));
             right_lines.push(Line::from(""));
 
             // Ctrl N (New session)
-            let mut l_new = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Cyan);
-            l_new.push(Span::raw(" "));
-            l_new.extend(key_pill("N", Color::Cyan));
             right_lines.push(make_help_row(
-                l_new,
+                key_pill(
+                    format!("{} + N", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Cyan,
+                ),
                 lang.t(I18nKey::HelpDescNewSession),
                 key_col_w_right,
             ));
@@ -406,11 +414,11 @@ impl HelpModal {
             right_lines.push(Line::from(""));
 
             // Ctrl Q
-            let mut l_quit = key_pill(lang.t(I18nKey::HelpKeyCtrl), Color::Red);
-            l_quit.push(Span::raw(" "));
-            l_quit.extend(key_pill("Q", Color::Red));
             right_lines.push(make_help_row(
-                l_quit,
+                key_pill(
+                    format!("{} + Q", lang.t(I18nKey::HelpKeyCtrl)),
+                    Color::Red,
+                ),
                 lang.t(I18nKey::HelpDescQuit),
                 key_col_w_right,
             ));
@@ -438,7 +446,7 @@ impl HelpModal {
             let key_col_w = 18.min(col_width.saturating_sub(15));
             let lines = vec![
                 make_help_row(
-                    key_pill("Shift+Tab", Color::Cyan),
+                    key_pill("Shift + Tab", Color::Cyan),
                     lang.t(I18nKey::HelpDescToggleFocus),
                     key_col_w,
                 ),
@@ -448,37 +456,37 @@ impl HelpModal {
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+P", Color::Magenta),
+                    key_pill("Ctrl + P", Color::Magenta),
                     lang.t(I18nKey::HelpDescConfigModal),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+B", Color::Cyan),
+                    key_pill("Ctrl + B", Color::Cyan),
                     lang.t(I18nKey::HelpDescBookmarksModal),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+M", Color::Rgb(140, 100, 240)),
+                    key_pill("Ctrl + M", Color::Rgb(140, 100, 240)),
                     lang.t(I18nKey::HelpDescMcpModal),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+H", Color::LightCyan),
+                    key_pill("Ctrl + H", Color::LightCyan),
                     lang.t(I18nKey::HelpDescSessionModal),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+E", Color::Yellow),
+                    key_pill("Ctrl + E", Color::Yellow),
                     lang.t(I18nKey::HelpDescExportSession),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+F", Color::Yellow),
+                    key_pill("Ctrl + F", Color::Yellow),
                     lang.t(I18nKey::HelpDescChatSearch),
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Alt+D", Color::Yellow),
+                    key_pill("Alt + D", Color::Yellow),
                     lang.t(I18nKey::HelpDescDiagnoseError),
                     key_col_w,
                 ),
@@ -488,7 +496,7 @@ impl HelpModal {
                     key_col_w,
                 ),
                 make_help_row(
-                    key_pill("Ctrl+Q", Color::Red),
+                    key_pill("Ctrl + Q", Color::Red),
                     lang.t(I18nKey::HelpDescQuit),
                     key_col_w,
                 ),

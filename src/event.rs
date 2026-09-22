@@ -137,4 +137,8 @@ impl EventHandler {
     pub async fn next(&mut self) -> Option<AppEvent> {
         self.receiver.recv().await
     }
+
+    pub fn try_recv(&mut self) -> Result<AppEvent, tokio::sync::mpsc::error::TryRecvError> {
+        self.receiver.try_recv()
+    }
 }

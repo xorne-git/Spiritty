@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     i18n::{I18nKey, Language},
     system::{HostEntry, HostsStore},
+    ui::key_pill,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -703,20 +704,6 @@ impl BookmarksModal {
         let p_bottom = Paragraph::new(Line::from(footer)).alignment(Alignment::Center);
         p_bottom.render(footer_area, buf);
     }
-}
-
-fn key_pill<'a>(key: &'a str, color: Color) -> Vec<Span<'a>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key,
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
 }
 
 fn render_editable_text<'a>(

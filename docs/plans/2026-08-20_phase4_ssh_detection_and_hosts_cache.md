@@ -1,63 +1,63 @@
-# Plan d'Implémentation — Détection Dynamique des Sessions SSH & Adaptation Multi-Serveurs (Phase 4)
+# Implementation Plan — Dynamic SSH Session Detection & Multi-Server Adaptation (Phase 4)
 
-**Date :** 20 Août 2026  
-**Branche :** `feat/ssh-host-profiling`  
-**Statut :** En cours d'implémentation
+**Date:** August 20, 2026  
+**Branch:** `feat/ssh-host-profiling`  
+**Status:** Complete — shipped in Phase 4 (v0.4.0)
 
 ---
 
-## 🎯 Contexte & Objectif
-Lors de l'administration d'une flotte de serveurs/VPS distants via le shell intégré de Spiritty, l'agent IA doit savoir en temps réel sur quelle machine l'utilisateur opère.
-Ce plan met en place :
-1. **La détection en direct des sessions SSH** actives dans le PTY via l'arbre de processus `/proc/<pid>`.
-2. **Un cache persistant de profils de serveurs** dans `~/.config/spiritty/hosts.json` (OS, distribution, noyau, gestionnaires de paquets, services).
-3. **L'adaptation dynamique du contexte système** injecté dans le *System Prompt* de l'agent LLM (privilégiant les commandes de la distribution distante, ex: `apt` sur Debian au lieu de `pacman` sur Arch/CachyOS).
-4. **Un retour visuel dans l'en-tête du terminal** (`🌐 SSH: root@vps-01 (Debian 12)`).
-5. **Une commande de scan d'empreinte rapide (`Alt + S`)** pour profiler et mémoriser instantanément un nouveau serveur.
+## 🎯 Context & Objective
+When administering a fleet of remote servers/VPS through Spiritty's integrated shell, the AI agent must know in real time which machine the user is operating on.
+This plan sets up:
+1. **Live detection of active SSH sessions** in the PTY via the `/proc/<pid>` process tree.
+2. **A persistent cache of server profiles** in `~/.config/spiritty/hosts.json` (OS, distribution, kernel, package managers, services).
+3. **Dynamic adaptation of the system context** injected into the LLM agent's *System Prompt* (favoring the remote distribution's commands, e.g. `apt` on Debian instead of `pacman` on Arch/CachyOS).
+4. **Visual feedback in the terminal header** (`🌐 SSH: root@vps-01 (Debian 12)`).
+5. **A fast fingerprint scan command (`Alt + S`)** to instantly profile and remember a new server.
 
 ---
 
 ## 📐 Architecture & Modules
 
-### 1. Module de Détection des Processus (`src/system/process_watcher.rs`) [NEW]
-* Détecte le processus actif au premier plan sous le shell PTY (`child_pid`).
-* Identifie si un processus `ssh`, `mosh-client` ou `sftp` est actif.
-* Extrait la cible (`[user@]hostname`, port éventuel).
-* Type d'état `ActiveSession` : `Local` ou `Ssh { target: String, command: Option<String> }`.
+### 1. Process Detection Module (`src/system/process_watcher.rs`) [NEW]
+* Detects the active foreground process under the PTY shell (`child_pid`).
+* Identifies whether an `ssh`, `mosh-client`, or `sftp` process is active.
+* Extracts the target (`[user@]hostname`, optional port).
+* State type `ActiveSession`: `Local` or `Ssh { target: String, command: Option<String> }`.
 
-### 2. Gestionnaire de Profils d'Hôtes & Cache (`src/system/hosts.rs`) [NEW]
-* Structure `HostProfile` : `target`, `hostname`, `distro`, `kernel`, `package_managers`, `init_system`, `user`, `last_seen`.
-* Structure `HostsStore` avec sérialisation/désérialisation JSON (`~/.config/spiritty/hosts.json`).
-* Parseur de sortie de sonde système (`parse_probe_output`) pour convertir les métadonnées récoltées en profil structuré.
+### 2. Host Profile Manager & Cache (`src/system/hosts.rs`) [NEW]
+* `HostProfile` struct: `target`, `hostname`, `distro`, `kernel`, `package_managers`, `init_system`, `user`, `last_seen`.
+* `HostsStore` struct with JSON serialization/deserialization (`~/.config/spiritty/hosts.json`).
+* System probe output parser (`parse_probe_output`) to turn collected metadata into a structured profile.
 
-### 3. Contexte Système Dynamique (`src/system/mod.rs`) [MODIFY]
-* Intégration de `ActiveSession` et `Option<HostProfile>` dans `SystemContext`.
-* Mise à jour de `to_prompt_context()` pour formater le contexte soit de la machine locale, soit du serveur distant connecté.
+### 3. Dynamic System Context (`src/system/mod.rs`) [MODIFY]
+* Integration of `ActiveSession` and `Option<HostProfile>` into `SystemContext`.
+* Update of `to_prompt_context()` to format the context either for the local machine or the connected remote server.
 
 ### 4. PTY Process (`src/pty/process.rs`) [MODIFY]
-* Exposition de `pub fn child_pid(&self) -> Option<u32>`.
+* Exposure of `pub fn child_pid(&self) -> Option<u32>`.
 
-### 5. Application State & Événements (`src/app.rs` & `src/event.rs`) [MODIFY]
-* Surveillance périodique de la session active (toutes les ~400ms sur tick ou à l'exécution de commande).
-* Gestion du basculement d'environnement `Local <-> SSH`.
-* Déclencheur du scan d'hôte `Alt + S` (`AppEvent::ScanHost` / `scan_remote_host()`).
-* Notification Toast lors de la détection ou de la découverte d'un profil serveur.
+### 5. Application State & Events (`src/app.rs` & `src/event.rs`) [MODIFY]
+* Periodic monitoring of the active session (every ~400ms on tick or on command execution).
+* Handling of environment switching `Local <-> SSH`.
+* Host scan trigger `Alt + S` (`AppEvent::ScanHost` / `scan_remote_host()`).
+* Toast notification on detection or discovery of a server profile.
 
-### 6. Rendu UI (`src/ui/terminal_panel.rs` & `src/ui/mod.rs`) [MODIFY]
-* En-tête de la fenêtre shell :
-  * Si local : `💻 Ghostty`
-  * Si SSH : `🌐 SSH: user@host (Distro)` avec badge mis en valeur.
-* Barre d'état (Footer) : Affiche la cible active et l'aide `[Alt+S] Scan VPS` si le serveur n'est pas encore profilé.
+### 6. UI Rendering (`src/ui/terminal_panel.rs` & `src/ui/mod.rs`) [MODIFY]
+* Shell window header:
+  * If local: `💻 Ghostty`
+  * If SSH: `🌐 SSH: user@host (Distro)` with a highlighted badge.
+* Status bar (Footer): Displays the active target and the `[Alt+S] Scan VPS` help if the server has not yet been profiled.
 
-### 7. Clés de Traduction (`src/i18n/`) [MODIFY]
-* Ajout des clés pour les notifications SSH, scan de serveur et en-têtes.
+### 7. Translation Keys (`src/i18n/`) [MODIFY]
+* Addition of keys for SSH notifications, server scan, and headers.
 
 ---
 
-## 🧪 Plan de Test
-- `tests/hosts_test.rs` :
-  - Test de sérialisation / désérialisation de `hosts.json`.
-  - Test du parseur de probe output (`parse_probe_output`).
-  - Test de basculement de `SystemContext` (Local vs SSH).
-- `cargo test` : Vérification des 21+ tests unitaires existants + nouveaux tests.
-- `cargo clippy -- -D warnings` : 0 warning.
+## 🧪 Test Plan
+- `tests/hosts_test.rs`:
+  - `hosts.json` serialization / deserialization test.
+  - Probe output parser test (`parse_probe_output`).
+  - `SystemContext` switching test (Local vs SSH).
+- `cargo test`: Verification of the 21+ existing unit tests + new tests.
+- `cargo clippy -- -D warnings`: 0 warnings.

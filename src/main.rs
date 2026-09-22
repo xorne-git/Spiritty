@@ -129,6 +129,161 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn handle_app_event(
+    event: AppEvent,
+    app: &mut App,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    should_render: &mut bool,
+    immediate_render: &mut bool,
+) -> Result<()> {
+    match event {
+        AppEvent::Key(key) => {
+            app.handle_key(key);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::Paste(text) => {
+            app.handle_paste(text);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::PasteInto(text) => {
+            app.paste_into(text);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::PasteImage(image) => {
+            app.handle_paste_image(image);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::Mouse(mouse) => {
+            let total_width = terminal.size()?.width;
+            app.handle_mouse(mouse, total_width);
+            if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) && !app.is_dragging_split {
+                // Pure hover mouse motion without split-dragging does not change visual layout
+            } else {
+                *should_render = true;
+                if !matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
+                    *immediate_render = true;
+                }
+            }
+        }
+        AppEvent::Resize(w, h) => {
+            terminal.autoresize()?;
+            let split_cols = (((w as u32 * (100 - app.split_ratio as u32)) / 100) as u16)
+                .saturating_sub(1)
+                .max(1);
+            let split_rows = h.saturating_sub(3).max(1);
+            for tab in &mut app.tabs {
+                let _ = tab.pty.resize(split_rows, split_cols);
+            }
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::PtyOutput { tab_id, data } => {
+            app.on_pty_output(tab_id, &data);
+            *should_render = true;
+        }
+        AppEvent::PtyExit { tab_id } => {
+            app.on_pty_exit(tab_id);
+            if !app.should_quit {
+                *should_render = true;
+                *immediate_render = true;
+            }
+        }
+        AppEvent::AgentChunk(chunk) => {
+            app.on_agent_chunk(chunk);
+            *should_render = true;
+        }
+        AppEvent::AgentDone => {
+            app.on_agent_done();
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentUsage {
+            prompt_tokens,
+            completion_tokens,
+            exact_speed,
+        } => {
+            app.on_agent_usage(prompt_tokens, completion_tokens, exact_speed);
+            *should_render = true;
+        }
+        AppEvent::McpServersUpdated => {
+            app.on_mcp_servers_updated();
+            *should_render = true;
+        }
+        AppEvent::AgentError(err) => {
+            app.on_agent_error(err);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentToolRequest {
+            command,
+            approval_tx,
+        } => {
+            app.on_agent_tool_request(command, approval_tx);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentToolStart(cmd) => {
+            app.on_agent_tool_start(cmd);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentToolDone { command, output } => {
+            app.on_agent_tool_done(command, output);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentPtyToolExecute { command, result_tx } => {
+            app.on_agent_pty_tool_execute(command, result_tx, false);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::AgentNewTurn => {
+            app.on_agent_new_turn();
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::ModelsLoaded {
+            provider_key,
+            models,
+        } => {
+            app.on_models_loaded(provider_key, models);
+            *should_render = true;
+        }
+        AppEvent::ModelsLoadFailed {
+            provider_key,
+            error,
+        } => {
+            app.on_models_load_failed(provider_key, error);
+            *should_render = true;
+        }
+        AppEvent::RemoteHostProbed { target, output } => {
+            app.on_remote_host_probed(target, output);
+            *should_render = true;
+        }
+        AppEvent::UpdatePricing => {
+            app.trigger_pricing_update();
+        }
+        AppEvent::PricingUpdated(res) => {
+            app.on_pricing_updated(res);
+            *should_render = true;
+        }
+        AppEvent::Tick => {
+            app.on_tick();
+            if app.agent.is_generating
+                || app.active_pty_tool.is_some()
+                || app.is_dragging_split
+            {
+                *should_render = true;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -139,98 +294,38 @@ async fn run_loop(
         ui::draw(f, app);
     })?;
 
+    let mut last_render = std::time::Instant::now();
+    let mut render_pending = false;
+    const RENDER_THROTTLE: std::time::Duration = std::time::Duration::from_millis(30);
+
     while !app.should_quit {
         // Wait for next event
         if let Some(event) = event_handler.next().await {
-            let mut should_render = true;
+            let mut should_render = false;
+            let mut immediate_render = false;
 
-            match event {
-                AppEvent::Key(key) => app.handle_key(key),
-                AppEvent::Paste(text) => app.handle_paste(text),
-                AppEvent::PasteInto(text) => app.paste_into(text),
-                AppEvent::PasteImage(image) => app.handle_paste_image(image),
-                AppEvent::Mouse(mouse) => {
-                    let total_width = terminal.size()?.width;
-                    app.handle_mouse(mouse, total_width);
-                }
-                AppEvent::Resize(w, h) => {
-                    terminal.autoresize()?;
-                    let split_cols = (((w as u32 * (100 - app.split_ratio as u32)) / 100) as u16)
-                        .saturating_sub(1)
-                        .max(1);
-                    let split_rows = h.saturating_sub(3).max(1);
-                    for tab in &mut app.tabs {
-                        let _ = tab.pty.resize(split_rows, split_cols);
-                    }
-                }
-                AppEvent::PtyOutput { tab_id, data } => {
-                    app.on_pty_output(tab_id, &data);
-                }
-                AppEvent::PtyExit { tab_id } => {
-                    app.on_pty_exit(tab_id);
-                    if app.should_quit {
-                        should_render = false;
-                    }
-                }
-                AppEvent::AgentChunk(chunk) => app.on_agent_chunk(chunk),
-                AppEvent::AgentDone => app.on_agent_done(),
-                AppEvent::AgentUsage {
-                    prompt_tokens,
-                    completion_tokens,
-                    exact_speed,
-                } => {
-                    app.on_agent_usage(prompt_tokens, completion_tokens, exact_speed);
-                }
-                AppEvent::McpServersUpdated => app.on_mcp_servers_updated(),
-                AppEvent::AgentError(err) => app.on_agent_error(err),
-                AppEvent::AgentToolRequest {
-                    command,
-                    approval_tx,
-                } => {
-                    app.on_agent_tool_request(command, approval_tx);
-                }
-                AppEvent::AgentToolStart(cmd) => app.on_agent_tool_start(cmd),
-                AppEvent::AgentToolDone { command, output } => {
-                    app.on_agent_tool_done(command, output);
-                }
-                AppEvent::AgentPtyToolExecute { command, result_tx } => {
-                    app.on_agent_pty_tool_execute(command, result_tx, false);
-                }
-                AppEvent::AgentNewTurn => app.on_agent_new_turn(),
-                AppEvent::ModelsLoaded {
-                    provider_key,
-                    models,
-                } => {
-                    app.on_models_loaded(provider_key, models);
-                }
-                AppEvent::ModelsLoadFailed {
-                    provider_key,
-                    error,
-                } => {
-                    app.on_models_load_failed(provider_key, error);
-                }
-                AppEvent::RemoteHostProbed { target, output } => {
-                    app.on_remote_host_probed(target, output);
-                }
-                AppEvent::UpdatePricing => {
-                    app.trigger_pricing_update();
-                }
-                AppEvent::PricingUpdated(res) => {
-                    app.on_pricing_updated(res);
-                }
-                AppEvent::Tick => {
-                    app.on_tick();
-                    // Only re-render on Tick if a spinner animation is actively running or dragging
-                    should_render = app.agent.is_generating
-                        || app.active_pty_tool.is_some()
-                        || app.is_dragging_split;
+            handle_app_event(event, app, terminal, &mut should_render, &mut immediate_render)?;
+
+            // Drain any pending events that are already buffered in the channel before redrawing
+            while let Ok(pending_event) = event_handler.try_recv() {
+                handle_app_event(pending_event, app, terminal, &mut should_render, &mut immediate_render)?;
+                if app.should_quit {
+                    break;
                 }
             }
 
-            if should_render && !app.should_quit {
+            if should_render {
+                render_pending = true;
+            }
+
+            let can_render = immediate_render || (render_pending && last_render.elapsed() >= RENDER_THROTTLE);
+
+            if can_render && !app.should_quit {
                 terminal.draw(|f| {
                     ui::draw(f, app);
                 })?;
+                last_render = std::time::Instant::now();
+                render_pending = false;
             }
         }
     }

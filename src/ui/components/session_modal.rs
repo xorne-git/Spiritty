@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     i18n::{I18nKey, Language},
     session::{SessionHeader, SessionStorage},
+    ui::key_pill,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,20 +352,6 @@ impl SessionModalState {
             Paragraph::new(Line::from(footer_spans)).render(footer_area, buf);
         }
     }
-}
-
-fn key_pill(key: &str, color: Color) -> Vec<Span<'static>> {
-    vec![
-        Span::styled("", Style::default().fg(color)),
-        Span::styled(
-            key.to_string(),
-            Style::default()
-                .bg(color)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("", Style::default().fg(color)),
-    ]
 }
 
 fn format_tokens(n: usize) -> String {

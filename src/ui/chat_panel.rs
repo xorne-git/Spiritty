@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     app::{App, Focus, MessageRole},
     i18n::{I18nKey, Language},
-    ui::get_spinner_char,
+    ui::{get_spinner_char, key_pill},
 };
 
 pub struct ChatPanel<'a> {
@@ -206,6 +206,7 @@ impl<'a> ChatPanel<'a> {
                     // them ("scrolling into empty space" bug). Staleness is not a
                     // concern — `cached_fresh` above already recomposes the live
                     // tail on every frame while generating.
+                    let has_thought = role_tag == 2 && !skipped && has_visible_thought(&msg.content);
                     let slot = cache.slot_mut(idx);
                     *slot = Some(crate::app::ChatCacheEntry {
                         generation: gen_key,
@@ -213,6 +214,7 @@ impl<'a> ChatPanel<'a> {
                         byte_len,
                         pending_flag: has_pending_approval,
                         expanded: want_expanded,
+                        has_thought,
                         rows: rows_now,
                         lines: lines_built,
                     });
@@ -226,7 +228,8 @@ impl<'a> ChatPanel<'a> {
                 // separator — folding it into the target gives a forgiving 2-row
                 // click zone (a 1-row target felt random in practice); when expanded,
                 // that row is real reasoning text and must stay selectable.
-                if role_tag == 2 && !skipped && has_visible_thought(&msg.content) {
+                let msg_has_thought = cache.entry(idx).map(|e| e.has_thought).unwrap_or(false);
+                if role_tag == 2 && !skipped && msg_has_thought {
                     let hit_bottom = if want_expanded {
                         content_top.saturating_add(1)
                     } else {
@@ -422,9 +425,9 @@ impl<'a> ChatPanel<'a> {
                         ),
                         Span::styled(
                             if lang == Language::Fr {
-                                "Demande d'autorisation — tapez oui / non puis [Enter]"
+                                "Demande d'autorisation — [ Enter ] autoriser · [ Esc ] refuser"
                             } else {
-                                "Permission request — type yes / no then [Enter]"
+                                "Permission request — [ Enter ] approve · [ Esc ] decline"
                             },
                             Style::default().fg(Color::Yellow),
                         ),
@@ -440,13 +443,14 @@ impl<'a> ChatPanel<'a> {
                                 .fg(Color::LightRed)
                                 .add_modifier(Modifier::BOLD),
                         ),
+                        Span::styled("[ ", Style::default().fg(Color::LightRed)),
                         Span::styled(
-                            "[Esc]",
+                            "Esc",
                             Style::default()
-                                .bg(Color::Rgb(65, 25, 25))
                                 .fg(Color::LightRed)
                                 .add_modifier(Modifier::BOLD),
                         ),
+                        Span::styled(" ]", Style::default().fg(Color::LightRed)),
                         Span::styled(
                             if lang == Language::Fr {
                                 " Arrêter"
@@ -489,12 +493,12 @@ impl<'a> ChatPanel<'a> {
                 // Status caption line (sits just above the preview rows).
                 let caption = if lang == Language::Fr {
                     format!(
-                        "🖼️ {}×{} · [Entrée] l'envoie · [Ctrl+Shift+⌫] retire",
+                        "🖼️ {}×{} · [ Entrée ] l'envoie · [ Ctrl + Shift + ⌫ ] retire",
                         pending.width, pending.height
                     )
                 } else {
                     format!(
-                        "🖼️ {}×{} · [Enter] sends it · [Ctrl+Shift+⌫] removes",
+                        "🖼️ {}×{} · [ Enter ] sends it · [ Ctrl + Shift + ⌫ ] removes",
                         pending.width, pending.height
                     )
                 };
@@ -707,23 +711,33 @@ fn deep_thinking_shimmer_spans(wording: &str, frame: usize) -> Vec<Span<'static>
 /// columns. This is the single-line "Think · …" view requested by the user so the
 /// streaming thought no longer floods the response area.
 fn collapse_thought_to_single_line(text: &str, max_w: usize) -> String {
-    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if str_visual_width(&one_line) <= max_w {
+    // Only inspect the tail of text up to max_w * 4 bytes to avoid scanning / allocating huge strings
+    let window = if text.len() > max_w.saturating_mul(4) {
+        let start = text.len() - max_w * 4;
+        crate::pty::char_safe_floor(text, start)
+    } else {
+        0
+    };
+    let tail_slice = &text[window..];
+    let one_line: String = tail_slice.split_whitespace().collect::<Vec<_>>().join(" ");
+    if str_visual_width(&one_line) <= max_w && window == 0 {
         return one_line;
     }
 
     // Walk from the END, accumulating glyphs until we just fit max_w - 1 (leaving
     // room for the leading "…"), then prepend the ellipsis.
-    let mut tail = String::new();
+    let mut tail_chars = Vec::with_capacity(max_w);
     let mut w = 0usize;
     for ch in one_line.chars().rev() {
         let cw = char_visual_width(ch);
         if w + cw + 1 > max_w {
             break;
         }
-        tail.insert(0, ch);
+        tail_chars.push(ch);
         w += cw;
     }
+    tail_chars.reverse();
+    let tail: String = tail_chars.into_iter().collect();
     format!("…{}", tail)
 }
 
@@ -769,21 +783,22 @@ fn compose_assistant_message(
 
     if has_valid_thought {
         let thought = parsed.thought.as_ref().unwrap();
-        let marker = if thought_expanded { "▾ " } else { "▸ " };
+        let marker = if thought_expanded { "▾" } else { "▸" };
         let label = if lang == Language::Fr {
-            "💭 Réflexion · "
+            " 💭 Réflexion · "
         } else {
-            "💭 Think · "
+            " 💭 Think · "
         };
-        // The marker is the click target (expand/collapse). Rendered in cyan to hint
-        // interactivity; ▸ = collapsed (expand), ▾ = expanded.
+        // The marker is the click target (expand/collapse). Rendered as an action button [ ▾ ] / [ ▸ ].
         lines.push(Line::from(vec![
+            Span::styled("[ ", Style::default().fg(Color::LightCyan)),
             Span::styled(
                 marker,
                 Style::default()
                     .fg(Color::LightCyan)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(" ]", Style::default().fg(Color::LightCyan)),
             Span::styled(
                 label,
                 Style::default()
@@ -793,7 +808,7 @@ fn compose_assistant_message(
         ]));
 
         if thought_expanded {
-            // Full reasoning block (click ▾ to collapse back to one line).
+            // Full reasoning block (click [ ▾ ] to collapse back to one line).
             for l in thought.lines() {
                 let trimmed = l.trim();
                 if trimmed.starts_with("```") {
@@ -813,7 +828,7 @@ fn compose_assistant_message(
         } else {
             // Single-line view: collapse whitespace and show only the END of the
             // reasoning, riding on the SAME visual row as the marker/label.
-            let prefix_w = str_visual_width(marker) + str_visual_width(label);
+            let prefix_w = 5 + str_visual_width(label);
             let max_w = (panel_width as usize).saturating_sub(prefix_w + 2).max(10);
             let one_line = collapse_thought_to_single_line(thought, max_w);
             let style = Style::default()
@@ -1043,7 +1058,7 @@ fn compose_approval_card(command: &str, panel_width: u16, lang: Language) -> Vec
         }
 
         let chars: Vec<char> = raw_line.chars().collect();
-        let max_chunk_w = inner_code_w.saturating_sub(2);
+        let max_chunk_w = inner_code_w.saturating_sub(2).max(1);
         for chunk in chars.chunks(max_chunk_w) {
             let chunk_str: String = chunk.iter().collect();
             let pad_len = max_chunk_w.saturating_sub(chunk.len());
@@ -1088,62 +1103,37 @@ fn compose_approval_card(command: &str, panel_width: u16, lang: Language) -> Vec
     } else {
         " Approve"
     };
-    let prompt_label = if lang == Language::Fr {
-        "oui/ok + Enter"
-    } else {
-        "yes/ok + Enter"
-    };
     let decline_label = if lang == Language::Fr {
         " Refuser"
     } else {
         " Decline"
     };
 
-    let f10_len = 7; // "[ F10 ]"
-    let esc_len = 7; // "[ Esc ]"
-    let prompt_btn_len = 4 + prompt_label.chars().count(); // "[ " + prompt + " ]"
+    let enter_len = 9; // "[ Enter ]"
+    let esc_len = 7;   // "[ Esc ]"
+    let sep_len = 5;   // "  ·  "
     let footer_fixed_len = 3
-        + f10_len
+        + enter_len
         + approve_label.chars().count()
-        + 2
-        + prompt_btn_len
-        + 5
+        + sep_len
         + esc_len
         + decline_label.chars().count()
         + 3;
     let footer_gap = card_total_w.saturating_sub(footer_fixed_len);
 
-    let footer_spans = vec![
-        Span::styled("│  ", Style::default().fg(outer_border_color)),
-        Span::styled("[ ", Style::default().fg(Color::Green)),
-        Span::styled(
-            "F10",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ]", Style::default().fg(Color::Green)),
-        Span::styled(
-            approve_label,
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled("[ ", Style::default().fg(Color::Green)),
-        Span::styled(prompt_label, Style::default().fg(Color::Green)),
-        Span::styled(" ]", Style::default().fg(Color::Green)),
-        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("[ ", Style::default().fg(Color::Red)),
-        Span::styled(
-            "Esc",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ]", Style::default().fg(Color::Red)),
-        Span::styled(decline_label, Style::default().fg(Color::White)),
-        Span::raw(" ".repeat(footer_gap)),
-        Span::styled("  │", Style::default().fg(outer_border_color)),
-    ];
+    let mut footer_spans = vec![Span::styled("│  ", Style::default().fg(outer_border_color))];
+    footer_spans.extend(key_pill("Enter", Color::Green));
+    footer_spans.push(Span::styled(
+        approve_label,
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
+    footer_spans.extend(key_pill("Esc", Color::Red));
+    footer_spans.push(Span::styled(decline_label, Style::default().fg(Color::White)));
+    footer_spans.push(Span::raw(" ".repeat(footer_gap)));
+    footer_spans.push(Span::styled("  │", Style::default().fg(outer_border_color)));
 
     lines.push(Line::from(footer_spans));
 
@@ -1187,7 +1177,7 @@ fn render_markdown_blocks(
             if fence_tag.starts_with("tool:") {
                 // Internal tool call block: skip rendering
             } else if fence_tag == "output" || fence_tag == "result" {
-                render_tool_output_box(code_content, lines);
+                render_tool_output_box(code_content, panel_width, lang, lines);
             } else if crate::app::is_executable_command_block(fence_tag, code_content) {
                 *card_counter += 1;
                 let is_pending_dup = suppress_command
@@ -1197,7 +1187,7 @@ fn render_markdown_blocks(
                     // The same command is awaiting consent in the approval card
                     // right below: keep the code visible but demote it to an inert
                     // snippet so the command has exactly ONE actionable surface.
-                    render_code_snippet_box(code_content, fence_tag, lines);
+                    render_code_snippet_box(code_content, fence_tag, panel_width, lines);
                 } else {
                     render_command_card(
                         *card_counter,
@@ -1209,7 +1199,7 @@ fn render_markdown_blocks(
                     );
                 }
             } else {
-                render_code_snippet_box(code_content, fence_tag, lines);
+                render_code_snippet_box(code_content, fence_tag, panel_width, lines);
             }
             let after_close = &code_rest[end_idx + 3..];
             remaining = after_close
@@ -1223,9 +1213,9 @@ fn render_markdown_blocks(
             if fence_tag.starts_with("tool:") {
                 // Internal tool call block: skip rendering while streaming
             } else if fence_tag == "output" || fence_tag == "result" {
-                render_tool_output_box(code_content, lines);
+                render_tool_output_box(code_content, panel_width, lang, lines);
             } else {
-                render_code_snippet_box(code_content, fence_tag, lines);
+                render_code_snippet_box(code_content, fence_tag, panel_width, lines);
             }
             remaining = "";
             break;
@@ -1817,58 +1807,213 @@ fn render_markdown_line(
     lines.push(Line::from(spans));
 }
 
-/// Renders terminal output with clean subtle indentation
-fn render_tool_output_box(output: &str, lines: &mut Vec<Line<'static>>) {
-    if output.is_empty() {
+struct FramedSnippetHeader<'a> {
+    icon: &'a str,
+    title: &'a str,
+    tag: &'a str,
+    icon_color: Color,
+    title_color: Color,
+    badge_color: Color,
+}
+
+/// Renders passive code snippets or tool output in a modern rounded framed box matching the command card style
+fn render_framed_snippet_box(
+    header: FramedSnippetHeader,
+    content: &str,
+    panel_width: u16,
+    lines: &mut Vec<Line<'static>>,
+) {
+    if content.is_empty() {
         return;
     }
 
+    let card_total_w = (panel_width as usize).max(40);
+    let outer_inner_w = card_total_w.saturating_sub(2);
+    let inner_code_w = outer_inner_w.saturating_sub(6);
+
+    let outer_border_color = Color::Rgb(40, 56, 80);
+    let inner_border_color = Color::Rgb(28, 42, 62);
+
     push_blank_line(lines);
-    for l in output.lines() {
-        if l.is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(vec![Span::styled(
-                format!("  {}", l),
-                Style::default().fg(Color::LightCyan),
-            )]));
+
+    // 1. Top border of outer card: ╭─...─╮
+    lines.push(Line::from(vec![Span::styled(
+        format!("╭{}╮", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
+    // 2. Header line inside outer card
+    let badge_upper = header.tag.to_uppercase();
+    let icon_w = str_visual_width(header.icon);
+    let title_w = str_visual_width(header.title);
+    let has_badge = !header.tag.is_empty();
+    let badge_part_w = if has_badge {
+        4 + badge_upper.chars().count()
+    } else {
+        0
+    };
+    let header_fixed_len = 3 + icon_w + 1 + title_w + badge_part_w + 3;
+    let header_pad = card_total_w.saturating_sub(header_fixed_len);
+
+    let mut header_spans = vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            header.icon.to_string(),
+            Style::default()
+                .fg(header.icon_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            header.title.to_string(),
+            Style::default()
+                .fg(header.title_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if has_badge {
+        header_spans.push(Span::styled("[ ", Style::default().fg(header.badge_color)));
+        header_spans.push(Span::styled(
+            badge_upper,
+            Style::default()
+                .fg(header.badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        header_spans.push(Span::styled(" ]", Style::default().fg(header.badge_color)));
+    }
+    header_spans.push(Span::raw(" ".repeat(header_pad)));
+    header_spans.push(Span::styled("  │", Style::default().fg(outer_border_color)));
+    lines.push(Line::from(header_spans));
+
+    // 3. Subtle spacing row inside outer card: │                                  │
+    lines.push(Line::from(vec![
+        Span::styled("│", Style::default().fg(outer_border_color)),
+        Span::raw(" ".repeat(outer_inner_w)),
+        Span::styled("│", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 4. Inner box top border: │  ╭─...─╮  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╭{}╮", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 5. Code lines inside inner box: │  │  cmd  │  │
+    for raw_line in content.lines() {
+        if raw_line.is_empty() {
+            let pad = " ".repeat(inner_code_w.saturating_sub(2));
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
+            continue;
+        }
+
+        let chars: Vec<char> = raw_line.chars().collect();
+        let max_chunk_w = inner_code_w.saturating_sub(2);
+        for chunk in chars.chunks(max_chunk_w.max(1)) {
+            let chunk_str: String = chunk.iter().collect();
+            let pad_len = max_chunk_w.saturating_sub(chunk.len());
+            let pad = " ".repeat(pad_len);
+
+            lines.push(Line::from(vec![
+                Span::styled("│  ", Style::default().fg(outer_border_color)),
+                Span::styled("│ ", Style::default().fg(inner_border_color)),
+                Span::styled(
+                    chunk_str,
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(pad),
+                Span::styled(" │", Style::default().fg(inner_border_color)),
+                Span::styled("  │", Style::default().fg(outer_border_color)),
+            ]));
         }
     }
+
+    // 6. Inner box bottom border: │  ╰─...─╯  │
+    lines.push(Line::from(vec![
+        Span::styled("│  ", Style::default().fg(outer_border_color)),
+        Span::styled(
+            format!("╰{}╯", "─".repeat(inner_code_w)),
+            Style::default().fg(inner_border_color),
+        ),
+        Span::styled("  │", Style::default().fg(outer_border_color)),
+    ]));
+
+    // 7. Bottom border of outer card: ╰─...─╯
+    lines.push(Line::from(vec![Span::styled(
+        format!("╰{}╯", "─".repeat(outer_inner_w)),
+        Style::default().fg(outer_border_color),
+    )]));
+
     push_blank_line(lines);
 }
 
-/// Renders passive code snippets, logs, or process trees without noisy text headers
-fn render_code_snippet_box(code: &str, tag: &str, lines: &mut Vec<Line<'static>>) {
-    if code.is_empty() {
-        return;
-    }
-
-    let is_generic_text = matches!(
-        tag.to_lowercase().as_str(),
-        "" | "text" | "txt" | "output" | "result" | "log" | "logs" | "tree"
+/// Renders terminal output in a clean rounded framed box matching the command card style
+fn render_tool_output_box(
+    output: &str,
+    panel_width: u16,
+    lang: Language,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let title = if lang == Language::Fr {
+        "SORTIE "
+    } else {
+        "OUTPUT "
+    };
+    render_framed_snippet_box(
+        FramedSnippetHeader {
+            icon: "⚙",
+            title,
+            tag: "STDOUT",
+            icon_color: Color::Cyan,
+            title_color: Color::Cyan,
+            badge_color: Color::DarkGray,
+        },
+        output,
+        panel_width,
+        lines,
     );
+}
 
-    push_blank_line(lines);
-    if !is_generic_text {
-        lines.push(Line::from(vec![Span::styled(
-            format!("  {}", tag),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::ITALIC),
-        )]));
-    }
-
-    for l in code.lines() {
-        if l.is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(vec![Span::styled(
-                format!("  {}", l),
-                Style::default().fg(Color::LightCyan),
-            )]));
-        }
-    }
-    push_blank_line(lines);
+/// Renders passive code snippets, logs, or process trees in a clean rounded framed box
+fn render_code_snippet_box(
+    code: &str,
+    tag: &str,
+    panel_width: u16,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let clean_tag = if tag.trim().is_empty()
+        || matches!(
+            tag.to_lowercase().as_str(),
+            "text" | "txt" | "output" | "result" | "log" | "logs" | "tree"
+        ) {
+        ""
+    } else {
+        tag.trim()
+    };
+    render_framed_snippet_box(
+        FramedSnippetHeader {
+            icon: "📄",
+            title: "CODE ",
+            tag: clean_tag,
+            icon_color: Color::Cyan,
+            title_color: Color::White,
+            badge_color: Color::Cyan,
+        },
+        code,
+        panel_width,
+        lines,
+    );
 }
 
 /// Renders a command proposal with modern rounded boxed presentation and action pill matching Screenshot 2
@@ -1981,7 +2126,7 @@ fn render_command_card(
         }
 
         let chars: Vec<char> = raw_line.chars().collect();
-        let max_chunk_w = inner_code_w.saturating_sub(2);
+        let max_chunk_w = inner_code_w.saturating_sub(2).max(1);
         for chunk in chars.chunks(max_chunk_w) {
             let chunk_str: String = chunk.iter().collect();
             let pad_len = max_chunk_w.saturating_sub(chunk.len());
@@ -2252,6 +2397,18 @@ fn extract_thought_block(text: &str) -> ParsedThought {
 /// True when a message carries reasoning with non-empty content (its "Think · "
 /// toggle line is rendered and clickable).
 fn has_visible_thought(content: &str) -> bool {
+    const OPEN_TAGS: &[&str] = &[
+        "<think>",
+        "<thought>",
+        "<thinking>",
+        "<reasoning>",
+        "<reflection>",
+        "<plan>",
+        "<thought_process>",
+    ];
+    if !OPEN_TAGS.iter().any(|tag| content.contains(tag)) {
+        return false;
+    }
     extract_thought_block(content)
         .thought
         .map(|t| !t.trim().is_empty())

@@ -1105,6 +1105,63 @@ async fn test_f10_fast_track_approves_pending_command() {
     assert!(rx2.await.expect("approval sent"));
 }
 
+#[tokio::test]
+async fn test_enter_key_approves_pending_command_when_prompt_empty() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::{App, Focus, PendingToolApproval};
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 55, 100).expect("create app");
+    app.focus = Focus::Chat;
+
+    // 1. Enter on empty prompt approves the pending command
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "apt update".to_string(),
+        approval_tx: Some(tx),
+    });
+    app.chat_input.clear();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.pending_tool_approval.is_none(), "pending must be consumed");
+    assert!(rx.await.expect("approval sent"), "Enter must approve when prompt is empty");
+
+    // 2. Enter with 'non' declines the command
+    let (tx_no, rx_no) = tokio::sync::oneshot::channel::<bool>();
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "rm -rf /tmp/test".to_string(),
+        approval_tx: Some(tx_no),
+    });
+    app.chat_input = "non".to_string();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.pending_tool_approval.is_none());
+    assert!(!rx_no.await.expect("decline sent"), "Entering 'non' must decline");
+    assert!(app.chat_input.is_empty(), "chat_input must be cleared");
+
+    // 3. Shift+Enter does NOT approve, but inserts newline
+    let (tx_shift, mut rx_shift) = tokio::sync::oneshot::channel::<bool>();
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "reboot".to_string(),
+        approval_tx: Some(tx_shift),
+    });
+    app.chat_input = "attends".to_string();
+    app.cursor_pos = 7;
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    assert!(app.pending_tool_approval.is_some(), "Shift+Enter must not consume pending");
+    assert!(rx_shift.try_recv().is_err(), "no approval must be sent on Shift+Enter");
+    assert_eq!(app.chat_input, "attends\n");
+
+    // 4. Enter with a new question/instruction declines the pending command so prompt can be processed
+    let (tx_query, rx_query) = tokio::sync::oneshot::channel::<bool>();
+    app.pending_tool_approval = Some(PendingToolApproval {
+        command: "reboot".to_string(),
+        approval_tx: Some(tx_query),
+    });
+    app.chat_input = "pourquoi veux-tu redémarrer ?".to_string();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(app.pending_tool_approval.is_none(), "pending tool must be cleared");
+    assert!(!rx_query.await.expect("decline sent"), "Entering a question must decline pending command");
+}
+
 #[test]
 fn test_reasoning_edge_cases_thunk_and_partial_th() {
     use spiritty::agent::tools::{parse_tool_call, strip_think_blocks, ToolInvocation};

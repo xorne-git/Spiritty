@@ -1,171 +1,171 @@
-# Feuille de Route (Roadmap) — Spiritty
+# Roadmap — Spiritty
 
-Ce document définit les étapes clés du développement de **Spiritty**, du prototype initial jusqu'à la version 1.0.
+This document defines the key milestones in the development of **Spiritty**, from the initial prototype up to version 1.0.
 
 ---
 
-## 🎯 Vue Globale des Jalons
+## 🎯 Global Milestone Overview
 
 ```
-[Phase 1: Fondations TUI & PTY] ──> [Phase 2: Moteur d'Agent & LLM] ──> [Phase 3: Human-in-the-Loop & Actions]
-                                                                               │
-[Phase 5: Release v1.0 & Distrib] <── [Phase 4: Contexte Système & Polishing] <──┘
+[Phase 1: TUI & PTY Foundations] ──> [Phase 2: Agent Engine & LLM] ──> [Phase 3: Human-in-the-Loop & Actions]
+                                                                                    │
+[Phase 5: v1.0 Release & Distribution] <── [Phase 4: System Context & Polishing] <──┘
 ```
 
 ---
 
-## 📌 Phase 1 : Fondations TUI & Terminal PTY (v0.1.0) [TERMINÉ ✅]
-*Objectif : Avoir une application TUI fluide avec un split-screen fonctionnel et un shell interactif natif dans le panneau droit.*
+## 📌 Phase 1: TUI & PTY Terminal Foundations (v0.1.0) [COMPLETE ✅]
+*Objective: Have a fluid TUI application with a functional split-screen and a native interactive shell in the right panel.*
 
-- [x] **Initialisation du projet Cargo :**
-  - Configuration du `Cargo.toml` avec dépendances (`ratatui`, `crossterm`, `tokio`, `portable-pty`, `vt100`, `anyhow`, `serde`).
-- [x] **Boucle d'événements & Layout de base :**
-  - Layout en écran scindé 40/60 horizontal.
-  - Gestion du focus clavier : Bascule rapide (`Ctrl+A`) entre Chat et Terminal.
-  - Barre d'état (Header & Footer) avec raccourcis et statut du système.
-- [x] **Intégration du PTY dans Ratatui :**
-  - Spawn du shell par défaut (`$SHELL`) via `portable-pty`.
-  - Capture et parsing des octets ANSI/VT100 via `vt100`.
-  - Rendu du buffer virtuel dans les cellules de `ratatui::buffer::Buffer`.
-  - Transmission des frappes clavier au PTY maître en mode raw.
-  - Gestion dynamique du redimensionnement de la fenêtre (`SIGWINCH` / `pty.resize`).
-
----
-
-## 📌 Phase 2 : Moteur d'Agent & Intégration LLM (v0.2.0) [TERMINÉ ✅]
-*Objectif : Connecter un LLM au panneau gauche avec streaming des réponses, configuration multi-providers (Ollama, LM Studio, Gemini, Grok, DeepSeek, OpenAI, Claude) et modales interactives.*
-
-- [x] **Panneau de Chat interactif & Streaming :**
-  - Zone de saisie multi-lignes, historique des messages, curseur matériel.
-  - Streaming asynchrone sans bloquer le shell interactif PTY.
-  - Indicateur visuel d'état (`🧞 Spiritty réfléchit...`).
-- [x] **Fournisseurs LLM (Multi-Providers) :**
-  - Client Ollama (Modèles locaux comme `qwen2.5-coder`, `deepseek-r1`).
-  - Client LM Studio (Serveur local OpenAI-compatible).
-  - Client Grok / xAI (`api.x.ai/v1`).
-  - Client Google Gemini (REST SSE streaming).
-  - Client DeepSeek & OpenAI.
-  - Client Anthropic Claude.
-- [x] **Gestion de la Configuration & Modales :**
-  - Fichier de configuration TOML (`~/.config/spiritty/config.toml`).
-  - Modale interactive de configuration (`Ctrl+P`) pour changer de provider/modèle/clé.
-  - Modale d'aide aux raccourcis (`F1`).
-- [x] **Moteur d'Internationalisation (i18n) :**
-  - Détection automatique de la langue système (`$LANG`) et support Français/Anglais.
-  - Surcharge de la langue dans la configuration (`language = "fr"`).
-  - Traduction de toutes les modales, bandeaux d'aide, statuts et system prompts.
+- [x] **Cargo project initialization:**
+  - Configuration of the `Cargo.toml` with dependencies (`ratatui`, `crossterm`, `tokio`, `portable-pty`, `vt100`, `anyhow`, `serde`).
+- [x] **Event loop & base layout:**
+  - 40/60 horizontal split-screen layout.
+  - Keyboard focus management: quick toggle (`Ctrl + Space`) between Chat and Terminal.
+  - Status bar (Header & Footer) with shortcuts and system status.
+- [x] **PTY integration into Ratatui:**
+  - Spawn of the default shell (`$SHELL`) via `portable-pty`.
+  - Capture and parsing of ANSI/VT100 bytes via `vt100`.
+  - Rendering of the virtual buffer into `ratatui::buffer::Buffer` cells.
+  - Transmission of keystrokes to the master PTY in raw mode.
+  - Dynamic handling of window resizing (`SIGWINCH` / `pty.resize`).
 
 ---
 
-## 📌 Phase 3 : Validation Humaine, Exécution de Commandes & Sessions (v0.3.0) [TERMINÉ ✅]
-*Objectif : Permettre à l'agent de proposer des commandes et à l'utilisateur de les exécuter d'un geste dans le terminal droit, avec persistance et compactage de sessions.*
+## 📌 Phase 2: Agent Engine & LLM Integration (v0.2.0) [COMPLETE ✅]
+*Objective: Connect an LLM to the left panel with response streaming, multi-provider configuration (Ollama, LM Studio, Gemini, Grok, DeepSeek, OpenAI, Claude) and interactive modals.*
 
-- [x] **Composant "Command Proposal Card" :**
-  - Détection automatique des blocs de commandes proposés par l'IA et filtrage des explications.
-  - Cartes d'actions interactives multi-propositions (`Alt + 1..9`).
-- [x] **Actions Clavier & Exécution Live PTY :**
-  - `[Enter]` : Envoi direct au modèle ou injection dans le PTY.
-  - `[Alt + N]` : Exécution de la proposition N avec capture et analyse du résultat.
-- [x] **Gestionnaire de Sessions & Compactage de Contexte :**
-  - Stockage JSON structuré dans `~/.config/spiritty/sessions/`.
-  - Modale interactive de navigation de sessions (`Ctrl + H`) avec rechargement, création (`Ctrl + N`), suppression et compactage manuel.
-  - Compactage automatique intelligent des anciens tours de dialogue pour préserver les tokens.
-  - Auto-sauvegarde systématique de la session en cours à la fermeture de l'application.
-
----
-
-## 📌 Phase 4 : Contexte Système Avancé, Détection SSH & Auto-Remédiation (v0.4.0) [TERMINÉ ✅]
-*Objectif : Donner à l'agent une conscience aiguë de la machine hôte (locale ou serveur distant SSH), une exécution silencieuse sans pollution de terminal et un shell 100% interactif en continu.*
-
-- [x] **Détection Dynamique des Sessions SSH & Multi-Host Profiling :**
-  - Surveillance non bloquante en temps réel de l'arbre de processus sous le PTY (`/proc/<pid>/...`).
-  - Détection automatique des connexions `ssh`, `sftp`, `mosh-client`, `docker`, `podman`.
-  - Cache persistant des profils serveurs dans `~/.config/spiritty/hosts.json` (OS, distribution, noyau, gestionnaires de paquets, init system).
-  - Basculement instantané et automatique du *System Prompt* de l'IA lors des connexions/déconnexions SSH.
-  - Indicateurs visuels d'en-tête et de statut épurés (`🌐 SSH: user@host (Distro)`).
-- [x] **Exécution Silencieuse et Shell Interactif en Continu :**
-  - Exécution 100% propre sans aucune sentinelle visible (`printf "\033]..."`) dans le terminal PTY.
-  - Saisie shell continue et non-bloquante pendant la réflexion et le streaming du modèle.
-  - Bascule automatique du focus sur le shell à la soumission du prompt pour une ergonomie optimale.
-  - Prévention de la pollution de l'historique shell (espace initial pour Fish, Bash, Zsh).
-- [x] **Éditeur de Prompt Multi-Lignes & Auto-Réparation Markdown :**
-  - Passage à la ligne fluide via `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter` et `Ctrl + J`.
-  - Auto-réparation à la volée des blocs de code fermés prématurément par les LLMs.
-  - Filtrage des faux blocs de commandes (flèches de transition, descriptions).
-- [x] **Extracteur de Contexte Système Local :**
-  - Détection automatique de la distribution Linux (Arch, CachyOS, Ubuntu, Debian, Fedora, Alpine) ou macOS.
-  - Détection des gestionnaires de paquets installés (`apt`, `pacman`, `dnf`, `brew`, `nix`, `cargo`, `yay`, `paru`, `flatpak`, `snap`).
-  - Capture du shell actif, de l'émulateur de terminal hôte et de l'environnement graphique (`Wayland`/`X11`/`niri`/`hyprland`).
-- [x] **Capture & Diagnostic d'Erreur Proactif (`Alt + D`) :**
-  - Détection automatique des commandes échouées et erreurs d'exécution dans le PTY.
-  - Carte d'alerte et remédiation automatique en un raccourci (`Alt + D`).
-- [x] **Indicateur de Répertoire Courant (PWD) & Branche Git :**
-  - Affichage instantané du dossier actif et de la branche Git dans l'en-tête du terminal.
-  - Injection dynamique du PWD et de la branche Git dans le contexte système de l'agent.
-- [x] **Export de Session en Rapport Markdown (`Ctrl + E`) :**
-  - Génération en 1 touche d'un rapport structuré avec horodatage, métadonnées machine, historique des prompts et commandes dans `~/.config/spiritty/exports/`.
-- [x] **Gestionnaire de Serveurs SSH Favoris (`Ctrl + B`) :**
-  - Modale interactive de favoris SSH avec ajout rapide, recherche, étoiles de favoris et connexion en 1 touche.
-- [x] **Recherche en Temps Réel dans l'Historique de Chat (`Ctrl + F`) :**
-  - Barre de recherche avec surbrillance dynamique et navigation rapide entre occurrences (`Enter` / `Shift + Enter`).
+- [x] **Interactive Chat Panel & Streaming:**
+  - Multi-line input area, message history, hardware cursor.
+  - Asynchronous streaming without blocking the interactive PTY shell.
+  - Visual status indicator (`🧞 Spiritty is thinking...`).
+- [x] **LLM Providers (Multi-Provider):**
+  - Ollama client (local models such as `qwen2.5-coder`, `deepseek-r1`).
+  - LM Studio client (local OpenAI-compatible server).
+  - Grok / xAI client (`api.x.ai/v1`).
+  - Google Gemini client (REST SSE streaming).
+  - DeepSeek & OpenAI client.
+  - Anthropic Claude client.
+- [x] **Configuration Management & Modals:**
+  - TOML configuration file (`~/.config/spiritty/config.toml`).
+  - Interactive configuration modal (`Ctrl+P`) to change provider/model/key.
+  - Shortcut help modal (`F1`).
+- [x] **Internationalization (i18n) Engine:**
+  - Automatic detection of the system language (`$LANG`) and French/English support.
+  - Language override in the configuration (`language = "fr"`).
+  - Translation of all modals, help footers, statuses and system prompts.
 
 ---
 
-## 📌 Phase 5 : Protocoles Avancés, Métriques Précises & Distribution v1.0.0 (v1.0.0) [EN COURS 🚀]
-*Objectif : Intégrer l'écosystème MCP, garantir une précision métrique absolue des tokens et du débit, et produire un binaire ultra-rapide et stable.*
+## 📌 Phase 3: Human Validation, Command Execution & Sessions (v0.3.0) [COMPLETE ✅]
+*Objective: Allow the agent to propose commands and the user to execute them in one gesture in the right terminal, with session persistence and compaction.*
 
-- [x] **Support du Protocole MCP (Model Context Protocol) & Modale TUI Dédiée (`Ctrl + M`) :**
-  - Moteur client MCP stdio asynchrone (JSON-RPC 2.0) avec initialisation, négociation de capacités et découverte dynamique des outils (`tools/list`).
-  - Découverte et exposition dynamique des outils MCP dans le prompt système de l'agent (`mcp:<server>:<tool>`).
-  - Interception et exécution asynchrone des appels d'outils MCP par l'agent (`ToolInvocation::McpCall`).
-  - Modale TUI interactive (`Ctrl + M`) : liste des serveurs, inspecteur d'outils, activation/désactivation en 1 touche (`Espace`), rechargement (`R`), ajout (`A`) et suppression (`D`).
-- [x] **Calcul Précis des Tokens, du Débit (tokens/s) & Registre Dynamique des Coûts :**
-  - Exploitation des métriques natives renvoyées par les APIs LLM (`eval_count`/`eval_duration` dans Ollama, `stream_options.include_usage` dans OpenAI/DeepSeek/Grok, `message_delta.usage` dans Anthropic, `usageMetadata` dans Gemini).
-  - Élimination des artefacts de calcul du débit : chronomètre de streaming démarré dès le 1er chunk utile, déduction des latences réseau et pauses d'exécution d'outils.
-  - Estimation et affichage en temps réel du coût de session en dollars (`💵 $0.0042`) dans le footer et les modales de session pour les modèles cloud.
-  - **Registre dynamique des tarifs LLM (`src/pricing/`) :** support des surcharges personnalisées dans `~/.config/spiritty/config.toml` (`[pricing."nom_modele"]`), persistance du cache local dans `~/.config/spiritty/pricing.json`, et mise à jour/synchronisation en 1 touche depuis Internet (`Ctrl + P` puis `[U]`).
-- [x] **Modal Toast Non-Intrusif & Diagnostic Proactif Ciblé (`Alt + D`) :**
-  - Notification d'erreur shell sous forme de toast flottant élégant en bas à droite du panneau terminal avec bordure arrondie (`Alt + D` Diagnostiquer / `Alt + X` Fermer).
-  - Restriction stricte du diagnostic proactif aux seules commandes tapées manuellement par l'utilisateur dans le shell interactif.
-  - Respect absolu de la propreté du panneau de chat : 0 pollution lors des erreurs de commandes manuelles.
-- [x] **Ergonomie & Thèmes :**
-  - 7 thèmes prédéfinis avec dégradés verticaux et palettes coordonnées : *Spiritty Dark*, *Catppuccin Mocha*, *Tokyo Night*, *Nord Arctic*, *Gruvbox Dark*, *Dracula*, *Monokai Pro*.
-  - Sélecteur interactif de thème dans la modale `Ctrl + P` avec prévisualisation dynamique instantanée.
-  - Redimensionnement fluide de la séparation gauche/droite à la souris (glisser-déposer) ou au clavier (`Alt + ←` / `Alt + →`).
-  - Persistance automatique de la taille des panneaux (`split_ratio`), de la configuration MCP et du thème actif dans `~/.config/spiritty/config.toml`.
-  - Diagnostics d'erreur explicites lors de pannes de connexion LLM (serveurs locaux éteints, timeout, erreurs réseau).
-- [x] **Hardening v0.4.5 — Sécurité, Perf & Fiabilité (audit complet) :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - Sécurité human-in-the-loop : faille « Entrée-vide approuve la commande en attente » fermée ; taxonomie de risque à 4 niveaux (`Safe / Standard / Sudo / Risky`) avec auto-approbation `Sudo` couvrant les commandes élevées read-only.
-  - Hygiène des secrets : `config.toml`/`hosts.json`/sessions/pricing écrits en 0600, clé API jamais réaffichée dans la modale (masquage + conservation si vide).
-  - Cycle de vie PTY : sortie propre sur `exit` du shell (`PtyExit` + reaper thread), plus aucun zombie ni panneau figé.
-  - Thread UI jamais bloqué : Ctrl+V asynchrone, probe ENV mémoïsée, scan `/proc` borné (1,5 s TTL).
-  - Capture PTY incrémentale : fin du O(n²) sur commandes verbeuses (décodage UTF-8 avec carry, fenêtres bornées, watermark sentinel).
-  - Nettoyage des propositions LLM : lignes interpréteur parasites (`bash`, shebangs, `exit` orphelins) supprimées ; prose/tabulations de sortie ne deviennent plus des cartes ⚡.
-  - Provider Z.ai (GLM/Zhipu) ajouté avec pricing intégré et détection d'alias.
-- [x] **Hardening v0.5.0 — Boucle d'outils fiable & UI indestructible :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - Boucle d'outils textuels réellement exécutée à nouveau (markup DSML hybride DeepSeek/GLM parsé) ; échos corrompus des redraws SSH reconnus et retirés — plus d'hallucinations « saboteur » nourries par l'écho.
-  - Fiabilité : écritures PTY off-thread (plus aucun freeze UI sur SSH calé), capture plafonnée à 1 Mio avec nettoyage paresseux + avis de troncature, restauration terminal sur SIGTERM/SIGINT/SIGHUP.
-  - UX : timer « 💭 Deep thinking… » ré-armé à chaque segment de réflexion, plus de double prompt `Alt+N`/`F10` sur une même commande (snippet inerté + Alt+N bloqué pendant un consentement ou une capture).
-- [x] **Hardening v0.5.1 — Reconnexion SSH au rechargement in-app :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - La modale de reconnexion SSH était posée par `load_session` mais **refermée immédiatement** par le handler de la liste des sessions (`modal = None` après l'action `Load`) : elle ne survivait que sur le chemin `-c` (démarrage). La liste ne se ferme désormais plus si l'offre `SshReconnect` vient d'être posée. Validé E2E sur une vraie session SSH rechargée in-app.
-- [x] **Hardening v0.5.2 — Historique complet persisté, compactage contexte-only (option C) :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - `save_current_session` ne compacte plus : le JSON de session conserve **tous** les échanges et le rechargement restaure la globalité de la conversation (fini le plafond « 1 résumé + 8 tours = 9 messages » hérité du compactage à la sauvegarde dans la liste des sessions).
-  - Compactage déplacé **au moment de la requête** : `agent::send_prompt` applique `compact_chat_messages` (tours anciens → résumé System, 8 plus récents verbatim) — le contexte live reste borné et est comprimé à chaque tour. Les historiques déjà compactés par les versions précédentes ne sont pas reconstituables. Validé E2E dans un HOME isolé (session de 15 messages → rechargement → 15 messages sur disque, aucun résumé persisté).
-- [x] **Hardening v0.5.3 — Prompt système : interdiction d'abréger les commandes :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - Correction du cas où GLM (`glm-5.3-flash`) réduisait ses commandes longues à `...` (ou un placeholder `BASE64`, `[content]`) puis attribuait la casse à une « troncature client » : nouvelle règle dans `IMPORTANT RULES` — toujours coller le contenu intégral d'un heredoc/script/fichier, jamais de placeholder, le bloc est exécuté tel quel. Vérifié côté client : `extract_all_command_proposals` ne tronque rien (aucun plafond ni insertion de `...`), les `...` de l'UI n'étaient que des indicateurs d'affichage.
-- [x] **Hardening v0.5.4 — Footer Ctx corrigé & CI release épurée :** *(détail complet dans [CHANGELOG.md](CHANGELOG.md))*
-  - `get_context_used_tokens` sommait tout l'historique de la session (rémanence de l'option C) → « Ctx: 178k / 131k (100%) » absurde (utilisé > fenêtre, clampé à 100%). Il estime désormais le contexte **compacté réellement envoyé** (résumé + 8 derniers tours verbatim), cohérent avec la compaction à la requête ; le compteur de tokens total reste séparé.
-  - CI release : retrait de la cible `x86_64-apple-darwin` (runners macOS Intel hébergés `macos-13` retirés par GitHub — le job restait `queued` sans jamais builder). Matrice réduite à Linux `x86_64` / `aarch64` + macOS Apple Silicon `aarch64`.
-- [x] **Tests de Robustesse & Ergonomie Terminal Avancée :**
-  - [x] Gestion robuste des applications ncurses & TUI interactives dans le PTY droit (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`) : SGR mouse tracking, shift bypass, navigation alternate-screen, xterm modifiers, bracketed paste.
-  - [x] Multi-onglets enrichis : renommage d'onglets (`Alt+R`), persistance en session des libellés et cibles SSH.
-  - [x] Découverte dynamique de modèles LLM et tarifs en direct (`R` dans `F2`) et niveau de réflexion configurable (`ReasoningEffort` à 5 niveaux avec badges visuels et support API multi-providers).
-  - [x] Intégration officielle DeepSeek V4.1 Flash (`deepseek-flash`), auto-approbation des commandes Safe/Sudo et isolation hermétique des sessions de tests.
-  - [x] Approfondissement architectural (Deep Modules) :
-    - Unification des modales TUI (`ModalState` / `ModalOutcome` dans `src/ui/components/`), centralisant frappes, collage et rendu.
-    - Superviseur système et contextes SSH (`SystemSupervisor` et `InspectableTab` dans `src/system/supervisor.rs`), isolant la détection de processus `/proc`, le profilage de distribution et la déduplication des sondes d'arrière-plan.
-  - [x] Gestion propre des signaux `SIGINT`, `SIGTERM`, `SIGHUP` (restauration complète du terminal + sortie `128+signal`, même UI figée).
-- [x] **Packaging & Distribution Automatisée :**
-  - Script d'installation universel one-line `install.sh` (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) avec détection automatique de l'OS et de l'architecture (`x86_64`, `aarch64`, macOS).
-  - Pipeline de publication automatisé GitHub Actions multi-cibles (`release.yml`) générant les binaires allégés (`strip`) et les archives tarball sur chaque tag `v*`.
-  - Binaire statique et universel prêt pour `cargo install`, AUR et Homebrew.
+- [x] **"Command Proposal Card" Component:**
+  - Automatic detection of command blocks proposed by the AI and filtering of explanations.
+  - Interactive multi-proposal action cards (`Alt + 1..9`).
+- [x] **Keyboard Actions & Live PTY Execution:**
+  - `[Enter]`: Direct send to the model or injection into the PTY.
+  - `[Alt + N]`: Execution of proposal N with capture and analysis of the result.
+- [x] **Session Manager & Context Compaction:**
+  - Structured JSON storage in `~/.config/spiritty/sessions/`.
+  - Interactive session navigation modal (`Ctrl + H`) with reload, creation (`Ctrl + N`), deletion and manual compaction.
+  - Intelligent automatic compaction of old dialogue turns to preserve tokens.
+  - Systematic auto-save of the current session on application close.
+
+---
+
+## 📌 Phase 4: Advanced System Context, SSH Detection & Auto-Remediation (v0.4.0) [COMPLETE ✅]
+*Objective: Give the agent a keen awareness of the host machine (local or remote SSH server), silent execution without terminal pollution and a fully interactive shell at all times.*
+
+- [x] **Dynamic SSH Session Detection & Multi-Host Profiling:**
+  - Non-blocking real-time monitoring of the process tree under the PTY (`/proc/<pid>/...`).
+  - Automatic detection of `ssh`, `sftp`, `mosh-client`, `docker`, `podman` connections.
+  - Persistent cache of server profiles in `~/.config/spiritty/hosts.json` (OS, distribution, kernel, package managers, init system).
+  - Instant and automatic switching of the AI *System Prompt* on SSH connections/disconnections.
+  - Clean header and status indicators (`🌐 SSH: user@host (Distro)`).
+- [x] **Silent Execution and Continuously Interactive Shell:**
+  - 100% clean execution without any visible sentinel (`printf "\033]..."`) in the PTY terminal.
+  - Continuous and non-blocking shell input during model thinking and streaming.
+  - Automatic focus switch to the shell on prompt submission for optimal ergonomics.
+  - Prevention of shell history pollution (leading space for Fish, Bash, Zsh).
+- [x] **Multi-Line Prompt Editor & Markdown Self-Repair:**
+  - Fluid line breaks via `Shift + Enter`, `Alt + Enter`, `Ctrl + Enter` and `Ctrl + J`.
+  - On-the-fly self-repair of code blocks closed prematurely by LLMs.
+  - Filtering of fake command blocks (transition arrows, descriptions).
+- [x] **Local System Context Extractor:**
+  - Automatic detection of the Linux distribution (Arch, CachyOS, Ubuntu, Debian, Fedora, Alpine) or macOS.
+  - Detection of installed package managers (`apt`, `pacman`, `dnf`, `brew`, `nix`, `cargo`, `yay`, `paru`, `flatpak`, `snap`).
+  - Capture of the active shell, the host terminal emulator and the graphical environment (`Wayland`/`X11`/`niri`/`hyprland`).
+- [x] **Proactive Error Capture & Diagnosis (`Alt + D`):**
+  - Automatic detection of failed commands and execution errors in the PTY.
+  - Alert card and automatic remediation in one shortcut (`Alt + D`).
+- [x] **Current Directory (PWD) & Git Branch Indicator:**
+  - Instant display of the active folder and Git branch in the terminal header.
+  - Dynamic injection of the PWD and Git branch into the agent's system context.
+- [x] **Session Export as Markdown Report (`Ctrl + E`):**
+  - One-key generation of a structured report with timestamp, machine metadata, prompt history and commands in `~/.config/spiritty/exports/`.
+- [x] **Favorite SSH Server Manager (`Ctrl + B`):**
+  - Interactive SSH favorites modal with quick add, search, favorite stars and one-key connection.
+- [x] **Real-Time Search in Chat History (`Ctrl + F`):**
+  - Search bar with dynamic highlighting and quick navigation between occurrences (`Enter` / `Shift + Enter`).
+
+---
+
+## 📌 Phase 5: Advanced Protocols, Precise Metrics & Distribution (v1.0.0) [IN PROGRESS 🚀]
+*Objective: Integrate the MCP ecosystem, guarantee absolute metric precision for tokens and throughput, and produce an ultra-fast and stable binary.*
+
+- [x] **MCP (Model Context Protocol) Support & Dedicated TUI Modal (`Ctrl + M`):**
+  - Asynchronous MCP stdio client engine (JSON-RPC 2.0) with initialization, capability negotiation and dynamic tool discovery (`tools/list`).
+  - Dynamic discovery and exposure of MCP tools in the agent's system prompt (`mcp:<server>:<tool>`).
+  - Interception and asynchronous execution of MCP tool calls by the agent (`ToolInvocation::McpCall`).
+  - Interactive TUI modal (`Ctrl + M`): server list, tool inspector, one-key activation/deactivation (`Space`), reload (`R`), add (`A`) and delete (`D`).
+- [x] **Precise Token & Throughput (tokens/s) Calculation & Dynamic Cost Registry:**
+  - Use of native metrics returned by LLM APIs (`eval_count`/`eval_duration` in Ollama, `stream_options.include_usage` in OpenAI/DeepSeek/Grok, `message_delta.usage` in Anthropic, `usageMetadata` in Gemini).
+  - Elimination of throughput calculation artifacts: streaming timer started at the first useful chunk, deduction of network latencies and tool execution pauses.
+  - Real-time estimation and display of the session cost in dollars (`💵 $0.0042`) in the footer and session modals for cloud models.
+  - **Dynamic LLM pricing registry (`src/pricing/`):** support for custom overrides in `~/.config/spiritty/config.toml` (`[pricing."model_name"]`), persistence of the local cache in `~/.config/spiritty/pricing.json`, and one-key update/synchronization from the Internet (`Ctrl + P` then `[U]`).
+- [x] **Non-Intrusive Toast Modal & Targeted Proactive Diagnosis (`Alt + D`):**
+  - Shell error notification as an elegant floating toast at the bottom right of the terminal panel with a rounded border (`Alt + D` Diagnose / `Alt + X` Close).
+  - Strict restriction of proactive diagnosis to only commands typed manually by the user in the interactive shell.
+  - Absolute respect for the cleanliness of the chat panel: 0 pollution on manual command errors.
+- [x] **Ergonomics & Themes:**
+  - 7 predefined themes with vertical gradients and coordinated palettes: *Spiritty Dark*, *Catppuccin Mocha*, *Tokyo Night*, *Nord Arctic*, *Gruvbox Dark*, *Dracula*, *Monokai Pro*.
+  - Interactive theme selector in the `Ctrl + P` modal with instant dynamic preview.
+  - Fluid resizing of the left/right split with the mouse (drag-and-drop) or the keyboard (`Alt + ←` / `Alt + →`).
+  - Automatic persistence of panel sizes (`split_ratio`), MCP configuration and the active theme in `~/.config/spiritty/config.toml`.
+  - Explicit error diagnostics on LLM connection failures (local servers off, timeout, network errors).
+- [x] **Hardening v0.4.5 — Security, Perf & Reliability (full audit):** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - Human-in-the-loop security: "empty Enter approves the pending command" flaw closed; 4-level risk taxonomy (`Safe / Standard / Sudo / Risky`) with `Sudo` auto-approval covering elevated read-only commands.
+  - Secrets hygiene: `config.toml`/`hosts.json`/sessions/pricing written in 0600, API key never redisplayed in the modal (masking + retention if empty).
+  - PTY lifecycle: clean exit on shell `exit` (`PtyExit` + reaper thread), no more zombies or frozen panels.
+  - UI thread never blocked: asynchronous Ctrl+V, memoized ENV probe, bounded `/proc` scan (1.5 s TTL).
+  - Incremental PTY capture: end of O(n²) on verbose commands (UTF-8 decoding with carry, bounded windows, sentinel watermark).
+  - Cleanup of LLM proposals: stray interpreter lines (`bash`, shebangs, orphaned `exit`) removed; prose/output tab characters no longer become ⚡ cards.
+  - Z.ai (GLM/Zhipu) provider added with built-in pricing and alias detection.
+- [x] **Hardening v0.5.0 — Reliable Tool Loop & Indestructible UI:** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - Textual tool loop actually executed again (hybrid DeepSeek/GLM DSML markup parsed); corrupted echoes from SSH redraws recognized and removed — no more "saboteur" hallucinations fed by the echo.
+  - Reliability: off-thread PTY writes (no more UI freeze on stalled SSH), capture capped at 1 MiB with lazy cleanup + truncation notice, terminal restoration on SIGTERM/SIGINT/SIGHUP.
+  - UX: "💭 Deep thinking…" timer re-armed on each thinking segment, no more double `Alt+N`/`F10` prompt on the same command (snippet made inert + Alt+N blocked during consent or capture).
+- [x] **Hardening v0.5.1 — SSH Reconnection on In-App Reload:** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - The SSH reconnection modal was set by `load_session` but **immediately closed** by the session list handler (`modal = None` after the `Load` action): it only survived on the `-c` path (startup). The list no longer closes if the `SshReconnect` offer has just been set. Validated E2E on a real SSH session reloaded in-app.
+- [x] **Hardening v0.5.2 — Full History Persisted, Context-Only Compaction (option C):** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - `save_current_session` no longer compacts: the session JSON keeps **all** exchanges and reloading restores the entire conversation (no more the "1 summary + 8 turns = 9 messages" ceiling inherited from compaction at save time in the session list).
+  - Compaction moved **to request time**: `agent::send_prompt` applies `compact_chat_messages` (old turns → System summary, 8 most recent verbatim) — the live context stays bounded and is compressed at every turn. Histories already compacted by previous versions cannot be reconstructed. Validated E2E in an isolated HOME (15-message session → reload → 15 messages on disk, no persisted summary).
+- [x] **Hardening v0.5.3 — System Prompt: Forbid Abbreviating Commands:** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - Fix for the case where GLM (`glm-5.3-flash`) shortened its long commands to `...` (or a `BASE64`, `[content]` placeholder) then blamed the breakage on a "client truncation": new rule in `IMPORTANT RULES` — always paste the full content of a heredoc/script/file, never a placeholder, the block is executed as-is. Verified client-side: `extract_all_command_proposals` truncates nothing (no ceiling or `...` insertion), the UI's `...` were only display indicators.
+- [x] **Hardening v0.5.4 — Fixed Ctx Footer & Cleaned-Up Release CI:** *(full detail in [CHANGELOG.md](CHANGELOG.md))*
+  - `get_context_used_tokens` summed the entire session history (remnant of option C) → absurd "Ctx: 178k / 131k (100%)" (used > window, clamped to 100%). It now estimates the **actually sent compacted** context (summary + last 8 turns verbatim), consistent with request-time compaction; the total token counter remains separate.
+  - Release CI: removal of the `x86_64-apple-darwin` target (Intel macOS hosted runners `macos-13` retired by GitHub — the job stayed `queued` and never built). Matrix reduced to Linux `x86_64` / `aarch64` + macOS Apple Silicon `aarch64`.
+- [x] **Robustness Tests & Advanced Terminal Ergonomics:**
+  - [x] Robust handling of ncurses & interactive TUI applications in the right PTY (`vim`, `nano`, `htop`, `fzf`, `lazygit`, `less`): SGR mouse tracking, shift bypass, alternate-screen navigation, xterm modifiers, bracketed paste.
+  - [x] Enriched multi-tabs: tab renaming (`Alt+R`), session persistence of labels and SSH targets.
+  - [x] Dynamic discovery of LLM models and live pricing (`R` in `F2`) and configurable thinking level (`ReasoningEffort` with 5 levels, visual badges and multi-provider API support).
+  - [x] Official DeepSeek V4.1 Flash integration (`deepseek-flash`), auto-approval of Safe/Sudo commands and hermetic isolation of test sessions.
+  - [x] Architectural deepening (Deep Modules):
+    - Unification of TUI modals (`ModalState` / `ModalOutcome` in `src/ui/components/`), centralizing keystrokes, paste and rendering.
+    - System supervisor and SSH contexts (`SystemSupervisor` and `InspectableTab` in `src/system/supervisor.rs`), isolating `/proc` process detection, distribution profiling and deduplication of background probes.
+  - [x] Clean handling of `SIGINT`, `SIGTERM`, `SIGHUP` signals (full terminal restoration + `128+signal` exit, even with a frozen UI).
+- [x] **Packaging & Automated Distribution:**
+  - Universal one-line `install.sh` installation script (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) with automatic OS and architecture detection (`x86_64`, `aarch64`, macOS).
+  - Automated multi-target GitHub Actions publishing pipeline (`release.yml`) generating stripped (`strip`) binaries and tarball archives on each `v*` tag.
+  - Static and universal binary ready for `cargo install`, AUR and Homebrew.

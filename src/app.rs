@@ -136,6 +136,8 @@ pub struct ChatCacheEntry {
     /// Whether the message's reasoning block is expanded (click-to-expand). Bumped
     /// so the entry invalidates and re-renders on toggle.
     pub expanded: bool,
+    /// Whether this message has visible reasoning (saves re-scanning huge texts).
+    pub has_thought: bool,
     /// Visual wrapped rows of [`ChatCacheEntry::lines`] at the cached panel width
     /// (already includes any trailing blank separator line).
     pub rows: u16,
@@ -2597,7 +2599,7 @@ impl App {
     fn handle_chat_key(&mut self, key: KeyEvent) {
         // 1. If there is a pending tool execution approval, intercept decisions & natural phrases
         if self.pending_tool_approval.is_some() {
-            if key.code == KeyCode::Enter {
+            if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
                 let input = self.chat_input.trim().to_lowercase();
                 if is_natural_decline_phrase(&input) {
                     self.chat_input.clear();
@@ -2608,7 +2610,7 @@ impl App {
                         }
                     }
                     return;
-                } else if !input.is_empty() && is_natural_approval_phrase(&input) {
+                } else if input.is_empty() || is_natural_approval_phrase(&input) {
                     self.chat_input.clear();
                     self.cursor_pos = 0;
                     if let Some(mut pending) = self.pending_tool_approval.take() {
@@ -3020,7 +3022,13 @@ impl App {
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
                 last_msg.content.push_str(&chunk);
-                last_msg.command_proposal = extract_command_proposal(&last_msg.content);
+                if last_msg.content.contains("```")
+                    || last_msg.content.contains("<tool:")
+                    || last_msg.content.contains("<command>")
+                    || last_msg.content.contains("<invoke")
+                {
+                    last_msg.command_proposal = extract_command_proposal(&last_msg.content);
+                }
             }
         }
         self.chat_scroll_from_bottom = 0;
