@@ -17,9 +17,15 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
-- **`install.sh --voice-only`**: (re)configure the local voice input without reinstalling the binary — useful to retry right after installing a missing build tool. The installer also warns when Spiritty is running (it can rewrite `config.toml` and undo the `[voice]` patch) and points to this mode.
-
 ### Changed
+
+---
+
+## v0.9.3 — 2026-09-28
+
+### Added
+
+- **`install.sh --voice-only`**: (re)configure the local voice input without reinstalling the binary — useful to retry right after installing a missing build tool. The installer also warns when Spiritty is running (it can rewrite `config.toml` and undo the `[voice]` patch) and points to this mode.
 
 ### Fixed
 
