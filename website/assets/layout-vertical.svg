@@ -83,7 +83,7 @@
   <line x1="0" y1="650" x2="1200" y2="650" stroke="#243350"/>
   <rect x="0" y="650" width="1200" height="50" fill="#0b1220"/>
   <text class="mono white" x="18" y="682" font-size="14">deepseek-flash</text>
-  <text class="mono dim" x="150" y="682" font-size="14">🧠 Auto</text>
+  <text class="mono dim" x="150" y="682" font-size="14">🧠 Med</text>
   <text class="mono" x="234" y="682" font-size="14" fill="#fbbf24">⚡ 45k tok</text>
   <text class="mono" x="352" y="682" font-size="14" fill="#94a3b8">📊 Ctx: 8.2k / 131k (6%)</text>
   <text class="mono green" x="860" y="682" font-size="14">F3:Safe</text>
