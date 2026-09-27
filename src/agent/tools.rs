@@ -878,7 +878,48 @@ fn parse_json_or_xml_tool_call(text: &str) -> Option<ToolInvocation> {
         }
     }
 
+    // Last-resort recovery: the model narrated the command without the required directive,
+    // ending its answer with the raw shell lines and a stray backtick instead of a
+    // ```tool:run_command fence (observed live with deepseek-flash). Surface it as a
+    // RunCommand so the normal approval flow still handles it instead of doing nothing.
+    if let Some(tool) = recover_trailing_command_directive(text) {
+        return Some(tool);
+    }
+
     None
+}
+
+/// Recovers a command the model wrote without a recognized directive: the message ends
+/// with an unmatched backtick and its last paragraph is a (multi-line) executable shell
+/// block. Conservative by design — requires at least two shell lines, rejects properly
+/// fenced blocks, and reuses the same classifier as the command cards.
+fn recover_trailing_command_directive(text: &str) -> Option<ToolInvocation> {
+    let trimmed = text.trim_end();
+    // A real fenced block ends with ``` — never treat that as a stray marker.
+    let without_tick = trimmed.strip_suffix('`')?;
+    if without_tick.ends_with("``") {
+        return None;
+    }
+
+    // The command is the last paragraph (text after the last blank line).
+    let last_para = without_tick
+        .rsplit_once("\n\n")
+        .map(|(_, p)| p)
+        .unwrap_or(without_tick)
+        .trim();
+    let lines: Vec<&str> = last_para.lines().filter(|l| !l.trim().is_empty()).collect();
+    // A single inline-code token at the very end (`voici `ls``) is not a command.
+    if lines.len() < 2 || lines.len() > 16 {
+        return None;
+    }
+    if !crate::app::is_executable_command_block("", last_para) {
+        return None;
+    }
+    let cleaned = crate::app::sanitize_proposed_command(last_para);
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(ToolInvocation::RunCommand(cleaned))
 }
 
 fn extract_tool_from_json_or_str(input: &str) -> Option<ToolInvocation> {
@@ -1646,6 +1687,44 @@ mod tool_parse_tests {
     #[test]
     fn rejects_unclosed_html_style_tag_mention() {
         let text = "N'utilisez pas de balise <tool:run_command> dans votre texte explicatif.";
+        assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn recovers_command_narrated_without_directive() {
+        // Live regression (deepseek-flash): the command was written as raw lines ending with
+        // a stray backtick instead of a ```tool:run_command fence, so nothing ran.
+        let text = concat!(
+            "Je vérifie maintenant les 3 points critiques : déclaration du bundle, présence des deux fichiers `lib/`, et éventuelle entrée dans `cordis.patch.yml`.\n",
+            "\n",
+            "echo; echo \"== package.json après install ==\"; cat ~/.dsh/profiles/web/package.json\n",
+            "echo; echo \"== cordis.patch.yml après install ==\"; cat ~/.dsh/profiles/web/cordis.patch.yml\n",
+            "echo; echo \"== fichiers du plugin ==\"; find ~/.dsh/profiles/web/node_modules/@nn12138/dsh-voice -maxdepth 2 -type f \\( -name '*.js' -o -name '*.json' -o -name '*.md' \\) | sort\n",
+            "echo; echo \"== lib/ ==\"; ls -la ~/.dsh/profiles/web/node_modules/@nn12138/dsh-voice/lib/ 2>&1`",
+        );
+        match parse_tool_call(text) {
+            Some(ToolInvocation::RunCommand(cmd)) => {
+                assert!(cmd.starts_with("echo; echo \"== package.json"), "{cmd}");
+                assert!(cmd.contains("find ~/.dsh/profiles/web"), "{cmd}");
+                assert!(cmd.contains("ls -la ~/.dsh/profiles/web"), "{cmd}");
+                assert!(!cmd.ends_with('`'), "stray backtick must be stripped: {cmd}");
+            }
+            other => panic!("expected recovered RunCommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn does_not_recover_single_inline_code_at_end() {
+        // A normal answer ending with inline code must not be mistaken for a command.
+        assert_eq!(
+            parse_tool_call("Tu peux lister le dossier avec `ls -la`"),
+            None
+        );
+    }
+
+    #[test]
+    fn does_not_recover_properly_fenced_block() {
+        let text = "Voici :\n\n```bash\nls -la\ndf -h\n```";
         assert_eq!(parse_tool_call(text), None);
     }
 }
