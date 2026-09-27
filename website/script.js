@@ -36,7 +36,7 @@ const translations = {
         scenario_mcp: "🔌 Outils & Protocole MCP",
 
         feat_tag: "CONÇU POUR L'ADMINISTRATION SYSTÈME",
-        feat_title: "Pourquoi Spiritty surpasse les outils existants",
+        feat_title: "Ce que Spiritty vous apporte au quotidien",
         feat_desc: "Chaque détail a été pensé pour respecter l'ergonomie sacrée du terminal Linux et accélérer les opérations de production.",
         
         feat_1_title: "Split-Screen & Zéro Pollution",
@@ -132,7 +132,7 @@ const translations = {
         scenario_mcp: "🔌 MCP Tools Protocol",
 
         feat_tag: "BUILT FOR PRODUCTION SYSADMINS",
-        feat_title: "Why Spiritty Outperforms Existing Tools",
+        feat_title: "What Spiritty brings to your daily work",
         feat_desc: "Engineered specifically to respect the sanctity of your terminal while accelerating mission-critical server management.",
 
         feat_1_title: "Split-Screen & Zero Pollution",
