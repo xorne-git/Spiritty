@@ -50,7 +50,7 @@ const translations = {
         feat_5_title: "Support Protocole MCP",
         feat_5_desc: "Intégrez vos serveurs MCP (Model Context Protocol) en JSON-RPC pour connecter Docker, Kubernetes, bases de données et outils custom via la modale Ctrl+M.",
         feat_6_title: "Métriques Réelles & Coûts Live",
-        feat_6_desc: "Suivi exact du débit (tokens/s réels), décompte précis des fenêtres de contexte et estimation en direct du coût de votre session au centième de centime.",
+        feat_6_desc: "Suivi exact du débit (tokens/s réels), décompte précis des fenêtres de contexte et estimation en direct du coût de votre session au millième de dollar.",
         feat_7_title: "Entrée Vocale 100 % Locale",
         feat_7_desc: "Dictez directement dans le prompt : F7 en continu (une pause valide la phrase et l'envoie) ou F8 pour un segment. Capture par arecord/ffmpeg et transcription hors-ligne par whisper.cpp — rien ne quitte votre machine.",
 
@@ -146,7 +146,7 @@ const translations = {
         feat_5_title: "Model Context Protocol (MCP)",
         feat_5_desc: "Connect your MCP servers via JSON-RPC to inspect and invoke Docker, Kubernetes, database, or custom tooling via the interactive Ctrl+M modal.",
         feat_6_title: "Precise Metrics & Live Costs",
-        feat_6_desc: "True token throughput (tokens/s), real-time context budget tracking, and live session cost estimations down to a fraction of a cent.",
+        feat_6_desc: "True token throughput (tokens/s), real-time context budget tracking, and live session cost estimations down to a thousandth of a dollar.",
         feat_7_title: "100% Local Voice Input",
         feat_7_desc: "Dictate straight into the prompt: F7 for continuous mode (a pause validates and sends the sentence) or F8 for a single segment. Captured via arecord/ffmpeg and transcribed offline by whisper.cpp — nothing leaves your machine.",
 
