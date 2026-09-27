@@ -103,8 +103,7 @@
             <div class="installer-box">
                 <div class="installer-header">
                     <div class="installer-tabs">
-                        <button class="installer-tab active" data-target="official" data-i18n="install_tab_official">Officiel (spiritty.ai)</button>
-                        <button class="installer-tab" data-target="github" data-i18n="install_tab_github">Miroir GitHub (Raw)</button>
+                        <button class="installer-tab active" data-target="github" data-i18n="install_tab_github">GitHub (Raw)</button>
                     </div>
                     <div class="installer-badge">
                         <span>⚡ 1-Step Setup</span>
@@ -113,7 +112,7 @@
 
                 <div class="installer-body">
                     <div class="installer-command">
-                        <span class="cmd-prefix">$</span><span id="installCommand">curl -fsSL https://spiritty.ai/install.sh | bash</span>
+                        <span class="cmd-prefix">$</span><span id="installCommand">curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash</span>
                     </div>
                     <button id="copyInstallBtn" class="btn-copy">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -370,7 +369,7 @@
                             Détecte automatiquement votre architecture, installe le binaire dans ~/.local/bin et configure le lanceur bureau avec icône.
                         </p>
                         <div class="code-snippet">
-                            curl -fsSL https://spiritty.ai/install.sh | bash
+                            curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash
                         </div>
                     </div>
                 </div>

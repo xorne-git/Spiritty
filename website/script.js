@@ -17,7 +17,7 @@ const translations = {
         hero_title: "L'assistant IA pour terminal <span class=\"gradient-text\">nouvelle génération</span>",
         hero_subtitle: "Conçu par un sysadmin pour les sysadmins, ingénieurs DevOps et power users. Split-screen ergonomique : agent IA contextuel à gauche, shell PTY natif 100% interactif à droite.",
         install_tab_official: "Officiel (spiritty.ai)",
-        install_tab_github: "Miroir GitHub (Raw)",
+        install_tab_github: "GitHub (Raw)",
         copy_btn: "Copier",
         copied_btn: "Copié !",
         toast_copied: "Commande copiée dans le presse-papiers !",
@@ -113,7 +113,7 @@ const translations = {
         hero_title: "Next-generation AI terminal <span class=\"gradient-text\">split-screen companion</span>",
         hero_subtitle: "Built by a sysadmin for sysadmins, DevOps engineers, and power users. Ergonomic split-screen: proactive AI assistant on the left, fully interactive native PTY shell on the right.",
         install_tab_official: "Official (spiritty.ai)",
-        install_tab_github: "GitHub Mirror (Raw)",
+        install_tab_github: "GitHub (Raw)",
         copy_btn: "Copy",
         copied_btn: "Copied!",
         toast_copied: "Command copied to clipboard!",
@@ -717,24 +717,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // 3.2 Installer Tabs (spiritty.ai vs raw github)
-    const installTabs = document.querySelectorAll(".installer-tab");
+    // 3.2 Installer command (GitHub raw only — spiritty.ai is not live yet)
     const installCmdEl = document.getElementById("installCommand");
-    const cmdOfficial = "curl -fsSL https://spiritty.ai/install.sh | bash";
-    const cmdGithub = "curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash";
-
-    installTabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            installTabs.forEach(t => t.classList.remove("active"));
-            tab.classList.add("active");
-            const target = tab.dataset.target;
-            if (target === "official") {
-                installCmdEl.textContent = cmdOfficial;
-            } else {
-                installCmdEl.textContent = cmdGithub;
-            }
-        });
-    });
+    const cmdInstall = "curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash";
+    if (installCmdEl) installCmdEl.textContent = cmdInstall;
 
     // 3.3 One-Click Copy Functionality
     const copyBtn = document.getElementById("copyInstallBtn");
