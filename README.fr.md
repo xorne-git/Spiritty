@@ -67,7 +67,7 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 +-------------------------------------------------------------------------+
 ```
 
-> *Le schéma ci-dessus illustre l'affichage côte à côte (vertical). Spiritty démarre en **horizontal** (chat en haut, shell en bas) — appuyez sur `F4` pour basculer entre les deux.*
+> *Le schéma ci-dessus illustre l'affichage par défaut côte à côte (vertical). Spiritty démarre en **vertical** (chat à gauche, shell à droite) — appuyez sur `F4` pour basculer en horizontal (chat en haut) et sur `F5` pour inverser les deux panneaux.*
 
 ---
 
@@ -84,7 +84,7 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 
 ## 🚀 Fonctionnalités Clés
 
-- [x] **Split-Screen Ergonomique :** Agent IA et shell natif interactif (`$SHELL`) en **affichage horizontal par défaut** (chat en haut ~70 %, shell en bas) pour rester lisible sur un terminal peu large — bascule en côte à côte avec `F4`, redimensionnable à la souris ou via `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
+- [x] **Split-Screen Ergonomique :** Agent IA et shell natif interactif (`$SHELL`) en **affichage vertical par défaut** (côte à côte, chat à gauche ~50 %, shell à droite) — `F4` bascule en horizontal (chat en haut), `F5` inverse les deux panneaux (terminal à gauche/droite ou en haut/bas), redimensionnable à la souris ou via `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
 - [x] **Multi-Fournisseurs LLM :** Support complet pour LM Studio, Ollama local, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok) et Z.ai (GLM) avec détection automatique de la taille de contexte.
 - [x] **Gestionnaire de Sessions & Compactage :**
   - Sauvegarde et restauration complètes des sessions dans `~/.config/spiritty/sessions/`.
@@ -110,6 +110,7 @@ J'ai donc décidé de me mettre à Rust et de développer l'outil dont j'avais r
 - [x] **Niveaux d'Approbation (Auto-Approve) :**
   - Cycle rapide avec `F3` : 🟢 Safe / 🟡 Sudo / 🔴 YOLO / ⚫ Off.
 - [x] **Internationalisation (i18n) :** Français et Anglais avec détection automatique via `$LANG`.
+- [x] **Entrée Vocale 100 % Locale :** parlez à Spiritty et le texte arrive dans le prompt — `F7` pour la dictée continue avec détection de silence (transcrite et envoyée automatiquement) et `F8` pour un segment manuel. L'audio est capté par `arecord` / `ffmpeg` / `sox` puis transcrit hors-ligne par `whisper.cpp`, avec un badge live `● REC` / `⟳ Transcription…`. Rien ne quitte jamais votre machine.
 
 ---
 
@@ -143,6 +144,42 @@ spiritty --help
 
 ---
 
+## 🎙️ Entrée Vocale Locale (100 % hors-ligne)
+
+Spiritty peut dicter directement dans le prompt du chat sans envoyer un seul octet dans le cloud.
+
+**Prérequis (une seule fois) :** un enregistreur (`arecord` via *alsa-utils* sous Linux, ou `ffmpeg` / `sox`), puis [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`) et un modèle GGML.
+
+```bash
+# Exemple Linux
+sudo pacman -S alsa-utils            # ou : sudo apt install alsa-utils
+
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp ~/.local/opt/whisper.cpp
+cmake -S ~/.local/opt/whisper.cpp -B ~/.local/opt/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/.local/opt/whisper.cpp/build -j
+
+mkdir -p ~/.config/spiritty/models
+curl -fL -o ~/.config/spiritty/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+**Configuration** (`~/.config/spiritty/config.toml`) :
+
+```toml
+[voice]
+enabled         = true
+whisper_bin     = "~/.local/opt/whisper.cpp/build/bin/whisper-cli"  # ou "whisper-cli" s'il est dans le PATH
+model_path      = "~/.config/spiritty/models/ggml-small.bin"
+language        = "fr"     # vide = suivre la langue de l'interface
+silence_ms      = 1400     # dictée continue : pause qui clôt une phrase
+vad_threshold   = 0.015    # seuil RMS parole / silence
+auto_submit     = true     # envoyer la transcription automatiquement
+```
+
+Appuyez sur `F7` pour la dictée mains libres (une pause valide la phrase) ou `F8` pour enregistrer un seul segment ; un badge rouge `● REC` / jaune `⟳ Transcription…` montre l'état en direct.
+
+---
+
 ## ⌨️ Raccourcis Clavier Principaux
 
 | Raccourci | Action |
@@ -155,6 +192,9 @@ spiritty --help
 | `F6` | Basculer le focus (alias de `Ctrl + Espace`) |
 | `F3` | Changer le mode d'approbation automatique (Safe / Sudo / YOLO / Off) |
 | `F4` | Basculer l'affichage (horizontal : chat en haut / vertical : côte à côte) |
+| `F5` | Inverser les deux panneaux (chat ↔ terminal) dans l'affichage actif |
+| `F7` | Activer/désactiver la dictée continue avec détection de silence (100 % locale) |
+| `F8` | Dicter un segment vocal manuel (enregistrer → transcrire) |
 | `Ctrl + B` | Gestionnaire de serveurs SSH & favoris (Quick-Connect) |
 | `Ctrl + E` | Exporter la session active en rapport Markdown |
 | `Ctrl + F` | Rechercher dans l'historique du chat en temps réel |

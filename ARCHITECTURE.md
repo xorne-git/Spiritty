@@ -55,7 +55,8 @@ To embed a real terminal inside a Ratatui widget without disturbing the parent s
    - When the interface is resized (split slider or window resize), a `pty.resize(rows, cols)` notification is immediately sent to the slave PTY via `SIGWINCH`.
 
 4. **Split orientation (horizontal / vertical):**
-   - The workspace supports two orientations: a **horizontal** split (chat on top / terminal at the bottom — the default at ~70% chat height, suited to narrow terminals) and a **vertical** split (chat left / terminal right). `F4` toggles between them.
+   - The workspace supports two orientations: a **vertical** split (chat left / terminal right — the default at ~50% chat width) and a **horizontal** split (chat on top / terminal at the bottom, suited to narrow terminals). `F4` toggles between them.
+   - The **panel order** is independent of the orientation: `F5` flips it (terminal left / chat right, or terminal top / chat bottom), persisted as `split_swapped`. The divider position, mouse hit-testing and drag math are derived from both panel rects, so they hold in either order.
    - Each orientation keeps its own ratio (`split_ratio` for vertical, `split_ratio_horizontal` for horizontal), persisted in `~/.config/spiritty/config.toml`. Mouse dragging and `Alt + ←/→` (vertical) or `Alt + ↑/↓` (horizontal) adjust the active ratio; the PTY is resized automatically whenever the terminal panel's inner area changes, so both orientations stay accurate.
 
 ---
@@ -154,3 +155,22 @@ Spiritty includes a complete session manager and context-memory optimizer:
    - `compact_chat_messages` is a **pure** transformation: it mutates neither the live conversation nor the persisted session. `Session::compact()` is kept only for compatibility with older callers/tests.
 3. **Strict Jinja / LLM Template Compatibility:**
    - To respect the strict invariant of Hugging Face / Qwen / Llama 3 models (`System message must be at the beginning`), archived context messages are transmitted with the `user` role in streaming API requests, avoiding any HTTP 500 crash.
+
+---
+
+## 9. Local Voice Input (`voice::`)
+
+100% offline speech-to-text that injects dictated text into the chat prompt. No audio or text ever leaves the machine.
+
+1. **Subsystem layout (`src/voice/`):**
+   - `mod.rs` — `VoiceController` façade + the `run_voice_task` / `run_continuous` tasks.
+   - `capture.rs` — external-recorder backends (`arecord`, `ffmpeg`, `sox`) and the WAV writer.
+   - `vad.rs` — pure energy VAD state machine (RMS framing, silence timeout, max segment).
+   - `transcribe.rs` — local `whisper.cpp` (`whisper-cli`) invocation and transcript cleaning.
+2. **Modes:**
+   - **Manual (`F8`)** — tap to record a segment (recorder writes raw PCM to a temp file), tap again to stop, wrap it in a WAV header and transcribe.
+   - **Continuous (`F7`)** — the recorder streams raw PCM on **stdout**; a 30 ms-frame energy VAD closes the segment after `voice.silence_ms` of silence (or the `max_segment_ms` cap), then it is transcribed and the next segment starts immediately. This is the hands-free huddle behaviour.
+3. **Concurrency invariant (never block the event loop):** capture and transcription run inside dedicated `tokio` tasks; nothing touches the UI directly. Progress and results travel back exclusively through typed events: `AppEvent::VoiceStateChanged`, `AppEvent::VoiceTranscript { text, auto_submit }` and `AppEvent::VoiceError`. A `Notify` interrupts the streaming loop cleanly when continuous mode is toggled off.
+4. **Human-in-the-loop:** the transcript is inserted at the cursor in the prompt; it is only submitted automatically when `voice.auto_submit = true` (configurable). The voice feature itself is opt-in (`voice.enabled = false` by default).
+5. **UI feedback:** while dictating, the chat header and the footer shortcut bar show a red `● REC` (capturing) or yellow `⟳ Transcription…` (local Whisper running) badge.
+6. **No native build dependency:** by shelling out to an external recorder and `whisper-cli`, the default build keeps its dependency-free `cross`/CI release matrix intact; a future `voice-native` feature may embed `cpal` + `whisper-rs`. Model files live in `~/.config/spiritty/models/ggml-<size>.bin`.

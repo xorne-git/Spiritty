@@ -289,6 +289,139 @@ pub struct WebSearchConfig {
     pub tavily_api_key: Option<String>,
 }
 
+/// 100% local voice input settings (`[voice]` table in `config.toml`). Everything is
+/// opt-in (`enabled = false` by default) and never leaves the machine: audio is captured
+/// by an external recorder and transcribed by a local `whisper.cpp` binary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceConfig {
+    /// Master switch. While disabled, the voice shortcuts only show a hint.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Input mode: `"manual"` (tap to record a segment, Phase 1) or `"vad"` (continuous,
+    /// silenced-detected, Phase 2).
+    #[serde(default = "default_voice_mode")]
+    pub mode: String,
+    /// Capture backend: `"auto"` (first available), `"arecord"`, `"ffmpeg"` or `"sox"`.
+    #[serde(default = "default_voice_capture_backend")]
+    pub capture_backend: String,
+    /// Optional explicit path to the recorder binary (overrides PATH lookup).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recorder_bin: String,
+    /// Transcription engine. Only `"whisper-cli"` (whisper.cpp) is supported for now.
+    #[serde(default = "default_voice_engine")]
+    pub engine: String,
+    /// Optional explicit path to the `whisper-cli` binary (default: PATH lookup).
+    #[serde(default = "default_voice_whisper_bin")]
+    pub whisper_bin: String,
+    /// Path to the GGML model, `~` expanded. Default: `~/.config/spiritty/models/ggml-small.bin`.
+    #[serde(default = "default_voice_model_path")]
+    pub model_path: String,
+    /// Recognition language code (`"fr"`, `"en"`…). Empty = follow the UI language.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub language: String,
+    /// Input device name passed to the recorder. Empty = system default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub input_device: String,
+    /// Silence before a continuous segment is closed (Phase 2, VAD mode).
+    #[serde(default = "default_voice_silence_ms")]
+    pub silence_ms: u64,
+    /// RMS threshold (0.0–1.0) above which a frame is considered speech (VAD mode).
+    #[serde(default = "default_voice_vad_threshold")]
+    pub vad_threshold: f64,
+    /// Minimum speech duration for a segment to be kept (Phase 2, VAD mode).
+    #[serde(default = "default_voice_min_speech_ms")]
+    pub min_speech_ms: u64,
+    /// Hard cap on a single segment duration (Phase 2, VAD mode).
+    #[serde(default = "default_voice_max_segment_ms")]
+    pub max_segment_ms: u64,
+    /// When `true`, the transcript is submitted to the model immediately. Default `false`
+    /// (human-in-the-loop): the text is only inserted into the prompt for review.
+    #[serde(default)]
+    pub auto_submit: bool,
+}
+
+fn default_voice_mode() -> String {
+    "manual".to_string()
+}
+fn default_voice_capture_backend() -> String {
+    "auto".to_string()
+}
+fn default_voice_engine() -> String {
+    "whisper-cli".to_string()
+}
+fn default_voice_whisper_bin() -> String {
+    "whisper-cli".to_string()
+}
+fn default_voice_model_path() -> String {
+    "~/.config/spiritty/models/ggml-small.bin".to_string()
+}
+fn default_voice_silence_ms() -> u64 {
+    1400
+}
+fn default_voice_vad_threshold() -> f64 {
+    0.015
+}
+fn default_voice_min_speech_ms() -> u64 {
+    300
+}
+fn default_voice_max_segment_ms() -> u64 {
+    30_000
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: default_voice_mode(),
+            capture_backend: default_voice_capture_backend(),
+            recorder_bin: String::new(),
+            engine: default_voice_engine(),
+            whisper_bin: default_voice_whisper_bin(),
+            model_path: default_voice_model_path(),
+            language: String::new(),
+            input_device: String::new(),
+            silence_ms: default_voice_silence_ms(),
+            vad_threshold: default_voice_vad_threshold(),
+            min_speech_ms: default_voice_min_speech_ms(),
+            max_segment_ms: default_voice_max_segment_ms(),
+            auto_submit: false,
+        }
+    }
+}
+
+impl VoiceConfig {
+    /// Expands a leading `~` and returns the model path as an absolute `PathBuf`.
+    pub fn resolved_model_path(&self) -> std::path::PathBuf {
+        expand_tilde(&self.model_path)
+    }
+
+    /// Recognition language: the explicit `language` setting when set, else the UI language.
+    pub fn resolved_language(&self, ui: Language) -> String {
+        let trimmed = self.language.trim();
+        if trimmed.is_empty() {
+            ui.code().to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+}
+
+/// Expands a leading `~` (home directory) in a user-supplied path. Paths without `~` are
+/// returned unchanged.
+pub fn expand_tilde(path: &str) -> std::path::PathBuf {
+    let trimmed = path.trim();
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    } else if trimmed == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    std::path::PathBuf::from(trimmed)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoApproveLevel {
@@ -403,13 +536,13 @@ fn default_mcp_enabled() -> bool {
 
 /// Orientation of the chat/terminal split.
 ///
-/// `Horizontal` stacks the chat **on top** of the terminal (width-constrained shells stay
-/// readable); `Vertical` places them side by side. It can be toggled at runtime with `F4`
-/// and is persisted in `config.toml`.
+/// `Vertical` places the chat and the terminal side by side (chat on the left); `Horizontal`
+/// stacks the chat **on top** of the terminal (width-constrained shells stay readable). It can
+/// be toggled at runtime with `F4` and is persisted in `config.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitOrientation {
-    Vertical,
     #[default]
+    Vertical,
     Horizontal,
 }
 
@@ -421,12 +554,12 @@ impl SplitOrientation {
         }
     }
 
-    /// Parses a persisted orientation string, defaulting to `Horizontal` on anything
+    /// Parses a persisted orientation string, defaulting to `Vertical` on anything
     /// unrecognized (including legacy configs that predate the field).
     pub fn parse_or_default(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {
-            "vertical" | "v" | "column" => SplitOrientation::Vertical,
-            _ => SplitOrientation::Horizontal,
+            "horizontal" | "h" | "row" | "stack" => SplitOrientation::Horizontal,
+            _ => SplitOrientation::Vertical,
         }
     }
 
@@ -463,13 +596,20 @@ pub struct Config {
     /// Chat height percentage when the split is horizontal (chat on top). Defaults to 70.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_ratio_horizontal: Option<u16>,
-    /// Persisted split orientation ("horizontal" or "vertical"). Defaults to horizontal.
+    /// Persisted split orientation ("horizontal" or "vertical"). Defaults to vertical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_orientation: Option<String>,
+    /// Persisted panel order. `false` (default) keeps the chat first (left/top) and the
+    /// terminal second; `true` swaps them (terminal first, chat second).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_swapped: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export_dir: Option<String>,
+    /// 100% local voice input settings.
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 impl Default for Config {
@@ -504,9 +644,11 @@ impl Default for Config {
             system_prompt_file: None,
             split_ratio: Some(50),
             split_ratio_horizontal: Some(70),
-            split_orientation: Some("horizontal".to_string()),
+            split_orientation: Some("vertical".to_string()),
+            split_swapped: Some(false),
             theme: Some("spiritty_dark".to_string()),
             export_dir: None,
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -530,6 +672,11 @@ impl Config {
             SplitOrientation::Vertical => self.split_ratio.unwrap_or(50).clamp(15, 85),
             SplitOrientation::Horizontal => self.split_ratio_horizontal.unwrap_or(70).clamp(15, 85),
         }
+    }
+
+    /// Whether the panel order is flipped (terminal first, chat second). Defaults to `false`.
+    pub fn get_split_swapped(&self) -> bool {
+        self.split_swapped.unwrap_or(false)
     }
 
     pub fn get_theme(&self) -> String {

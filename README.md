@@ -67,7 +67,7 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 +-------------------------------------------------------------------------+
 ```
 
-> *The diagram above shows the side-by-side (vertical) view. Spiritty starts in the **horizontal** layout (chat on top, shell below) — press `F4` to switch between the two.*
+> *The diagram above shows the default side-by-side (vertical) view. Spiritty starts in the **vertical** layout (chat on the left, shell on the right) — press `F4` to switch to the horizontal layout (chat on top) and `F5` to swap the two panels.*
 
 ---
 
@@ -84,7 +84,7 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 
 ## 🚀 Key Features
 
-- [x] **Ergonomic Split-Screen:** AI Agent and native interactive shell (`$SHELL`) in a **horizontal layout by default** (chat on top ~70%, shell below) for readability on narrow terminals — switchable to side-by-side with `F4`, resizable by mouse drag or `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
+- [x] **Ergonomic Split-Screen:** AI Agent and native interactive shell (`$SHELL`) in a **vertical layout by default** (side by side, chat on the left ~50%, shell on the right) — `F4` switches to the stacked layout, `F5` swaps the two panels (terminal left/right or top/bottom), resizable by mouse drag or `Alt+←/→` (vertical) / `Alt+↑/↓` (horizontal).
 - [x] **Multi-Provider LLM Engine:** Native streaming support for LM Studio, Ollama, Google Gemini, Anthropic Claude, OpenAI, DeepSeek, xAI (Grok), and Z.ai (GLM) with dynamic context window auto-detection.
 - [x] **Session Management & Smart Compaction:**
   - Full session persistence stored in `~/.config/spiritty/sessions/`.
@@ -110,6 +110,7 @@ So I decided to learn Rust and build the tool I actually needed: SSH into a VPS,
 - [x] **Auto-Approve Policies:**
   - Fast cycling via `F3`: 🟢 Safe / 🟡 Sudo / 🔴 YOLO / ⚫ Off.
 - [x] **Internationalization (i18n):** Native English and French with automatic system locale detection (`$LANG`).
+- [x] **100% Local Voice Input:** speak into Spiritty and land the text in the prompt — `F7` for continuous, silence-detected dictation (transcribed and sent automatically) and `F8` for a manual segment. Audio is captured by `arecord` / `ffmpeg` / `sox` and transcribed offline by `whisper.cpp`, with a live `● REC` / `⟳ Transcription…` badge. Nothing ever leaves your machine.
 
 ---
 
@@ -143,6 +144,42 @@ spiritty --help
 
 ---
 
+## 🎙️ Local Voice Input (100% offline)
+
+Spiritty can dictate straight into the chat prompt without sending a single byte to the cloud.
+
+**Prerequisites (one-time):** a recorder (`arecord` from *alsa-utils* on Linux, or `ffmpeg` / `sox`), plus [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`) and a GGML model.
+
+```bash
+# Linux example
+sudo pacman -S alsa-utils            # or: sudo apt install alsa-utils
+
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp ~/.local/opt/whisper.cpp
+cmake -S ~/.local/opt/whisper.cpp -B ~/.local/opt/whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/.local/opt/whisper.cpp/build -j
+
+mkdir -p ~/.config/spiritty/models
+curl -fL -o ~/.config/spiritty/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+**Configuration** (`~/.config/spiritty/config.toml`):
+
+```toml
+[voice]
+enabled         = true
+whisper_bin     = "~/.local/opt/whisper.cpp/build/bin/whisper-cli"  # or "whisper-cli" if on PATH
+model_path      = "~/.config/spiritty/models/ggml-small.bin"
+language        = "fr"     # empty = follow the UI language
+silence_ms      = 1400     # continuous mode: pause that closes a sentence
+vad_threshold   = 0.015    # speech / silence RMS threshold
+auto_submit     = true     # send the transcript automatically
+```
+
+Press `F7` for hands-free dictation (pause to validate) or `F8` to record a single segment; a red `● REC` / yellow `⟳ Transcription…` badge shows the live state.
+
+---
+
 ## ⌨️ Primary Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -155,6 +192,9 @@ spiritty --help
 | `F6` | Toggle focus (alias of `Ctrl + Space`) |
 | `F3` | Cycle Auto-Approve policy (Safe / Sudo / YOLO / Off) |
 | `F4` | Toggle split layout (horizontal: chat on top / vertical: side by side) |
+| `F5` | Swap the two panels (chat ↔ terminal) within the active layout |
+| `F7` | Toggle continuous, silence-detected voice dictation (100% local) |
+| `F8` | Dictate a manual voice segment (record → transcribe) |
 | `Ctrl + B` | Quick-Connect SSH servers & bookmarks manager |
 | `Ctrl + E` | Export current session to formatted Markdown report |
 | `Ctrl + F` | Search in chat history with real-time match navigation |

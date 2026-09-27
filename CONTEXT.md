@@ -27,3 +27,17 @@ _Avoid_: Permission level, execution mode, safety tier
 **CommandProposal**:
 An executable shell command synthesized by the AI agent, surfaced to the user as an interactive proposal card (`Alt+1..9`) or executed automatically if permitted by the active ApprovalLevel.
 _Avoid_: Suggested command, code block, action snippet
+
+### Voice Input
+
+**VoiceController**:
+The façade owning the local dictation tasks (capture + Whisper transcription) and sending progress back to the app through typed `AppEvent::Voice*` messages.
+_Avoid_: Speech manager, mic service
+
+**VoiceState**:
+The lifecycle of local dictation: `Off` (disabled), `Idle`, `Recording` (capturing), `Transcribing` (local Whisper running).
+_Avoid_: Mic status, recording mode
+
+**VAD** (Voice Activity Detection):
+The pure energy detector that closes a continuous dictation segment after a run of silence, enabling hands-free "speak then pause to send" behaviour.
+_Avoid_: Silence timer, noise gate

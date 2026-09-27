@@ -289,6 +289,24 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
     ));
 
     lines.push(make_help_row(
+        key_pill("F5", Color::Cyan),
+        lang.t(I18nKey::HelpDescSwapPanels),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("F7", Color::Rgb(255, 165, 0)),
+        lang.t(I18nKey::HelpDescVoiceContinuous),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("F8", Color::Rgb(255, 165, 0)),
+        lang.t(I18nKey::HelpDescVoiceSegment),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
         key_pill(format!("{} + T", lang.t(I18nKey::HelpKeyCtrl)), Color::Cyan),
         lang.t(I18nKey::HelpDescNewTab),
         key_col_w,

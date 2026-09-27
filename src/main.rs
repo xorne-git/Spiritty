@@ -280,6 +280,21 @@ fn handle_app_event(
             app.on_pricing_updated(res);
             *should_render = true;
         }
+        AppEvent::VoiceStateChanged(state) => {
+            app.on_voice_state_changed(state);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::VoiceTranscript { text, auto_submit } => {
+            app.on_voice_transcript(text, auto_submit);
+            *should_render = true;
+            *immediate_render = true;
+        }
+        AppEvent::VoiceError(err) => {
+            app.on_voice_error(err);
+            *should_render = true;
+            *immediate_render = true;
+        }
         AppEvent::Tick => {
             app.on_tick();
             if app.agent.is_generating || app.active_pty_tool.is_some() || app.is_dragging_split {

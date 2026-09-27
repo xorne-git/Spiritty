@@ -119,6 +119,9 @@ pub enum I18nKey {
     HelpDescScroll,
     HelpDescResizePanels,
     HelpDescToggleOrientation,
+    HelpDescSwapPanels,
+    HelpDescVoiceSegment,
+    HelpDescVoiceContinuous,
     HelpDescConfigModal,
     HelpDescSessionModal,
     HelpDescNewSession,
@@ -133,6 +136,7 @@ pub enum I18nKey {
     HelpDescNextTab,
     HelpDescPrevTab,
     FooterApprovalLabel,
+    FooterVoiceLabel,
     HelpDescToggleHelp,
     HelpDescQuit,
     HelpDescCloseModal,
@@ -188,6 +192,19 @@ pub enum I18nKey {
     // Layout / split toasts
     ToastLayoutHorizontal,
     ToastLayoutVertical,
+    ToastLayoutVerticalSwapped,
+    ToastLayoutHorizontalSwapped,
+
+    // Local voice input
+    VoiceDisabledHint,
+    VoiceRecordingToast,
+    VoiceTranscribingToast,
+    VoiceTranscribedHint,
+    VoiceError,
+    VoiceContinuousOnToast,
+    VoiceContinuousOffToast,
+    VoiceBadgeRecording,
+    VoiceBadgeTranscribing,
 
     // Agent System Prompts
     AgentLanguageInstruction,

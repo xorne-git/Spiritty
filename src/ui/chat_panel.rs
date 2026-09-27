@@ -75,6 +75,31 @@ impl<'a> ChatPanel<'a> {
                 .add_modifier(Modifier::BOLD),
         );
 
+        // 2b. Live voice badge next to the title while dictating, so the user can see the
+        // sentence is being recorded / transcribed (100% local).
+        let voice_badge = match self.app.voice_state {
+            crate::voice::VoiceState::Recording => {
+                Some((lang.t(I18nKey::VoiceBadgeRecording), Color::Red))
+            }
+            crate::voice::VoiceState::Transcribing => {
+                Some((lang.t(I18nKey::VoiceBadgeTranscribing), Color::Yellow))
+            }
+            _ => None,
+        };
+        if let Some((label, color)) = voice_badge {
+            let title_w = str_visual_width(&title_text) as u16;
+            let label_w = str_visual_width(label) as u16;
+            let x = area.left() + 1 + title_w + 2;
+            if x + label_w <= area.right() {
+                buf.set_string(
+                    x,
+                    area.top(),
+                    label,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+
         // 3. Define content areas (no left, right or bottom borders)
         let preview_zone = preview_rows.saturating_add(1); // preview rows + status caption
         let prompt_total_zone = needed_input_height

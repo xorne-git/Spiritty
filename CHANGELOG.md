@@ -15,6 +15,26 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ## Unreleased
 
+### Added
+
+### Changed
+
+---
+
+## v0.9.0 — 2026-09-27
+
+### Added
+
+- **Live voice status indicator**: while dictating, the chat header and the footer shortcut bar show a red `● REC` badge (capturing) or a yellow `⟳ Transcription…` badge (local Whisper running), so the phrase in progress is always visible.
+- **Local voice input — continuous dictation with silence auto-send (`F7`, Phase 2)**: keep the microphone open and speak; an energy VAD closes the segment after a configurable silence (`voice.silence_ms`, default 1.4 s) or a max-segment cap, then transcribes it locally and, when `voice.auto_submit = true`, sends it to the model automatically — the hands-free huddle behaviour. The segment, recorder and transcription all run in dedicated tasks; `F7` toggles the mode, the footer badge reads `F7/F8 Voix` and the help modal documents both. New `voice.vad_threshold` setting.
+- **100% local voice input — manual segment (`F8`, Phase 1)**: press `F8` to record a segment through an external recorder (`arecord`, `ffmpeg` or `sox` — auto-detected), press `F8` again to stop, and a local `whisper.cpp` binary (`whisper-cli`) transcribes it offline into the chat prompt. Nothing leaves the machine; the transcript is inserted for review and only submitted automatically when `voice.auto_submit = true`. New `[voice]` section in `~/.config/spiritty/config.toml` (`enabled`, `capture_backend`, `whisper_bin`, `model_path`, `language`, `input_device`, `silence_ms`…), a footer badge (`F8 Voix`), a help-modal row and French/English i18n strings. The recorder and Whisper run in a dedicated task and report back through typed events, so the UI event loop is never blocked.
+- **Swappable panel order (`F5`)**: the chat and terminal panels can now be flipped within the active layout — terminal left / chat right in the vertical split, or terminal top / chat bottom in the horizontal split — with a single `F5` press. The choice is persisted as `split_swapped` in `~/.config/spiritty/config.toml`, the divider stays draggable (mouse and `Alt + ←/→` / `Alt + ↑/↓`) and focus, scrolling and PTY sizing all follow the swapped panels.
+
+### Changed
+
+- **`F5` surfaced in the UI**: the swap-panel shortcut is now listed in the `F1` help modal and in the bottom status bar (`F5 Inverser` / `F5 Swap`), alongside `F4`.
+- **Vertical split is now the default layout**: Spiritty launches side by side (chat on the left at ~50% width, PTY shell on the right) instead of the stacked horizontal layout. `F4` still toggles between the two, and each orientation keeps its own persisted ratio (`split_orientation`, `split_ratio`, `split_ratio_horizontal`) in `~/.config/spiritty/config.toml`. Legacy configs without `split_orientation` now fall back to vertical.
+
 ---
 
 ## v0.8.0 — 2026-09-22

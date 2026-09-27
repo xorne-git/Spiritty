@@ -47,11 +47,13 @@ src/
 ├── session/           # Persistence ~/.config/spiritty/sessions/ + context compaction; storage.rs
 ├── pricing/           # Token costs (assets/pricing.json)
 ├── i18n/              # mod.rs (I18nKey enum), fr.rs, en.rs
+├── voice/             # mod.rs (controller + tasks), capture.rs (arecord/ffmpeg/sox), vad.rs, transcribe.rs (whisper-cli)
 └── config/            # ~/.config/spiritty/config.toml + system_prompt.md override
 ```
 
 - **LLM providers**: every OpenAI-compatible brand (DeepSeek, Z.ai/GLM, Grok, LM Studio...) goes through `providers/openai.rs` — do not create one file per brand. "Reasoning" models handle the `reasoning_content` field there (folded into `<think>…</think>` blocks).
 - **SSH context**: profiling of remote servers (`/proc` detection, `hosts.json` cache) adapts the system prompt to the remote distribution — see `src/system/hosts.rs`.
+- **Local voice input**: 100% offline STT. `voice::VoiceController` owns dedicated tasks; capture shells out to an external recorder and transcription to `whisper-cli` (no native build dependency), reporting through `AppEvent::Voice*`. `F7` = continuous VAD dictation, `F8` = manual segment. See `docs/plans/2026-09-27_local_voice_stt.md`.
 
 ---
 

@@ -59,6 +59,9 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescToggleOrientation => {
             "Basculer horizontal (haut/bas) / vertical (côte à côte)"
         }
+        I18nKey::HelpDescSwapPanels => "Inverser l'ordre des panneaux (chat ↔ terminal)",
+        I18nKey::HelpDescVoiceSegment => "Dicter un segment vocal (enregistrer → transcrire, 100 % local)",
+        I18nKey::HelpDescVoiceContinuous => "Dictée continue (silence → envoi auto, 100 % local)",
         I18nKey::HelpDescConfigModal => "Configuration des modèles & clés API",
         I18nKey::HelpDescSessionModal => "Historique & gestion des sessions",
         I18nKey::HelpDescNewSession => "Démarrer une nouvelle session",
@@ -73,6 +76,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescNextTab => "Basculer vers l'onglet suivant",
         I18nKey::HelpDescPrevTab => "Basculer vers l'onglet précédent",
         I18nKey::FooterApprovalLabel => "Approbation : ",
+        I18nKey::FooterVoiceLabel => "Voix",
         I18nKey::HelpDescToggleHelp => "Ouvrir ou fermer cette aide",
         I18nKey::HelpDescQuit => "Quitter Spiritty",
         I18nKey::HelpDescCloseModal => "Fermer la modale active",
@@ -131,6 +135,25 @@ pub fn translate(key: I18nKey) -> &'static str {
         // Layout / split toasts
         I18nKey::ToastLayoutHorizontal => "Affichage horizontal : Chat en haut, Terminal en bas",
         I18nKey::ToastLayoutVertical => "Affichage vertical : Chat à gauche, Terminal à droite",
+        I18nKey::ToastLayoutVerticalSwapped => {
+            "Affichage vertical : Terminal à gauche, Chat à droite"
+        }
+        I18nKey::ToastLayoutHorizontalSwapped => {
+            "Affichage horizontal : Terminal en haut, Chat en bas"
+        }
+
+        // Local voice input
+        I18nKey::VoiceDisabledHint => {
+            "Entrée vocale désactivée : activez [voice] dans la configuration"
+        }
+        I18nKey::VoiceRecordingToast => "🎙 Enregistrement… appuyez à nouveau sur F8 pour arrêter",
+        I18nKey::VoiceTranscribingToast => "Transcription locale en cours…",
+        I18nKey::VoiceTranscribedHint => "Transcription insérée dans le prompt (F7/F8 pour redicter)",
+        I18nKey::VoiceError => "Erreur d'entrée vocale : ",
+        I18nKey::VoiceContinuousOnToast => "Dictée continue activée (parlez, le silence valide)",
+        I18nKey::VoiceContinuousOffToast => "Dictée continue désactivée",
+        I18nKey::VoiceBadgeRecording => "● REC",
+        I18nKey::VoiceBadgeTranscribing => "⟳ Transcription…",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => {

@@ -140,16 +140,16 @@ fn test_split_ratio_and_theme_persistence() {
     use spiritty::config::SplitOrientation;
     use spiritty::ui::theme::ThemeId;
 
-    // Default: horizontal split (chat on top) with 70% chat height; vertical keeps 50% width
+    // Default: vertical split (side by side) with 50% chat width; horizontal keeps 70% height
     let cfg_default = Config::default();
     assert_eq!(
         cfg_default.get_split_orientation(),
-        SplitOrientation::Horizontal
+        SplitOrientation::Vertical
     );
-    assert_eq!(cfg_default.get_split_ratio(), 70);
+    assert_eq!(cfg_default.get_split_ratio(), 50);
     assert_eq!(
-        cfg_default.get_split_ratio_for(SplitOrientation::Vertical),
-        50
+        cfg_default.get_split_ratio_for(SplitOrientation::Horizontal),
+        70
     );
     assert_eq!(cfg_default.get_theme(), "spiritty_dark");
 
@@ -170,12 +170,12 @@ theme = "tokyo_night"
         ThemeId::TokyoNight
     );
 
-    // Legacy config without an orientation field defaults to horizontal (70% chat height),
+    // Legacy config without an orientation field defaults to vertical (50% chat width),
     // while the historical `split_ratio` value is preserved for the vertical layout.
     let legacy: Config = toml::from_str("split_ratio = 42").unwrap();
-    assert_eq!(legacy.get_split_orientation(), SplitOrientation::Horizontal);
-    assert_eq!(legacy.get_split_ratio(), 70);
-    assert_eq!(legacy.get_split_ratio_for(SplitOrientation::Vertical), 42);
+    assert_eq!(legacy.get_split_orientation(), SplitOrientation::Vertical);
+    assert_eq!(legacy.get_split_ratio(), 42);
+    assert_eq!(legacy.get_split_ratio_for(SplitOrientation::Horizontal), 70);
 
     // Test clamp on split ratio
     let clamped_low: Config = toml::from_str("split_ratio = 5").unwrap();
@@ -203,17 +203,17 @@ fn test_split_orientation_parse_and_toggle() {
         SplitOrientation::parse_or_default("VERTICAL"),
         SplitOrientation::Vertical
     );
-    // Unknown / empty strings fall back to horizontal
+    // Unknown / empty strings fall back to vertical
     assert_eq!(
         SplitOrientation::parse_or_default("sideways"),
-        SplitOrientation::Horizontal
+        SplitOrientation::Vertical
     );
     assert_eq!(
         SplitOrientation::parse_or_default(""),
-        SplitOrientation::Horizontal
+        SplitOrientation::Vertical
     );
 
-    assert_eq!(SplitOrientation::default(), SplitOrientation::Horizontal);
+    assert_eq!(SplitOrientation::default(), SplitOrientation::Vertical);
     assert_eq!(
         SplitOrientation::Horizontal.toggle(),
         SplitOrientation::Vertical
@@ -232,6 +232,31 @@ fn test_split_orientation_parse_and_toggle() {
         SplitOrientation::parse_or_default(SplitOrientation::Vertical.key_str()),
         SplitOrientation::Vertical
     );
+}
+
+#[test]
+fn test_split_swapped_persistence() {
+    // Default: chat first (not swapped).
+    assert!(!Config::default().get_split_swapped());
+
+    // Missing field falls back to false (legacy configs keep the chat first).
+    let legacy: Config = toml::from_str("split_orientation = \"vertical\"").unwrap();
+    assert!(!legacy.get_split_swapped());
+
+    // Explicit value round-trips through (de)serialization.
+    let swapped: Config = toml::from_str("split_swapped = true").unwrap();
+    assert!(swapped.get_split_swapped());
+    let serialized = toml::to_string(&swapped).unwrap();
+    assert!(serialized.contains("split_swapped = true"));
+
+    // The flag is independent from the orientation.
+    let cfg: Config =
+        toml::from_str("split_orientation = \"horizontal\"\nsplit_swapped = true").unwrap();
+    assert_eq!(
+        cfg.get_split_orientation(),
+        spiritty::config::SplitOrientation::Horizontal
+    );
+    assert!(cfg.get_split_swapped());
 }
 
 #[test]
@@ -323,4 +348,62 @@ models = ["gemini-3.8-flash"]
 
     let serialized_with_effort = toml::to_string(&cfg).unwrap();
     assert!(serialized_with_effort.contains("reasoning_effort = \"medium\""));
+}
+
+#[test]
+fn test_voice_config_defaults_and_persistence() {
+    use spiritty::config::expand_tilde;
+    use spiritty::i18n::Language;
+
+    // 1. Opt-in defaults.
+    let cfg = Config::default();
+    assert!(!cfg.voice.enabled);
+    assert_eq!(cfg.voice.mode, "manual");
+    assert_eq!(cfg.voice.capture_backend, "auto");
+    assert_eq!(cfg.voice.engine, "whisper-cli");
+    assert_eq!(cfg.voice.whisper_bin, "whisper-cli");
+    assert_eq!(cfg.voice.silence_ms, 1400);
+    assert!((cfg.voice.vad_threshold - 0.015).abs() < 1e-6);
+    assert_eq!(cfg.voice.min_speech_ms, 300);
+    assert_eq!(cfg.voice.max_segment_ms, 30_000);
+    assert!(!cfg.voice.auto_submit);
+
+    // 2. A legacy config without a [voice] table loads with defaults.
+    let legacy: Config = toml::from_str("split_ratio = 42").unwrap();
+    assert!(!legacy.voice.enabled);
+    assert_eq!(legacy.voice.mode, "manual");
+
+    // 3. Explicit values round-trip through (de)serialization.
+    let toml_data = r#"
+[voice]
+enabled = true
+mode = "vad"
+language = "fr"
+auto_submit = true
+silence_ms = 900
+"#;
+    let parsed: Config = toml::from_str(toml_data).unwrap();
+    assert!(parsed.voice.enabled);
+    assert_eq!(parsed.voice.mode, "vad");
+    assert_eq!(parsed.voice.silence_ms, 900);
+    assert!(parsed.voice.auto_submit);
+
+    let serialized = toml::to_string(&parsed).unwrap();
+    assert!(serialized.contains("[voice]"));
+    assert!(serialized.contains("mode = \"vad\""));
+    assert!(serialized.contains("silence_ms = 900"));
+
+    // 4. Recognition language: explicit value wins, empty follows the UI language.
+    assert_eq!(parsed.voice.resolved_language(Language::En), "fr");
+    let mut voice = Config::default().voice;
+    voice.language = String::new();
+    assert_eq!(voice.resolved_language(Language::Fr), "fr");
+    assert_eq!(voice.resolved_language(Language::En), "en");
+
+    // 5. `~` expansion for the model path.
+    assert!(expand_tilde("~/models/ggml-small.bin").ends_with("models/ggml-small.bin"));
+    assert_eq!(
+        expand_tilde("/absolute/model.bin"),
+        std::path::PathBuf::from("/absolute/model.bin")
+    );
 }

@@ -18,9 +18,13 @@ use crate::{
     app::{App, Focus},
     config::SplitOrientation,
     i18n::{I18nKey, Language},
+    voice::VoiceState,
 };
 use chat_panel::ChatPanel;
 use terminal_panel::TerminalPanel;
+
+/// Accent colour for the local voice-input shortcut in the footer.
+const VOICE_COLOR: Color = Color::Rgb(255, 165, 0);
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
@@ -38,23 +42,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let footer_area = vertical_chunks[2];
 
     // 2. Split the workspace according to the active orientation:
-    //    - Vertical: Chat left / Terminal right (side by side)
-    //    - Horizontal: Chat top / Terminal bottom (best on narrow terminals)
+    //    - Vertical: two columns (side by side)
+    //    - Horizontal: two rows (stacked, best on narrow terminals)
+    // The panel order (chat first vs terminal first) is then applied via `split_swapped`.
+    // `split_ratio` always encodes the chat size, so the terminal gets the complement when
+    // it is the first (left/top) panel.
+    let first_ratio = if app.split_swapped {
+        100 - app.split_ratio
+    } else {
+        app.split_ratio
+    };
     let body_chunks = match app.split_orientation {
         SplitOrientation::Vertical => Layout::horizontal([
-            Constraint::Percentage(app.split_ratio),
-            Constraint::Percentage(100 - app.split_ratio),
+            Constraint::Percentage(first_ratio),
+            Constraint::Percentage(100 - first_ratio),
         ])
         .split(workspace_area),
         SplitOrientation::Horizontal => Layout::vertical([
-            Constraint::Percentage(app.split_ratio),
-            Constraint::Percentage(100 - app.split_ratio),
+            Constraint::Percentage(first_ratio),
+            Constraint::Percentage(100 - first_ratio),
         ])
         .split(workspace_area),
     };
 
-    let chat_area = body_chunks[0];
-    let terminal_area = body_chunks[1];
+    // Chat first by default (left/top); `F5` swaps the two panels.
+    let first_area = body_chunks[0];
+    let second_area = body_chunks[1];
+    let (chat_area, terminal_area) = if app.split_swapped {
+        (second_area, first_area)
+    } else {
+        (first_area, second_area)
+    };
 
     app.chat_area = chat_area;
     app.terminal_area = terminal_area;
@@ -114,13 +132,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     };
     match app.split_orientation {
         SplitOrientation::Vertical => {
-            let split_x = chat_area.right().saturating_sub(1);
+            let split_x = first_area.right().saturating_sub(1);
             for y in workspace_area.top()..workspace_area.bottom() {
                 buf.set_string(split_x, y, "│", split_style);
             }
         }
         SplitOrientation::Horizontal => {
-            let split_y = chat_area.bottom().saturating_sub(1);
+            let split_y = first_area.bottom().saturating_sub(1);
             for x in workspace_area.left()..workspace_area.right() {
                 buf.set_string(x, split_y, "─", split_style);
             }
@@ -299,16 +317,23 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> Vec<Span<'static>> {
-    right_shortcut_spans(lang, app.config.auto_approve, available_width)
+    right_shortcut_spans(
+        lang,
+        app.config.auto_approve,
+        app.voice_state,
+        available_width,
+    )
 }
 
 /// Builds the right-hand footer shortcuts, prioritising (in order) **F3 approval, Config,
-/// F4 and F1**. Optional groups (Sessions, MCP, Hosts) are pulled in only when they fit,
-/// and rendering degrades from bracketed pills to compact badges and then to bare keys
-/// before any of the four essentials is dropped (F1 is always kept last).
+/// F4, F5, F7/F8 voice and F1**. Optional groups (Sessions, MCP, Hosts) are pulled in only
+/// when they fit, and rendering degrades from bracketed pills to compact badges and then to
+/// bare keys before any of the essentials is dropped (F1 is always kept last). The voice
+/// item reflects the live state (`● REC` / `⟳ Transcription…`) while dictating.
 fn right_shortcut_spans(
     lang: Language,
     auto_approve: crate::config::AutoApproveLevel,
+    voice_state: VoiceState,
     available_width: usize,
 ) -> Vec<Span<'static>> {
     use crate::config::AutoApproveLevel;
@@ -324,6 +349,8 @@ fn right_shortcut_spans(
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
     let help_label = if lang == Language::Fr { "Aide" } else { "Help" };
+    let swap_label = if lang == Language::Fr { "Inverser" } else { "Swap" };
+    let voice_label = lang.t(I18nKey::FooterVoiceLabel);
 
     struct Item {
         /// Rich: `[ Ctrl + P ] Config `.
@@ -360,7 +387,33 @@ fn right_shortcut_spans(
         )]
     };
 
-    // Display order: F3 approval | Config | Hosts | MCP | Sessions | F4 layout | F1 help.
+    // Voice shortcut: while dictating, the item becomes a live state badge so the user can
+    // see the sentence is being recorded / transcribed; otherwise it advertises `F7/F8`.
+    let (voice_pill, voice_compact, voice_keys) = match voice_state {
+        VoiceState::Recording | VoiceState::Transcribing => {
+            let recording = voice_state == VoiceState::Recording;
+            let label = lang.t(if recording {
+                I18nKey::VoiceBadgeRecording
+            } else {
+                I18nKey::VoiceBadgeTranscribing
+            });
+            let color = if recording {
+                Color::Red
+            } else {
+                Color::Yellow
+            };
+            let mut spans = key_pill(label.to_string(), color);
+            spans.push(Span::raw(" "));
+            (spans.clone(), spans.clone(), spans)
+        }
+        _ => (
+            pill("F7/F8".to_string(), VOICE_COLOR, voice_label),
+            compact("[F7/F8]", VOICE_COLOR, voice_label),
+            bare("[F7/F8]", VOICE_COLOR),
+        ),
+    };
+
+    // Display order: F3 approval | Config | Hosts | MCP | Sessions | F4 layout | F5 swap | F8 voice | F1 help.
     let items: Vec<Item> = vec![
         Item {
             pill: {
@@ -419,6 +472,16 @@ fn right_shortcut_spans(
             keys: bare("[F4]", Color::Cyan),
         },
         Item {
+            pill: pill("F5".to_string(), Color::Cyan, swap_label),
+            compact: compact("[F5]", Color::Cyan, swap_label),
+            keys: bare("[F5]", Color::Cyan),
+        },
+        Item {
+            pill: voice_pill.clone(),
+            compact: voice_compact.clone(),
+            keys: voice_keys.clone(),
+        },
+        Item {
             pill: pill("F1".to_string(), Color::Cyan, help_label),
             compact: compact("[F1]", Color::Cyan, help_label),
             keys: bare("[F1]", Color::Cyan),
@@ -441,7 +504,7 @@ fn right_shortcut_spans(
     };
 
     // Essentials always present unless the terminal is extremely narrow.
-    let essential = [0usize, 1, 5, 6]; // F3, Config, F4, F1
+    let essential = [0usize, 1, 5, 6, 7, 8]; // F3, Config, F4, F5, F8, F1
     let optional_by_importance = [4usize, 3, 2]; // Sessions, MCP, Hosts
 
     // Richest style whose essentials fit; falls back to bare keys.
@@ -460,9 +523,9 @@ fn right_shortcut_spans(
         }
     }
 
-    // If even the bare keys do not fit, drop F3 then F4 then Config, keeping F1 for last.
+    // If even the bare keys do not fit, drop F3 then F4 then F5 then F8 then Config, keeping F1 last.
     if group_total(style, &chosen) > available_width {
-        for &drop in &[0usize, 5, 1] {
+        for &drop in &[0usize, 5, 6, 7, 1] {
             if group_total(style, &chosen) <= available_width {
                 break;
             }
@@ -1103,28 +1166,31 @@ mod tests {
     }
 
     #[test]
-    fn footer_prioritizes_f3_config_f4_f1() {
-        let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 200);
+    fn footer_prioritizes_f3_config_f4_f5_voice_f1() {
+        let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 240);
         let t = text(&spans);
-        for expected in ["F3", "Config", "F4", "F1"] {
+        for expected in ["F3", "Config", "F4", "F5", "F7/F8", "F1"] {
             assert!(t.contains(expected), "footer missing `{expected}`: {t}");
         }
         let i_f3 = t.find("F3").expect("F3");
         let i_cfg = t.find("Config").expect("Config");
         let i_f4 = t.find("F4").expect("F4");
+        let i_f5 = t.find("F5").expect("F5");
+        let i_voice = t.find("F7/F8").expect("F7/F8");
         let i_f1 = t.find("F1").expect("F1");
         assert!(
-            i_f3 < i_cfg && i_cfg < i_f4 && i_f4 < i_f1,
-            "footer order must be F3 -> Config -> F4 -> F1: {t}"
+            i_f3 < i_cfg && i_cfg < i_f4 && i_f4 < i_f5 && i_f5 < i_voice && i_voice < i_f1,
+            "footer order must be F3 -> Config -> F4 -> F5 -> F7/F8 -> F1: {t}"
         );
     }
 
     #[test]
     fn footer_keeps_essentials_when_narrow() {
-        // Mid width: optional groups are dropped first, essentials remain.
-        let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 60);
+        // Mid width: optional groups are dropped first, essentials remain (compact style
+        // still fits, so labels like "Config" are present).
+        let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 90);
         let mt = text(&mid);
-        for expected in ["F3", "Config", "F4", "F1"] {
+        for expected in ["F3", "Config", "F4", "F5", "F7/F8", "F1"] {
             assert!(
                 mt.contains(expected),
                 "essential `{expected}` dropped: {mt}"
@@ -1136,12 +1202,37 @@ mod tests {
         let tiny = text(&right_shortcut_spans(
             Language::En,
             AutoApproveLevel::Safe,
+            VoiceState::Idle,
             5,
         ));
         assert!(tiny.contains("F1"));
         assert!(!tiny.contains("F4"));
 
         // Below the floor: nothing is rendered.
-        assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 2).is_empty());
+        assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 2)
+            .is_empty());
+    }
+
+    #[test]
+    fn footer_shows_voice_state_badge_while_dictating() {
+        let recording = text(&right_shortcut_spans(
+            Language::En,
+            AutoApproveLevel::Safe,
+            VoiceState::Recording,
+            200,
+        ));
+        assert!(recording.contains("REC"), "expected REC badge: {recording}");
+        assert!(recording.contains("F1"));
+
+        let transcribing = text(&right_shortcut_spans(
+            Language::En,
+            AutoApproveLevel::Safe,
+            VoiceState::Transcribing,
+            200,
+        ));
+        assert!(
+            transcribing.contains("Transcribing"),
+            "expected Transcribing badge: {transcribing}"
+        );
     }
 }

@@ -933,9 +933,10 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
 
         if width >= 140 {
-            // Priority shortcuts (F3 approval, Config, F4 layout, F1 help) must all be
-            // visible on a wide terminal; Hosts/MCP/Sessions are now optional.
-            for expected in ["F3", "Config", "F4", "F1"] {
+            // Priority shortcuts (F3 approval, Config, F4 layout, F5 swap, F8 voice, F1 help)
+            // must all be visible on a wide terminal; Hosts/MCP/Sessions are now optional.
+            // At this width the left metrics leave room for the bare essential keys only.
+            for expected in ["F3", "F4", "F5", "F7/F8", "F1"] {
                 assert!(
                     footer_text.contains(expected),
                     "Width {} should contain {}! Rendered: '{}'",
@@ -1414,6 +1415,51 @@ async fn test_render_both_split_orientations() {
     assert_eq!(app.chat_area.height, app.terminal_area.height);
     assert_eq!(app.chat_area.right(), app.terminal_area.left());
     assert!(app.chat_area.left() < app.terminal_area.left());
+}
+
+#[tokio::test]
+async fn test_render_swapped_panels() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::App;
+    use spiritty::config::SplitOrientation;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 40, 120).unwrap();
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    // Vertical swapped: terminal left, chat right.
+    app.split_orientation = SplitOrientation::Vertical;
+    app.split_ratio = 50;
+    app.split_swapped = true;
+    terminal
+        .draw(|f| spiritty::ui::draw(f, &mut app))
+        .expect("swapped vertical draw must not panic");
+    assert_eq!(app.chat_area.y, app.terminal_area.y);
+    assert_eq!(app.chat_area.height, app.terminal_area.height);
+    assert_eq!(app.terminal_area.right(), app.chat_area.left());
+    assert!(app.terminal_area.left() < app.chat_area.left());
+
+    // Horizontal swapped: terminal top, chat bottom.
+    app.split_orientation = SplitOrientation::Horizontal;
+    app.split_ratio = 70;
+    app.split_swapped = true;
+    terminal
+        .draw(|f| spiritty::ui::draw(f, &mut app))
+        .expect("swapped horizontal draw must not panic");
+    assert_eq!(app.chat_area.x, app.terminal_area.x);
+    assert_eq!(app.chat_area.width, app.terminal_area.width);
+    assert_eq!(app.terminal_area.bottom(), app.chat_area.top());
+    assert!(app.chat_area.height > app.terminal_area.height);
+
+    // Restore: not swapped puts the chat back first.
+    app.split_swapped = false;
+    terminal
+        .draw(|f| spiritty::ui::draw(f, &mut app))
+        .expect("unswapped draw must not panic");
+    assert_eq!(app.chat_area.bottom(), app.terminal_area.top());
 }
 
 #[test]

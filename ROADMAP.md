@@ -169,3 +169,16 @@ This document defines the key milestones in the development of **Spiritty**, fro
   - Universal one-line `install.sh` installation script (`curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash`) with automatic OS and architecture detection (`x86_64`, `aarch64`, macOS).
   - Automated multi-target GitHub Actions publishing pipeline (`release.yml`) generating stripped (`strip`) binaries and tarball archives on each `v*` tag.
   - Static and universal binary ready for `cargo install`, AUR and Homebrew.
+
+---
+
+## 📌 Phase 6: 100% Local Voice Input (Speech-to-Text → Prompt) [PLANNED 🗓️]
+*Objective: speak into Spiritty and have the sentence land in the chat prompt, fully offline — the OpenCode/PIPA huddle UX without any cloud.* *(design: [docs/plans/2026-09-27_local_voice_stt.md](docs/plans/2026-09-27_local_voice_stt.md))*
+
+- [x] **Voice subsystem (`src/voice/`):** dedicated task + typed `AppEvent` bridge (`VoiceStateChanged` / `VoiceTranscript` / `VoiceError`), never blocking the event loop.
+- [x] **Capture:** external recorder backend (arecord/ffmpeg/sox) → 16 kHz mono WAV. *(optional `voice-native` cpal backend still planned.)*
+- [x] **Local transcription:** `whisper-cli` (whisper.cpp) backend; optional in-process `whisper-rs` still planned.
+- [x] **VAD auto-transcribe (`F7`):** energy VAD with min-speech and silence timeout; transcript injected into the prompt (auto-submit opt-in).
+- [x] **Manual segment (`F8`)** for noisy environments.
+- [x] **Config `[voice]` section**, i18n keys (fr/en), footer state badge and help rows.
+- [ ] **Model management:** `~/.config/spiritty/models/ggml-<size>.bin` + downloader.

@@ -59,6 +59,9 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescToggleOrientation => {
             "Toggle horizontal (top/bottom) / vertical (side by side)"
         }
+        I18nKey::HelpDescSwapPanels => "Swap panel order (chat ↔ terminal)",
+        I18nKey::HelpDescVoiceSegment => "Dictate a voice segment (record → transcribe, 100% local)",
+        I18nKey::HelpDescVoiceContinuous => "Continuous dictation (silence → auto-send, 100% local)",
         I18nKey::HelpDescConfigModal => "Models and API Keys Configuration",
         I18nKey::HelpDescSessionModal => "Session Manager and History",
         I18nKey::HelpDescNewSession => "Start a new clean session",
@@ -73,6 +76,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpDescNextTab => "Switch to next tab",
         I18nKey::HelpDescPrevTab => "Switch to previous tab",
         I18nKey::FooterApprovalLabel => "Approval: ",
+        I18nKey::FooterVoiceLabel => "Voice",
         I18nKey::HelpDescToggleHelp => "Open or close this help window",
         I18nKey::HelpDescQuit => "Quit Spiritty",
         I18nKey::HelpDescCloseModal => "Close active modal",
@@ -127,6 +131,23 @@ pub fn translate(key: I18nKey) -> &'static str {
         // Layout / split toasts
         I18nKey::ToastLayoutHorizontal => "Horizontal layout: Chat on top, Terminal at the bottom",
         I18nKey::ToastLayoutVertical => "Vertical layout: Chat on the left, Terminal on the right",
+        I18nKey::ToastLayoutVerticalSwapped => {
+            "Vertical layout: Terminal on the left, Chat on the right"
+        }
+        I18nKey::ToastLayoutHorizontalSwapped => {
+            "Horizontal layout: Terminal on top, Chat at the bottom"
+        }
+
+        // Local voice input
+        I18nKey::VoiceDisabledHint => "Voice input disabled: enable [voice] in the config",
+        I18nKey::VoiceRecordingToast => "🎙 Recording… press F8 again to stop",
+        I18nKey::VoiceTranscribingToast => "Transcribing locally…",
+        I18nKey::VoiceTranscribedHint => "Transcript inserted into the prompt (F7/F8 to dictate again)",
+        I18nKey::VoiceError => "Voice input error: ",
+        I18nKey::VoiceContinuousOnToast => "Continuous dictation on (speak, silence validates)",
+        I18nKey::VoiceContinuousOffToast => "Continuous dictation off",
+        I18nKey::VoiceBadgeRecording => "● REC",
+        I18nKey::VoiceBadgeTranscribing => "⟳ Transcribing…",
 
         // Agent System Prompts
         I18nKey::AgentLanguageInstruction => "Always respond in English concisely and technically.",

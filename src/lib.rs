@@ -10,3 +10,4 @@ pub mod pty;
 pub mod session;
 pub mod system;
 pub mod ui;
+pub mod voice;

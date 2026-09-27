@@ -22,6 +22,7 @@ use crate::{
         },
         theme::ThemeId,
     },
+    voice::{VoiceController, VoiceState},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,6 +387,9 @@ pub struct App {
     pub split_ratio: u16,
     /// Current split orientation (horizontal = chat on top, vertical = side by side).
     pub split_orientation: SplitOrientation,
+    /// Whether the panel order is flipped: `false` = chat first (left/top), `true` = terminal
+    /// first. Independent of the orientation; toggled with `F5` and persisted.
+    pub split_swapped: bool,
     pub terminal_inner_size: (u16, u16),
     pub chat_area: Rect,
     pub terminal_area: Rect,
@@ -443,6 +447,12 @@ pub struct App {
     pub mouse_pos: Option<(u16, u16)>,
     /// Debug mode — when set, raw tool-result `[RÉSULTAT…]` blocks are shown in the chat.
     pub debug: bool,
+    /// Local voice input controller (100% offline capture + Whisper transcription).
+    pub voice: VoiceController,
+    /// UI mirror of the voice lifecycle, updated from `VoiceStateChanged` events.
+    pub voice_state: VoiceState,
+    /// Whether continuous (silence-detected) dictation is currently requested (`F7`).
+    pub voice_continuous: bool,
 }
 
 /// Moves the prompt cursor vertically across the VISUAL rows of a (possibly
@@ -494,6 +504,24 @@ fn prompt_move_cursor_vertical(
         acc += crate::ui::chat_panel::char_visual_width(ch);
     }
     Some(byte.min(content_end))
+}
+
+/// Inserts a dictation transcript at the cursor, adding a separating space when the buffer
+/// does not already end in whitespace. Keeps `cursor` on a valid char boundary by inserting
+/// and advancing by the inserted byte length.
+fn insert_transcript(buffer: &mut String, cursor: &mut usize, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let cursor_byte = (*cursor).min(buffer.len());
+    let needs_leading_space = cursor_byte > 0 && !buffer[..cursor_byte].ends_with(char::is_whitespace);
+    let mut insert = String::with_capacity(text.len() + 1);
+    if needs_leading_space {
+        insert.push(' ');
+    }
+    insert.push_str(text);
+    buffer.insert_str(cursor_byte, &insert);
+    *cursor = cursor_byte + insert.len();
 }
 
 impl App {
@@ -671,6 +699,17 @@ impl App {
         let split_ratio = config.get_split_ratio_for(split_orientation);
         let theme = ThemeId::parse_or_default(&config.get_theme());
 
+        let voice = VoiceController::spawn(
+            config.voice.clone(),
+            config.get_language(),
+            event_tx.clone(),
+        );
+        let voice_state = if config.voice.enabled {
+            VoiceState::Idle
+        } else {
+            VoiceState::Off
+        };
+
         let app = Self {
             focus: Focus::Chat, // Default focus on chat prompt
             chat_input: String::new(),
@@ -684,6 +723,7 @@ impl App {
             should_quit: false,
             split_ratio,
             split_orientation,
+            split_swapped: config.get_split_swapped(),
             terminal_inner_size: (initial_rows, initial_cols),
             chat_area: Rect::default(),
             terminal_area: Rect::default(),
@@ -733,6 +773,9 @@ impl App {
             )),
             mouse_pos: None,
             debug: false,
+            voice,
+            voice_state,
+            voice_continuous: false,
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -1405,6 +1448,28 @@ impl App {
         let _ = self.config.save();
     }
 
+    /// Translates a physical divider move (`dir`: `+1` = right/down, `-1` = left/up) into the
+    /// split-ratio delta. The ratio always tracks the **chat** panel, so the sign flips when
+    /// the panels are swapped.
+    fn split_direction(&self, dir: i16) -> i16 {
+        if self.split_swapped {
+            -dir * 3
+        } else {
+            dir * 3
+        }
+    }
+
+    /// Human-readable description of the current arrangement, reused by the `F4`/`F5` toasts.
+    fn layout_toast(&self) -> &'static str {
+        let lang = self.config.get_language();
+        match (self.split_orientation, self.split_swapped) {
+            (SplitOrientation::Vertical, false) => lang.t(I18nKey::ToastLayoutVertical),
+            (SplitOrientation::Vertical, true) => lang.t(I18nKey::ToastLayoutVerticalSwapped),
+            (SplitOrientation::Horizontal, false) => lang.t(I18nKey::ToastLayoutHorizontal),
+            (SplitOrientation::Horizontal, true) => lang.t(I18nKey::ToastLayoutHorizontalSwapped),
+        }
+    }
+
     /// Toggles between the horizontal (chat on top) and vertical (side by side) split,
     /// remembering each orientation's own ratio and persisting the choice.
     pub fn toggle_split_orientation(&mut self) {
@@ -1416,12 +1481,154 @@ impl App {
         self.config.split_orientation = Some(self.split_orientation.key_str().to_string());
         let _ = self.config.save();
 
-        let lang = self.config.get_language();
-        let msg = match self.split_orientation {
-            SplitOrientation::Horizontal => lang.t(I18nKey::ToastLayoutHorizontal),
-            SplitOrientation::Vertical => lang.t(I18nKey::ToastLayoutVertical),
-        };
+        let msg = self.layout_toast();
         self.set_toast(msg.to_string());
+    }
+
+    /// Flips the panel order (chat/terminal) without changing the orientation.
+    pub fn toggle_split_swapped(&mut self) {
+        self.split_swapped = !self.split_swapped;
+        self.config.split_swapped = Some(self.split_swapped);
+        let _ = self.config.save();
+
+        let msg = self.layout_toast();
+        self.set_toast(msg.to_string());
+    }
+
+    /// Toggles a local voice segment (`F8`): starts recording when idle, or stops and
+    /// transcribes when already recording. No-op while a transcription is in flight.
+    pub fn toggle_voice_segment(&mut self) {
+        if !self.config.voice.enabled {
+            let hint = self.config.get_language().t(I18nKey::VoiceDisabledHint);
+            self.set_toast(hint.to_string());
+            return;
+        }
+        match self.voice_state {
+            VoiceState::Recording => self.voice.stop_segment(),
+            VoiceState::Transcribing => {}
+            _ => {
+                self.voice.start_segment();
+                let hint = self.config.get_language().t(I18nKey::VoiceRecordingToast);
+                self.set_toast(hint.to_string());
+            }
+        }
+    }
+
+    /// Toggles continuous, silence-detected dictation (`F7`): the segment is transcribed and
+    /// (when `voice.auto_submit` is on) sent automatically as soon as the speaker pauses.
+    pub fn toggle_voice_continuous(&mut self) {
+        if !self.config.voice.enabled {
+            let hint = self.config.get_language().t(I18nKey::VoiceDisabledHint);
+            self.set_toast(hint.to_string());
+            return;
+        }
+        let lang = self.config.get_language();
+        if self.voice_continuous {
+            self.voice.stop_continuous();
+            self.voice_continuous = false;
+            self.set_toast(lang.t(I18nKey::VoiceContinuousOffToast).to_string());
+        } else {
+            self.voice.start_continuous();
+            self.voice_continuous = true;
+            self.set_toast(lang.t(I18nKey::VoiceContinuousOnToast).to_string());
+        }
+    }
+
+    /// Applies a `VoiceStateChanged` event to the UI mirror.
+    pub fn on_voice_state_changed(&mut self, state: VoiceState) {
+        self.voice_state = state;
+        if state == VoiceState::Transcribing {
+            let hint = self.config.get_language().t(I18nKey::VoiceTranscribingToast);
+            self.set_toast(hint.to_string());
+        }
+    }
+
+    /// Injects a local transcript into the chat prompt (and submits it when `auto_submit`).
+    pub fn on_voice_transcript(&mut self, text: String, auto_submit: bool) {
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        insert_transcript(&mut self.chat_input, &mut self.cursor_pos, cleaned);
+        if auto_submit && !self.agent.is_generating {
+            self.submit_chat_input();
+        } else if !auto_submit {
+            let hint = self.config.get_language().t(I18nKey::VoiceTranscribedHint);
+            self.set_toast(hint.to_string());
+        }
+    }
+
+    /// Surfaces a voice error as a toast and returns the lifecycle to `Idle`.
+    pub fn on_voice_error(&mut self, error: String) {
+        let prefix = self.config.get_language().t(I18nKey::VoiceError);
+        self.set_toast(format!("{}{}", prefix, error));
+        self.voice_state = VoiceState::Idle;
+        self.voice_continuous = false;
+    }
+
+    /// Submits the current chat input as a user turn. Shared by the `Enter` key and the
+    /// local voice transcript auto-submit (so both paths cannot diverge). No-op on blank
+    /// input (without a pending attachment) or while the agent is already generating.
+    pub fn submit_chat_input(&mut self) {
+        let input = self.chat_input.trim().to_string();
+        let has_pending_image = self.pending_image.is_some();
+        if (input.is_empty() && !has_pending_image) || self.agent.is_generating {
+            return;
+        }
+
+        // Natural command execution request ("ok", "oui", "vas y", "lance", "2", …)
+        let proposals = self.all_command_proposals();
+        if let Some(target_idx) = parse_command_execution_request(&input, proposals.len()) {
+            self.consecutive_auto_proposals = 0;
+            self.chat_input.clear();
+            self.cursor_pos = 0;
+            self.history_index = None;
+            self.input_draft.clear();
+            if self.execute_command_by_index(target_idx, true) {
+                return;
+            }
+        }
+
+        // Record in prompt history if non-empty and not identical to last entry
+        if !input.is_empty() && self.chat_history.last() != Some(&input) {
+            self.chat_history.push(input.clone());
+        }
+        self.history_index = None;
+        self.input_draft.clear();
+        self.consecutive_auto_proposals = 0;
+
+        // Clear any lingering error diagnosis upon new message
+        self.proactive_error_diagnosis = None;
+
+        // Push User message
+        let attachments = self.take_pending_attachments();
+        self.messages.push(ChatMessage {
+            role: MessageRole::User,
+            content: input.clone(),
+            command_proposal: None,
+            attachments,
+        });
+
+        // Prepare placeholder for streaming response
+        self.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            command_proposal: None,
+            attachments: Vec::new(),
+        });
+
+        self.chat_input.clear();
+        self.cursor_pos = 0;
+        self.reset_chat_scroll();
+        self.generation_start_time = Some(std::time::Instant::now());
+        self.current_turn_tokens = 0;
+
+        // Trigger LLM streaming with live system context
+        let _ = self.agent.send_prompt(
+            self.messages.clone(),
+            &self.system_context,
+            self.event_tx.clone(),
+        );
     }
 
     /// Computes the PTY (rows, cols) for the terminal panel from the total terminal size,
@@ -1749,20 +1956,24 @@ impl App {
         }
 
         // Divider hit-testing depends on the orientation: a vertical divider is grabbed by
-        // its column, a horizontal one by its row (within the workspace width).
+        // its column, a horizontal one by its row (within the workspace width). The boundary
+        // is derived from the two panel rects, so it holds whatever the panel order.
+        let ws_left = self.chat_area.left().min(self.terminal_area.left());
+        let ws_right = self.chat_area.right().max(self.terminal_area.right());
         let on_divider = match self.split_orientation {
             SplitOrientation::Vertical => {
-                let border_x = self.chat_area.right();
+                let border_x = self.chat_area.left().max(self.terminal_area.left());
                 x >= border_x.saturating_sub(1) && x <= border_x.saturating_add(1)
             }
             SplitOrientation::Horizontal => {
-                let border_y = self.chat_area.bottom().saturating_sub(1);
+                let border_y = self
+                    .chat_area
+                    .top()
+                    .max(self.terminal_area.top())
+                    .saturating_sub(1);
                 // Only the divider row and the row above it (never the terminal tab bar
                 // sitting right below, which must stay clickable).
-                y >= border_y.saturating_sub(1)
-                    && y <= border_y
-                    && x >= self.chat_area.left()
-                    && x < self.chat_area.right()
+                y >= border_y.saturating_sub(1) && y <= border_y && x >= ws_left && x < ws_right
             }
         };
 
@@ -1833,7 +2044,8 @@ impl App {
                         SplitOrientation::Vertical => {
                             if total_width > 0 {
                                 let pct = ((x as u32 * 100) / total_width as u32) as u16;
-                                self.split_ratio = pct.clamp(15, 85);
+                                let chat_pct = if self.split_swapped { 100 - pct } else { pct };
+                                self.split_ratio = chat_pct.clamp(15, 85);
                             }
                         }
                         SplitOrientation::Horizontal => {
@@ -1842,9 +2054,11 @@ impl App {
                                 .height
                                 .saturating_add(self.terminal_area.height);
                             if total_h > 0 {
-                                let rel = y.saturating_sub(self.chat_area.top()) as u32;
+                                let ws_top = self.chat_area.top().min(self.terminal_area.top());
+                                let rel = y.saturating_sub(ws_top) as u32;
                                 let pct = ((rel * 100) / total_h as u32) as u16;
-                                self.split_ratio = pct.clamp(15, 85);
+                                let chat_pct = if self.split_swapped { 100 - pct } else { pct };
+                                self.split_ratio = chat_pct.clamp(15, 85);
                             }
                         }
                     }
@@ -2297,22 +2511,22 @@ impl App {
             match self.split_orientation {
                 SplitOrientation::Vertical => match key.code {
                     KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') => {
-                        self.adjust_split(-3);
+                        self.adjust_split(self.split_direction(-1));
                         return;
                     }
                     KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') => {
-                        self.adjust_split(3);
+                        self.adjust_split(self.split_direction(1));
                         return;
                     }
                     _ => {}
                 },
                 SplitOrientation::Horizontal => match key.code {
                     KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
-                        self.adjust_split(-3);
+                        self.adjust_split(self.split_direction(-1));
                         return;
                     }
                     KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                        self.adjust_split(3);
+                        self.adjust_split(self.split_direction(1));
                         return;
                     }
                     _ => {}
@@ -2329,6 +2543,25 @@ impl App {
         // F4 toggles the split orientation (chat on top <-> side by side).
         if key.code == KeyCode::F(4) {
             self.toggle_split_orientation();
+            return;
+        }
+
+        // F5 swaps the panel order (chat/terminal) within the active orientation.
+        if key.code == KeyCode::F(5) {
+            self.toggle_split_swapped();
+            return;
+        }
+
+        // F7 toggles continuous, silence-detected dictation (hands-free, 100% local Whisper).
+        if key.code == KeyCode::F(7) {
+            self.toggle_voice_continuous();
+            return;
+        }
+
+        // F8 dictates a voice segment: first press records, second press transcribes it into
+        // the chat prompt (100% local Whisper). A hint is shown when the feature is disabled.
+        if key.code == KeyCode::F(8) {
+            self.toggle_voice_segment();
             return;
         }
 
@@ -2842,65 +3075,7 @@ impl App {
                     return;
                 }
 
-                let input = self.chat_input.trim().to_string();
-                let has_pending_image = self.pending_image.is_some();
-                if (!input.is_empty() || has_pending_image) && !self.agent.is_generating {
-                    // Check if input is a natural command execution request ("ok", "oui", "vas y", "lance", "2", "lance 2", etc.)
-                    let proposals = self.all_command_proposals();
-                    if let Some(target_idx) =
-                        parse_command_execution_request(&input, proposals.len())
-                    {
-                        self.consecutive_auto_proposals = 0;
-                        self.chat_input.clear();
-                        self.cursor_pos = 0;
-                        self.history_index = None;
-                        self.input_draft.clear();
-                        if self.execute_command_by_index(target_idx, true) {
-                            return;
-                        }
-                    }
-
-                    // Record in prompt history if non-empty and not identical to last entry
-                    if !input.is_empty() && self.chat_history.last() != Some(&input) {
-                        self.chat_history.push(input.clone());
-                    }
-                    self.history_index = None;
-                    self.input_draft.clear();
-                    self.consecutive_auto_proposals = 0;
-
-                    // Clear any lingering error diagnosis upon new message
-                    self.proactive_error_diagnosis = None;
-
-                    // Push User message
-                    let attachments = self.take_pending_attachments();
-                    self.messages.push(ChatMessage {
-                        role: MessageRole::User,
-                        content: input.clone(),
-                        command_proposal: None,
-                        attachments,
-                    });
-
-                    // Prepare placeholder for streaming response
-                    self.messages.push(ChatMessage {
-                        role: MessageRole::Assistant,
-                        content: String::new(),
-                        command_proposal: None,
-                        attachments: Vec::new(),
-                    });
-
-                    self.chat_input.clear();
-                    self.cursor_pos = 0;
-                    self.reset_chat_scroll();
-                    self.generation_start_time = Some(std::time::Instant::now());
-                    self.current_turn_tokens = 0;
-
-                    // Trigger LLM streaming with live system context
-                    let _ = self.agent.send_prompt(
-                        self.messages.clone(),
-                        &self.system_context,
-                        self.event_tx.clone(),
-                    );
-                }
+                self.submit_chat_input();
             }
 
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -5117,6 +5292,50 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn insert_transcript_appends_with_separating_space() {
+        let mut buf = String::from("hello");
+        let mut cursor = buf.len();
+        super::insert_transcript(&mut buf, &mut cursor, "world");
+        assert_eq!(buf, "hello world");
+        assert_eq!(cursor, buf.len());
+    }
+
+    #[test]
+    fn insert_transcript_no_extra_space_when_buffer_ends_with_whitespace() {
+        let mut buf = String::from("hello ");
+        let mut cursor = buf.len();
+        super::insert_transcript(&mut buf, &mut cursor, "world");
+        assert_eq!(buf, "hello world");
+    }
+
+    #[test]
+    fn insert_transcript_into_empty_buffer_has_no_leading_space() {
+        let mut buf = String::new();
+        let mut cursor = 0;
+        super::insert_transcript(&mut buf, &mut cursor, "bonjour");
+        assert_eq!(buf, "bonjour");
+        assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn insert_transcript_at_mid_buffer_cursor() {
+        let mut buf = String::from("ac");
+        let mut cursor = 1; // between 'a' and 'c'
+        super::insert_transcript(&mut buf, &mut cursor, "b");
+        assert_eq!(buf, "a bc");
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn insert_transcript_empty_text_is_a_noop() {
+        let mut buf = String::from("x");
+        let mut cursor = 1;
+        super::insert_transcript(&mut buf, &mut cursor, "");
+        assert_eq!(buf, "x");
+        assert_eq!(cursor, 1);
+    }
+
     #[test]
     fn clean_strips_garbled_echo_by_subsequence() {
         // Live case: remote line-editor redraw duplicated chars mid-echo (`logs/` →

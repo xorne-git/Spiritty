@@ -62,6 +62,16 @@ pub enum AppEvent {
     McpServersUpdated,
     UpdatePricing,
     PricingUpdated(Result<usize, String>),
+    /// Local voice input state changed (recording / transcribing / idle).
+    VoiceStateChanged(crate::voice::VoiceState),
+    /// A local transcription is ready to be injected into the chat prompt.
+    VoiceTranscript {
+        text: String,
+        /// When `true`, the app submits the transcript immediately (human-in-the-loop opt-in).
+        auto_submit: bool,
+    },
+    /// Local voice input failed (missing recorder/model, transcription error…).
+    VoiceError(String),
 }
 
 pub struct EventHandler {
