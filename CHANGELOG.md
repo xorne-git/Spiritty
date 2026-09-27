@@ -17,7 +17,14 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+- **`install.sh --voice-only`**: (re)configure the local voice input without reinstalling the binary — useful to retry right after installing a missing build tool. The installer also warns when Spiritty is running (it can rewrite `config.toml` and undo the `[voice]` patch) and points to this mode.
+
 ### Changed
+
+### Fixed
+
+- **Voice setup aborted on Arch/Omarchy over a missing `cmake`**: the installer reported `git/cmake introuvables` and gave up whenever *any* build tool was missing (git was actually present). It now checks `git`, `cmake`, `make` and a C++ compiler individually, lists exactly what is missing, and offers to install it through the detected package manager (pacman / apt / dnf / zypper / apk).
+- **Voice binary resolution**: when `voice.whisper_bin` is the bare `whisper-cli` default and it is not on `PATH`, Spiritty now falls back to the standard installer build location (`~/.local/opt/whisper.cpp/build/bin/whisper-cli`), so dictation works even if the initial `[voice]` config patch was overwritten.
 
 ---
 

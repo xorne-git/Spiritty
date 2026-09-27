@@ -3,6 +3,7 @@
 #  🧞 Spiritty — Official One-Line Installer
 #  Usage:
 #    curl -fsSL https://raw.githubusercontent.com/xorne-git/Spiritty/main/install.sh | bash
+#    bash install.sh --voice-only   # (re)configure the local voice input only
 # ==============================================================================
 
 set -e
@@ -342,6 +343,64 @@ EOF
     success "Entrée d'application et icône installées dans ${app_dir}/spiritty.desktop !"
 }
 
+# Ensures the tools needed to build whisper.cpp are present (git, cmake, make and a
+# C++ compiler), offering to install the missing ones through the detected package
+# manager. Returns 0 when everything is available, 1 otherwise.
+ensure_build_tools() {
+    local missing=()
+    command -v git >/dev/null 2>&1 || missing+=(git)
+    command -v cmake >/dev/null 2>&1 || missing+=(cmake)
+    command -v make >/dev/null 2>&1 || missing+=(make)
+    if ! command -v c++ >/dev/null 2>&1 \
+        && ! command -v g++ >/dev/null 2>&1 \
+        && ! command -v clang++ >/dev/null 2>&1; then
+        missing+=(g++)
+    fi
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    warn "Outils de compilation manquants : ${missing[*]}"
+
+    local pm="" pkgs=""
+    if command -v pacman >/dev/null 2>&1; then
+        pm="sudo pacman -S --needed --noconfirm"; pkgs="git cmake make gcc"
+    elif command -v apt-get >/dev/null 2>&1; then
+        pm="sudo apt-get install -y"; pkgs="git cmake build-essential"
+    elif command -v dnf >/dev/null 2>&1; then
+        pm="sudo dnf install -y"; pkgs="git cmake make gcc-c++"
+    elif command -v zypper >/dev/null 2>&1; then
+        pm="sudo zypper install -y"; pkgs="git cmake make gcc-c++"
+    elif command -v apk >/dev/null 2>&1; then
+        pm="sudo apk add"; pkgs="git cmake make g++"
+    fi
+
+    if [ -z "$pm" ]; then
+        warn "Aucun gestionnaire de paquets reconnu : installez ${missing[*]} manuellement, puis relancez."
+        return 1
+    fi
+
+    echo -e "${GRAY}   Commande proposée : ${NC}${BOLD}${pm} ${pkgs}${NC}"
+    if [ -e /dev/tty ]; then
+        printf "${BOLD}Installer ces outils maintenant ? [O/n] ${NC}"
+        local ans="o"
+        read -r ans < /dev/tty || ans="o"
+        case "$ans" in
+            [oOyY]|"") ;;
+            *) warn "Installation des outils ignorée : compilation impossible."; return 1 ;;
+        esac
+    else
+        return 1
+    fi
+
+    info "Installation des outils de compilation..."
+    # shellcheck disable=SC2086
+    $pm $pkgs >/dev/null 2>&1 || { warn "Échec de l'installation des outils de compilation."; return 1; }
+    success "Outils de compilation installés."
+    return 0
+}
+
 # --- 8. Optional 100% Local Voice Input (whisper.cpp + model) ---
 #
 # Adds the offline dictation prerequisites: an audio recorder check, a local
@@ -374,6 +433,13 @@ setup_voice_input() {
     local whisper_dir="${SPIRITTY_WHISPER_DIR:-$HOME/.local/opt/whisper.cpp}"
     local whisper_bin="${SPIRITTY_WHISPER_BIN:-}"
 
+    # Spiritty rewrites config.toml from memory on some actions; warn if it is running so
+    # the user does not lose the [voice] patch below.
+    if pgrep -x spiritty >/dev/null 2>&1; then
+        warn "Spiritty est en cours d'exécution : il peut réécrire config.toml et annuler ces réglages."
+        echo -e "${GRAY}   Ferme Spiritty, puis relance 'bash install.sh --voice-only' si besoin.${NC}"
+    fi
+
     # 1. Audio recorder (best-effort: never fatal).
     if ! command -v arecord >/dev/null 2>&1 \
         && ! command -v ffmpeg >/dev/null 2>&1 \
@@ -392,13 +458,8 @@ setup_voice_input() {
     elif [ -x "${whisper_dir}/build/bin/whisper-cli" ]; then
         whisper_bin="${whisper_dir}/build/bin/whisper-cli"
     else
-        local can_build=1
-        for tool in git cmake; do
-            command -v "$tool" >/dev/null 2>&1 || can_build=0
-        done
-        if [ "$can_build" -eq 0 ]; then
-            warn "git/cmake introuvables : impossible de compiler whisper.cpp."
-            echo -e "${GRAY}   Compilez-le manuellement ou installez un paquet 'whisper-cpp', puis relancez.${NC}"
+        if ! ensure_build_tools; then
+            echo -e "${GRAY}   Installez les outils ci-dessus (ou un paquet 'whisper-cpp') puis relancez.${NC}"
             return 0
         fi
 
@@ -407,11 +468,12 @@ setup_voice_input() {
             git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$whisper_dir" \
                 || { warn "Clonage de whisper.cpp échoué."; return 0; }
         fi
+        local build_log="${whisper_dir}/build.log"
         cmake -S "$whisper_dir" -B "${whisper_dir}/build" -DCMAKE_BUILD_TYPE=Release \
-            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF >/dev/null 2>&1 \
-            || { warn "Configuration CMake de whisper.cpp échouée."; return 0; }
-        cmake --build "${whisper_dir}/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" >/dev/null 2>&1 \
-            || { warn "Compilation de whisper.cpp échouée."; return 0; }
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF >"$build_log" 2>&1 \
+            || { warn "Configuration CMake de whisper.cpp échouée (voir ${build_log})."; return 0; }
+        cmake --build "${whisper_dir}/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" >>"$build_log" 2>&1 \
+            || { warn "Compilation de whisper.cpp échouée (voir ${build_log})."; return 0; }
         whisper_bin="${whisper_dir}/build/bin/whisper-cli"
     fi
 
@@ -510,8 +572,26 @@ EOF
 }
 
 main() {
+    local voice_only=0
+    for arg in "$@"; do
+        case "$arg" in
+            --voice-only|--voice) voice_only=1 ;;
+        esac
+    done
+
     print_banner
     check_dependencies
+
+    # `--voice-only`: (re)configure the local voice input without touching the binary —
+    # useful to retry after installing a missing build tool (e.g. cmake).
+    if [ "$voice_only" -eq 1 ]; then
+        setup_voice_input
+        echo ""
+        echo -e "${GREEN}${BOLD}🎉 Entrée vocale configurée.${NC}"
+        echo ""
+        return 0
+    fi
+
     detect_platform
     get_latest_version
     get_install_dir

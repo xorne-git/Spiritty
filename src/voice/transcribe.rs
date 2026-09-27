@@ -12,13 +12,36 @@ use tokio::process::Command;
 
 /// The `whisper.cpp` CLI binary to use (config override or the conventional `whisper-cli`).
 /// A leading `~` is expanded so config paths like `~/.local/opt/...` work.
+///
+/// When the configured value is a bare binary name (the `"whisper-cli"` default) that is
+/// not on `PATH`, fall back to the standard installer build location
+/// (`~/.local/opt/whisper.cpp/build/bin/whisper-cli`). This makes the voice input work even
+/// when the initial `[voice]` config patch was not persisted.
 pub fn whisper_binary(cfg: &VoiceConfig) -> String {
     let bin = cfg.whisper_bin.trim();
-    if bin.is_empty() {
-        "whisper-cli".to_string()
-    } else {
-        crate::config::expand_tilde(bin).to_string_lossy().to_string()
+    let candidate = if bin.is_empty() { "whisper-cli" } else { bin };
+
+    // Explicit path (absolute or containing a separator): expand `~` and use it as-is.
+    if candidate.contains('/') {
+        return crate::config::expand_tilde(candidate)
+            .to_string_lossy()
+            .to_string();
     }
+
+    if crate::voice::capture::find_in_path(candidate).is_some() {
+        return candidate.to_string();
+    }
+
+    if candidate == "whisper-cli" {
+        if let Some(home) = dirs::home_dir() {
+            let p = home.join(".local/opt/whisper.cpp/build/bin/whisper-cli");
+            if p.is_file() {
+                return p.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    candidate.to_string()
 }
 
 /// Builds the `whisper-cli` command for a WAV file, writing `<out_base>.txt`.
@@ -112,11 +135,21 @@ mod tests {
 
     fn cfg() -> VoiceConfig {
         VoiceConfig {
-            whisper_bin: "whisper-cli".to_string(),
+            whisper_bin: "/opt/whisper/whisper-cli".to_string(),
             model_path: "/models/ggml-small.bin".to_string(),
             language: "fr".to_string(),
             ..VoiceConfig::default()
         }
+    }
+
+    #[test]
+    fn whisper_binary_keeps_explicit_paths() {
+        let mut c = cfg();
+        c.whisper_bin = "/opt/whisper/whisper-cli".to_string();
+        assert_eq!(whisper_binary(&c), "/opt/whisper/whisper-cli");
+        // A bare, unknown name is returned unchanged when nothing else is found.
+        c.whisper_bin = "definitely-not-whisper-cli".to_string();
+        assert_eq!(whisper_binary(&c), "definitely-not-whisper-cli");
     }
 
     #[test]
@@ -128,7 +161,7 @@ mod tests {
             Path::new("/tmp/voice"),
         );
         let std = cmd.as_std();
-        assert_eq!(std.get_program(), "whisper-cli");
+        assert_eq!(std.get_program(), "/opt/whisper/whisper-cli");
         let args: Vec<String> = std
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
