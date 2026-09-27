@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-label="Spiritty en disposition verticale (chat à gauche, terminal à droite)">
+  <defs>
+    <linearGradient id="bgv" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#121a2e"/>
+    </linearGradient>
+    <linearGradient id="chatv" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1626"/>
+      <stop offset="100%" stop-color="#141d33"/>
+    </linearGradient>
+    <linearGradient id="termv" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0f1c"/>
+      <stop offset="100%" stop-color="#101827"/>
+    </linearGradient>
+    <style>
+      .mono { font-family: 'JetBrains Mono','Fira Code',Menlo,Consolas,monospace; }
+      .t { fill:#cbd5e1; font-size:15px; }
+      .dim { fill:#64748b; font-size:14px; }
+      .cyan { fill:#22d3ee; font-weight:700; }
+      .green { fill:#34d399; font-weight:700; }
+      .orange { fill:#f59e0b; font-weight:700; }
+      .violet { fill:#a78bfa; font-weight:700; }
+      .white { fill:#e2e8f0; }
+      .card { fill:#0f1a2e; stroke:#f59e0b; stroke-opacity:.55; }
+      .kbd { fill:#0b1220; stroke:#334155; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="700" rx="14" fill="url(#bgv)" stroke="#1f2b45"/>
+
+  <!-- Title bar -->
+  <text class="mono cyan" x="18" y="24" font-size="15">🧞 Spiritty v0.9.1 · #161205</text>
+  <text class="mono dim" x="1182" y="24" text-anchor="end" font-size="13">disposition verticale</text>
+  <line x1="0" y1="34" x2="1200" y2="34" stroke="#1f2b45"/>
+
+  <!-- Chat panel (left) -->
+  <rect x="0" y="34" width="600" height="616" fill="url(#chatv)"/>
+  <line x1="600" y1="34" x2="600" y2="650" stroke="#243350"/>
+
+  <text class="mono" x="22" y="62" font-size="14" fill="#475569">AI AGENT</text>
+
+  <!-- user turn -->
+  <rect x="22" y="80" width="556" height="46" rx="8" fill="#152238" stroke="#243350"/>
+  <text class="mono white" x="36" y="108" font-size="14">&gt; Optimise nginx : analyse les 502 et propose un tuning</text>
+
+  <!-- assistant turn -->
+  <text class="mono t" x="36" y="160" font-size="14">J'ai analysé la config. Deux pistes :</text>
+  <text class="mono t" x="36" y="182" font-size="14">worker_connections trop bas + buffers courts.</text>
+
+  <!-- command card -->
+  <rect class="card" x="22" y="200" width="556" height="96" rx="10"/>
+  <text class="mono orange" x="40" y="226" font-size="13">⚡ COMMANDE #1 [ STANDARD ]</text>
+  <rect x="40" y="238" width="520" height="34" rx="6" fill="#0b1220" stroke="#243350"/>
+  <text class="mono white" x="52" y="260" font-size="14">sudo nginx -T &amp;&amp; sudo systemctl reload nginx</text>
+  <text class="mono dim" x="40" y="288" font-size="12">Validation requise avant exécution</text>
+  <text class="mono orange" x="512" y="288" font-size="12" text-anchor="end">[ Alt + 1 ]</text>
+
+  <text class="mono t" x="36" y="330" font-size="14">Je peux aussi durcir TLS et activer HTTP/3 une fois validé.</text>
+
+  <!-- prompt -->
+  <line x1="22" y1="574" x2="578" y2="574" stroke="#243350"/>
+  <rect x="22" y="588" width="4" height="24" fill="#22d3ee"/>
+  <text class="mono" x="40" y="606" font-size="15" fill="#e2e8f0">Change worker_connections à 4096</text>
+  <rect x="352" y="590" width="10" height="20" fill="#22d3ee" opacity="0.8"/>
+
+  <!-- Terminal panel (right) -->
+  <rect x="601" y="34" width="599" height="616" fill="url(#termv)"/>
+  <!-- terminal tabs -->
+  <rect x="620" y="48" width="120" height="24" rx="6" fill="#16213a" stroke="#243350"/>
+  <text class="mono cyan" x="634" y="65" font-size="12">1  ■ Spiritty</text>
+  <text class="mono dim" x="756" y="65" font-size="15">+</text>
+  <text class="mono dim" x="1182" y="65" font-size="12" text-anchor="end">1323 l.</text>
+
+  <text class="mono green" x="620" y="112" font-size="14">~ ❯ sudo nginx -T | head -5</text>
+  <text class="mono t" x="620" y="136" font-size="13">worker_processes auto;</text>
+  <text class="mono t" x="620" y="156" font-size="13">events &#123; worker_connections 512; &#125;</text>
+  <text class="mono t" x="620" y="176" font-size="13">http &#123; keepalive_timeout 30s; ... &#125;</text>
+  <text class="mono green" x="620" y="212" font-size="14">~ ❯ sudo systemctl reload nginx</text>
+  <text class="mono t" x="620" y="236" font-size="13">nginx.service reloaded successfully</text>
+  <text class="mono green" x="620" y="272" font-size="14">~ ❯ _</text>
+
+  <!-- Footer -->
+  <line x1="0" y1="650" x2="1200" y2="650" stroke="#243350"/>
+  <rect x="0" y="650" width="1200" height="50" fill="#0b1220"/>
+  <text class="mono white" x="18" y="682" font-size="14">deepseek-flash</text>
+  <text class="mono dim" x="150" y="682" font-size="14">🧠 Auto</text>
+  <text class="mono" x="234" y="682" font-size="14" fill="#fbbf24">⚡ 45k tok</text>
+  <text class="mono" x="352" y="682" font-size="14" fill="#94a3b8">📊 Ctx: 8.2k / 131k (6%)</text>
+  <text class="mono green" x="860" y="682" font-size="14">F3:Safe</text>
+  <text class="mono cyan" x="934" y="682" font-size="14">[^P]</text>
+  <text class="mono cyan" x="980" y="682" font-size="14">[F4]</text>
+  <text class="mono cyan" x="1026" y="682" font-size="14">[F5]</text>
+  <text class="mono orange" x="1072" y="682" font-size="14">[F7/F8]</text>
+  <text class="mono cyan" x="1146" y="682" font-size="14">[F1]</text>
+</svg>

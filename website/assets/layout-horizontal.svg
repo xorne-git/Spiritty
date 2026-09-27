@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" width="1200" height="700" role="img" aria-label="Spiritty en disposition horizontale (chat en haut, terminal en bas)">
+  <defs>
+    <linearGradient id="bgh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="100%" stop-color="#121a2e"/>
+    </linearGradient>
+    <linearGradient id="chath" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e1626"/>
+      <stop offset="100%" stop-color="#141d33"/>
+    </linearGradient>
+    <linearGradient id="termh" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0f1c"/>
+      <stop offset="100%" stop-color="#101827"/>
+    </linearGradient>
+    <style>
+      .mono { font-family: 'JetBrains Mono','Fira Code',Menlo,Consolas,monospace; }
+      .t { fill:#cbd5e1; font-size:14px; }
+      .dim { fill:#64748b; font-size:13px; }
+      .cyan { fill:#22d3ee; font-weight:700; }
+      .green { fill:#34d399; font-weight:700; }
+      .orange { fill:#f59e0b; font-weight:700; }
+      .white { fill:#e2e8f0; }
+      .card { fill:#0f1a2e; stroke:#f59e0b; stroke-opacity:.55; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="700" rx="14" fill="url(#bgh)" stroke="#1f2b45"/>
+
+  <!-- Title bar -->
+  <text class="mono cyan" x="18" y="24" font-size="15">🧞 Spiritty v0.9.1 · #161205</text>
+  <text class="mono dim" x="1182" y="24" text-anchor="end" font-size="13">disposition horizontale</text>
+  <line x1="0" y1="34" x2="1200" y2="34" stroke="#1f2b45"/>
+
+  <!-- Chat panel (top, full width) -->
+  <rect x="0" y="34" width="1200" height="396" fill="url(#chath)"/>
+  <line x1="0" y1="430" x2="1200" y2="430" stroke="#243350"/>
+
+  <text class="mono" x="22" y="62" font-size="14" fill="#475569">AI AGENT</text>
+
+  <rect x="22" y="78" width="1156" height="42" rx="8" fill="#152238" stroke="#243350"/>
+  <text class="mono white" x="36" y="104" font-size="14">&gt; Dicte un segment : « optimise le swap et vérifie la RAM »</text>
+
+  <text class="mono t" x="36" y="150">D'accord. RAM 3.1G/16G, swap 511M utilisé. Je propose :</text>
+
+  <rect class="card" x="22" y="166" width="1156" height="92" rx="10"/>
+  <text class="mono orange" x="40" y="192" font-size="13">⚡ COMMANDE #1 [ SAFE ]</text>
+  <rect x="40" y="204" width="1120" height="32" rx="6" fill="#0b1220" stroke="#243350"/>
+  <text class="mono white" x="52" y="225" font-size="14">free -h &amp;&amp; swapon --show</text>
+  <text class="mono dim" x="40" y="252" font-size="12">Validation requise avant exécution</text>
+  <text class="mono orange" x="1158" y="252" font-size="12" text-anchor="end">[ Alt + 1 ]</text>
+
+  <text class="mono t" x="36" y="292">Sans risque : je peux enchaîner le diagnostic des processus gourmands.</text>
+  <text class="mono dim" x="36" y="322" font-size="13">🎙 F7 dictée continue — un silence valide la phrase, la transcription part seule.</text>
+
+  <!-- Prompt line -->
+  <rect x="22" y="368" width="4" height="24" fill="#22d3ee"/>
+  <text class="mono white" x="40" y="386" font-size="15">enchaîne</text>
+  <rect x="126" y="370" width="10" height="20" fill="#22d3ee" opacity="0.8"/>
+
+  <!-- Terminal panel (bottom, full width) -->
+  <rect x="0" y="431" width="1200" height="219" fill="url(#termh)"/>
+  <rect x="18" y="444" width="120" height="24" rx="6" fill="#16213a" stroke="#243350"/>
+  <text class="mono cyan" x="32" y="461" font-size="12">1  ■ Spiritty</text>
+  <text class="mono dim" x="154" y="461" font-size="15">+</text>
+  <text class="mono dim" x="1182" y="461" font-size="12" text-anchor="end">1323 l.</text>
+
+  <text class="mono green" x="20" y="508" font-size="14">~ ❯ free -h &amp;&amp; swapon --show</text>
+  <text class="mono t" x="20" y="530" font-size="13">              total   used   free   available</text>
+  <text class="mono t" x="20" y="550" font-size="13">Mem:           16Gi   3.1Gi  11Gi   12Gi</text>
+  <text class="mono t" x="20" y="570" font-size="13">Swap:         8.0Gi   511Mi  7.5Gi</text>
+  <text class="mono green" x="20" y="602" font-size="14">~ ❯ _</text>
+
+  <!-- Footer -->
+  <line x1="0" y1="650" x2="1200" y2="650" stroke="#243350"/>
+  <rect x="0" y="650" width="1200" height="50" fill="#0b1220"/>
+  <text class="mono white" x="18" y="682" font-size="14">deepseek-flash</text>
+  <text class="mono dim" x="150" y="682" font-size="14">🧠 Auto</text>
+  <text class="mono" x="234" y="682" font-size="14" fill="#fbbf24">⚡ 45k tok</text>
+  <text class="mono" x="352" y="682" font-size="14" fill="#94a3b8">📊 Ctx: 8.2k / 131k (6%)</text>
+  <text class="mono green" x="860" y="682" font-size="14">F3:Safe</text>
+  <text class="mono cyan" x="934" y="682" font-size="14">[^P]</text>
+  <text class="mono cyan" x="980" y="682" font-size="14">[F4]</text>
+  <text class="mono cyan" x="1026" y="682" font-size="14">[F5]</text>
+  <text class="mono orange" x="1072" y="682" font-size="14">[F7/F8]</text>
+  <text class="mono cyan" x="1146" y="682" font-size="14">[F1]</text>
+</svg>

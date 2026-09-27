@@ -10,9 +10,10 @@ const translations = {
     fr: {
         nav_features: "Fonctionnalités",
         nav_demo: "Démonstration",
+        nav_layouts: "Dispositions",
         nav_install: "Installation",
         nav_shortcuts: "Raccourcis",
-        hero_badge: "✨ Version 0.7.3 disponible — Binaire TUI Rust natif",
+        hero_badge: "✨ Version 0.9.1 disponible — Binaire TUI Rust natif",
         hero_title: "L'assistant IA pour terminal <span class=\"gradient-text\">nouvelle génération</span>",
         hero_subtitle: "Conçu par un sysadmin pour les sysadmins, ingénieurs DevOps et power users. Split-screen ergonomique : agent IA contextuel à gauche, shell PTY natif 100% interactif à droite.",
         install_tab_official: "Officiel (spiritty.ai)",
@@ -50,6 +51,16 @@ const translations = {
         feat_5_desc: "Intégrez vos serveurs MCP (Model Context Protocol) en JSON-RPC pour connecter Docker, Kubernetes, bases de données et outils custom via la modale Ctrl+M.",
         feat_6_title: "Métriques Réelles & Coûts Live",
         feat_6_desc: "Suivi exact du débit (tokens/s réels), décompte précis des fenêtres de contexte et estimation en direct du coût de votre session au centième de centime.",
+        feat_7_title: "Entrée Vocale 100 % Locale",
+        feat_7_desc: "Dictez directement dans le prompt : F7 en continu (une pause valide la phrase et l'envoie) ou F8 pour un segment. Capture par arecord/ffmpeg et transcription hors-ligne par whisper.cpp — rien ne quitte votre machine.",
+
+        layouts_tag: "DEUX DISPOSITIONS",
+        layouts_title: "Vertical ou horizontal, à votre guise",
+        layouts_desc: "Basculez d'une touche entre les deux dispositions, inversez l'ordre des panneaux et gardez toujours l'approbation, le modèle et le contexte sous les yeux.",
+        layout_v_title: "Disposition verticale",
+        layout_v_desc: "Chat à gauche, shell à droite — F4 bascule, F5 inverse les panneaux.",
+        layout_h_title: "Disposition horizontale",
+        layout_h_desc: "Chat en haut, shell en bas — idéal sur écran étroit, le shell reste lisible.",
 
         install_tag: "DÉMARRAGE EN 30 SECONDES",
         install_title: "Installez Spiritty facilement",
@@ -82,6 +93,10 @@ const translations = {
         k6_desc: "Inspectez, activez ou configurez vos serveurs et outils MCP",
         k7_action: "Historique des sessions",
         k7_desc: "Naviguez, restaurez ou compactez vos conversations archivées",
+        k8_action: "Dictée continue",
+        k8_desc: "Parlez : un silence valide la phrase, transcrite en local et envoyée automatiquement",
+        k9_action: "Segment vocal manuel",
+        k9_desc: "Enregistre un segment isolé puis le transcrit dans le prompt",
 
         footer_desc: "Spiritty est un projet Open Source créé pour libérer le potentiel des administrateurs système et ingénieurs d'infrastructure.",
         footer_links_col1: "Ressources",
@@ -91,9 +106,10 @@ const translations = {
     en: {
         nav_features: "Features",
         nav_demo: "Demo",
+        nav_layouts: "Layouts",
         nav_install: "Install",
         nav_shortcuts: "Shortcuts",
-        hero_badge: "✨ Version 0.7.3 available — Standalone Rust TUI binary",
+        hero_badge: "✨ Version 0.9.1 available — Standalone Rust TUI binary",
         hero_title: "Next-generation AI terminal <span class=\"gradient-text\">split-screen companion</span>",
         hero_subtitle: "Built by a sysadmin for sysadmins, DevOps engineers, and power users. Ergonomic split-screen: proactive AI assistant on the left, fully interactive native PTY shell on the right.",
         install_tab_official: "Official (spiritty.ai)",
@@ -131,6 +147,16 @@ const translations = {
         feat_5_desc: "Connect your MCP servers via JSON-RPC to inspect and invoke Docker, Kubernetes, database, or custom tooling via the interactive Ctrl+M modal.",
         feat_6_title: "Precise Metrics & Live Costs",
         feat_6_desc: "True token throughput (tokens/s), real-time context budget tracking, and live session cost estimations down to a fraction of a cent.",
+        feat_7_title: "100% Local Voice Input",
+        feat_7_desc: "Dictate straight into the prompt: F7 for continuous mode (a pause validates and sends the sentence) or F8 for a single segment. Captured via arecord/ffmpeg and transcribed offline by whisper.cpp — nothing leaves your machine.",
+
+        layouts_tag: "TWO LAYOUTS",
+        layouts_title: "Vertical or horizontal, your call",
+        layouts_desc: "Switch layouts with one key, flip the panel order, and keep the approval badge, model and context always in sight.",
+        layout_v_title: "Vertical layout",
+        layout_v_desc: "Chat on the left, shell on the right — F4 toggles, F5 flips the panels.",
+        layout_h_title: "Horizontal layout",
+        layout_h_desc: "Chat on top, shell at the bottom — ideal on narrow terminals, the shell stays readable.",
 
         install_tag: "GET STARTED IN 30 SECONDS",
         install_title: "Install Spiritty Effortlessly",
@@ -163,6 +189,10 @@ const translations = {
         k6_desc: "Inspect, toggle, and configure your MCP servers and tools",
         k7_action: "Session History",
         k7_desc: "Browse, reload, search, or manually compact past sessions",
+        k8_action: "Continuous Dictation",
+        k8_desc: "Speak: silence validates the sentence, transcribed locally and sent automatically",
+        k9_action: "Manual Voice Segment",
+        k9_desc: "Records a single segment then transcribes it into the prompt",
 
         footer_desc: "Spiritty is an Open Source project created to empower sysadmins, DevOps, and infrastructure engineers.",
         footer_links_col1: "Resources",
@@ -180,12 +210,12 @@ const demoScenarios = {
         left_lines: "81 l.",
         right_host: "🌐 SSH bento.moondogs.fr (reprise)",
         right_lines: "58 l.",
-        footer_model: "gemini-3.8-flash",
-        footer_reasoning: "Med",
+        footer_model: "gemini-2.5-flash",
+        footer_reasoning: "🧠 Med",
         footer_tok: "⚡ 2.4k tok",
         footer_cost: "💵 $0.0221",
-        footer_ctx: "📖 Ctx: 1.6k / 1.0M (0%)",
-        footer_approve: "F3 Sudo",
+        footer_ctx: "📊 Ctx: 1.6k / 1.0M (0%)",
+        footer_approve: "F3:Safe",
         chat_flow: {
             fr: `
 <div class="chat-lead-error">connect() to unix:/var/run/php/php7.3-fpm.sock failed (2: No such file or directory)</div>
@@ -378,12 +408,12 @@ const demoScenarios = {
         left_lines: "42 l.",
         right_host: "🌐 SSH root@192.168.1.50 (Debian 12)",
         right_lines: "36 l.",
-        footer_model: "deepseek-chat",
-        footer_reasoning: "Off",
+        footer_model: "deepseek-flash",
+        footer_reasoning: "🧠 Off",
         footer_tok: "⚡ 114 tok",
         footer_cost: "💵 $0.0018",
-        footer_ctx: "📖 Ctx: 2.1k / 128k (2%)",
-        footer_approve: "F3 Safe",
+        footer_ctx: "📊 Ctx: 2.1k / 128k (2%)",
+        footer_approve: "F3:Safe",
         chat_flow: {
             fr: `
 <div class="chat-text"><strong>xorne ❯</strong> vérifie la santé de la machine distante et les mises à jour de sécurité</div>
@@ -480,11 +510,11 @@ const demoScenarios = {
         right_host: "local: xorne@cachyos-desktop",
         right_lines: "24 l.",
         footer_model: "claude-3-7-sonnet",
-        footer_reasoning: "Med",
+        footer_reasoning: "🧠 Med",
         footer_tok: "⚡ 82 tok",
         footer_cost: "💵 $0.0084",
-        footer_ctx: "📖 Ctx: 3.4k / 200k (1%)",
-        footer_approve: "F3 Safe",
+        footer_ctx: "📊 Ctx: 3.4k / 200k (1%)",
+        footer_approve: "F3:Safe",
         chat_flow: {
             fr: `
 <div class="chat-lead-error">[Détection automatique Alt+D] Échec de la commande 'systemctl start apache2' (Code 1)</div>
@@ -570,12 +600,12 @@ const demoScenarios = {
         left_lines: "48 l.",
         right_host: "local: xorne@cachyos-desktop",
         right_lines: "30 l.",
-        footer_model: "gemini-3.8-flash",
-        footer_reasoning: "Off",
+        footer_model: "gemini-2.5-flash",
+        footer_reasoning: "🧠 Off",
         footer_tok: "⚡ 142 tok",
         footer_cost: "💵 $0.0032",
-        footer_ctx: "📖 Ctx: 4.8k / 1.0M (0%)",
-        footer_approve: "F3 Sudo",
+        footer_ctx: "📊 Ctx: 4.8k / 1.0M (0%)",
+        footer_approve: "F3:Safe",
         chat_flow: {
             fr: `
 <div class="chat-text"><strong>xorne ❯</strong> liste l'état et la consommation des conteneurs via le serveur MCP Docker</div>

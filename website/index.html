@@ -48,12 +48,13 @@
             <a href="#" class="brand">
                 <img src="assets/spiritty.png" alt="Spiritty Logo" class="brand-icon">
                 <span>Spiritty</span>
-                <span class="brand-version">v0.7.3</span>
+                <span class="brand-version">v0.9.1</span>
             </a>
 
             <ul class="nav-links">
                 <li><a href="#features" class="nav-link" data-i18n="nav_features">Fonctionnalités</a></li>
                 <li><a href="#demo" class="nav-link" data-i18n="nav_demo">Démonstration</a></li>
+                <li><a href="#layouts" class="nav-link" data-i18n="nav_layouts">Dispositions</a></li>
                 <li><a href="#install" class="nav-link" data-i18n="nav_install">Installation</a></li>
                 <li><a href="#shortcuts" class="nav-link" data-i18n="nav_shortcuts">Raccourcis</a></li>
             </ul>
@@ -80,7 +81,7 @@
         <div class="container">
             <div class="hero-badge-wrap">
                 <div class="hero-badge" data-i18n="hero_badge">
-                    ✨ Version 0.7.3 disponible — Binaire TUI Rust natif
+                    ✨ Version 0.9.1 disponible — Binaire TUI Rust natif
                 </div>
             </div>
 
@@ -189,7 +190,7 @@
                             <div class="tui-panel-brand">
                                 <span class="genie-icon">🧞</span>
                                 <span class="brand-title">Spiritty</span>
-                                <span class="brand-version">v0.7.3</span>
+                                <span class="brand-version">v0.9.1</span>
                             </div>
                             <div id="demoLeftLines" class="tui-line-count">81 l.</div>
                         </div>
@@ -216,31 +217,56 @@
                     </div>
                 </div>
 
-                <!-- Footer Status Bar (100% faithful to Screenshot 1) -->
+                <!-- Footer Status Bar (reflet de la barre d'état v0.9.1 : modèle, thinking,
+                     tokens, ctx, approbation toujours visible, F1) -->
                 <div class="tui-statusbar">
                     <div class="tui-status-left">
-                        <span class="status-provider">🔮 Google Gemini</span>
+                        <span id="demoFooterModel" class="status-model">deepseek-flash</span>
                         <span class="status-sep">|</span>
-                        <span id="demoFooterModel" class="status-model">gemini-3.8-flash</span>
+                        <span id="demoFooterReasoning" class="status-badge-med">🧠 Auto</span>
                         <span class="status-sep">|</span>
-                        <span id="demoFooterReasoning" class="status-badge-med">Med</span>
+                        <span id="demoFooterTok" class="status-tok">⚡ 45k tok</span>
                         <span class="status-sep">|</span>
-                        <span id="demoFooterTok" class="status-tok">⚡ 2.4k tok</span>
-                        <span class="status-sep">|</span>
-                        <span id="demoFooterCost" class="status-cost">💵 $0.0221</span>
-                        <span class="status-sep">|</span>
-                        <span id="demoFooterCtx" class="status-ctx">📖 Ctx: 1.6k / 1.0M (0%)</span>
+                        <span id="demoFooterCtx" class="status-ctx">📊 Ctx: 8.2k / 131k (6%)</span>
                     </div>
                     <div class="tui-status-right">
-                        <span class="status-label">Approbation :</span>
-                        <span id="demoFooterApprove" class="tui-keycap key-yellow">F3 Sudo</span>
-                        <span class="tui-keycap key-purple">Ctrl P</span><span class="key-label">Config</span>
-                        <span class="tui-keycap key-purple">Ctrl B</span><span class="key-label">Hosts</span>
-                        <span class="tui-keycap key-purple">Ctrl M</span><span class="key-label">MCP</span>
-                        <span class="tui-keycap key-gray">Ctrl H</span><span class="key-label">Sessions</span>
-                        <span class="tui-keycap key-cyan">F1</span><span class="key-label">Aide</span>
+                        <span id="demoFooterApprove" class="tui-keycap key-yellow">F3:Safe</span>
+                        <span class="tui-keycap key-purple">[^P]</span>
+                        <span class="tui-keycap key-cyan">[F4]</span>
+                        <span class="tui-keycap key-cyan">[F5]</span>
+                        <span class="tui-keycap key-gray">[F7/F8]</span>
+                        <span class="tui-keycap key-cyan">[F1]</span>
                     </div>
                 </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Layouts: vertical & horizontal -->
+    <section id="layouts" class="features-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag" data-i18n="layouts_tag">DEUX DISPOSITIONS</span>
+                <h2 class="section-title" data-i18n="layouts_title">Vertical ou horizontal, à votre guise</h2>
+                <p class="section-desc" data-i18n="layouts_desc">
+                    Basculez d'une touche entre les deux dispositions, inversez l'ordre des panneaux et gardez toujours l'approbation, le modèle et le contexte sous les yeux.
+                </p>
+            </div>
+            <div class="layouts-grid">
+                <figure class="layout-figure">
+                    <img src="assets/layout-vertical.svg" alt="Spiritty en disposition verticale (chat à gauche, terminal à droite)" loading="lazy">
+                    <figcaption>
+                        <strong data-i18n="layout_v_title">Disposition verticale</strong>
+                        <span data-i18n="layout_v_desc">Chat à gauche, shell à droite — <kbd>F4</kbd> bascule, <kbd>F5</kbd> inverse les panneaux.</span>
+                    </figcaption>
+                </figure>
+                <figure class="layout-figure">
+                    <img src="assets/layout-horizontal.svg" alt="Spiritty en disposition horizontale (chat en haut, terminal en bas)" loading="lazy">
+                    <figcaption>
+                        <strong data-i18n="layout_h_title">Disposition horizontale</strong>
+                        <span data-i18n="layout_h_desc">Chat en haut, shell en bas — idéal sur écran étroit, le shell reste lisible.</span>
+                    </figcaption>
+                </figure>
             </div>
         </div>
     </section>
@@ -308,6 +334,15 @@
                     <h3 class="feature-title" data-i18n="feat_6_title">Métriques Réelles & Coûts Live</h3>
                     <p class="feature-desc" data-i18n="feat_6_desc">
                         Suivi exact du débit (tokens/s réels), décompte précis des fenêtres de contexte et estimation en direct du coût de votre session au centième de centime.
+                    </p>
+                </div>
+
+                <!-- Feature 7 -->
+                <div class="feature-card gold">
+                    <div class="feature-icon-wrap">🎙️</div>
+                    <h3 class="feature-title" data-i18n="feat_7_title">Entrée Vocale 100 % Locale</h3>
+                    <p class="feature-desc" data-i18n="feat_7_desc">
+                        Dictez directement dans le prompt : <kbd>F7</kbd> en continu (une pause valide la phrase et l'envoie) ou <kbd>F8</kbd> pour un segment. Capture par arecord/ffmpeg et transcription hors-ligne par whisper.cpp — rien ne quitte votre machine.
                     </p>
                 </div>
             </div>
@@ -427,6 +462,16 @@
                             <td><span class="kbd-badge">Ctrl + H</span></td>
                             <td style="color: #fff; font-weight: 600;" data-i18n="k7_action">Historique des sessions</td>
                             <td data-i18n="k7_desc">Naviguez, restaurez ou compactez vos conversations archivées</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">F7</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k8_action">Dictée continue</td>
+                            <td data-i18n="k8_desc">Parlez : un silence valide la phrase, transcrite en local et envoyée automatiquement</td>
+                        </tr>
+                        <tr>
+                            <td><span class="kbd-badge">F8</span></td>
+                            <td style="color: #fff; font-weight: 600;" data-i18n="k9_action">Segment vocal manuel</td>
+                            <td data-i18n="k9_desc">Enregistre un segment isolé puis le transcrit dans le prompt</td>
                         </tr>
                     </tbody>
                 </table>
