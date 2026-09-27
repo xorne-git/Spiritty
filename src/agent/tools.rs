@@ -370,8 +370,20 @@ fn parse_tool_call_inner(text: &str) -> Option<ToolInvocation> {
             }
 
             let code_start = &after[first_nl + 1..];
-            let Some(end) = crate::app::find_closing_code_fence(code_start) else {
-                continue;
+            // The closing marker can be malformed: some models open a fenced
+            // ```tool:run_command block but close it with an HTML tag
+            // (`</tool:run_command>`). Accept the earliest of the fenced close and an HTML
+            // close tag — but still reject a block with NO closing marker at all, so trailing
+            // prose is never swallowed as a command.
+            let fenced = crate::app::find_closing_code_fence(code_start);
+            let html = code_start
+                .find("</tool:run_command>")
+                .or_else(|| code_start.find("</tool:execute_command>"));
+            let end = match (fenced, html) {
+                (Some(a), Some(b)) => a.min(b),
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                (None, None) => continue,
             };
             let raw_block = code_start[..end].trim();
 
@@ -1726,5 +1738,20 @@ mod tool_parse_tests {
     fn does_not_recover_properly_fenced_block() {
         let text = "Voici :\n\n```bash\nls -la\ndf -h\n```";
         assert_eq!(parse_tool_call(text), None);
+    }
+
+    #[test]
+    fn parses_fenced_run_command_closed_by_html_tag() {
+        // Live regression (laptop session): the model opened a fenced ```tool:run_command
+        // but closed it with </tool:run_command>, so nothing ran.
+        let text = "Je vérifie :\n\n```tool:run_command\necho \"=== 1 ===\"; pgrep -af \"[s]piritty\"\ncommand -v whisper-cli && whisper-cli --version 2>&1 | head -2</tool:run_command>\n\nDès que le retour s'affiche, on saura.";
+        match parse_tool_call(text) {
+            Some(ToolInvocation::RunCommand(cmd)) => {
+                assert!(cmd.contains("pgrep -af"), "{cmd}");
+                assert!(!cmd.contains("</tool:run_command>"), "{cmd}");
+                assert!(!cmd.contains("Dès que"), "{cmd}");
+            }
+            other => panic!("expected RunCommand, got {other:?}"),
+        }
     }
 }

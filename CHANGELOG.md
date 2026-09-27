@@ -23,6 +23,7 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Fixed
 
+- **Mixed code-fence markers ignored (command shown but never run)**: some models open a directive with ```` ```tool:run_command ```` but close it with the HTML tag `</tool:run_command>` (reproduced on a laptop session). Neither the fenced nor the HTML parser recognized the hybrid, so the command appeared in the chat and nothing happened. The fenced directive parser now also accepts an HTML close tag as the block terminator — while still rejecting a block with no closing marker at all, so trailing prose is never swallowed.
 - **Voice setup aborted on Arch/Omarchy over a missing `cmake`**: the installer reported `git/cmake introuvables` and gave up whenever *any* build tool was missing (git was actually present). It now checks `git`, `cmake`, `make` and a C++ compiler individually, lists exactly what is missing, and offers to install it through the detected package manager (pacman / apt / dnf / zypper / apk).
 - **Voice binary resolution**: when `voice.whisper_bin` is the bare `whisper-cli` default and it is not on `PATH`, Spiritty now falls back to the standard installer build location (`~/.local/opt/whisper.cpp/build/bin/whisper-cli`), so dictation works even if the initial `[voice]` config patch was overwritten.
 
