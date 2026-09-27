@@ -148,6 +148,8 @@ spiritty --help
 
 Spiritty can dictate straight into the chat prompt without sending a single byte to the cloud.
 
+> **One-line installer shortcut:** `install.sh` now asks *“Install local voice input?”* — answer **yes** and it detects or builds `whisper.cpp`, downloads the GGML model into `~/.config/spiritty/models/` and enables `[voice]` for you. The manual steps below are only needed otherwise.
+
 **Prerequisites (one-time):** a recorder (`arecord` from *alsa-utils* on Linux, or `ffmpeg` / `sox`), plus [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`) and a GGML model.
 
 ```bash

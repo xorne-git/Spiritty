@@ -17,6 +17,8 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+- **Installer voice setup (`install.sh`)**: the one-line installer now offers, with a French `[O/n]` prompt, to set up the 100% local voice input — it detects an existing `whisper-cli` or builds `whisper.cpp` into `~/.local/opt/whisper.cpp`, downloads the GGML model (`SPIRITTY_VOICE_MODEL`, default `small`) into `~/.config/spiritty/models/`, warns when no audio recorder is present, and enables the `[voice]` section of `config.toml` in place without touching the rest of the file. Non-interactive installs skip it.
+
 ### Changed
 
 ---

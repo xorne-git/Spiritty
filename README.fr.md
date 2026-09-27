@@ -148,6 +148,8 @@ spiritty --help
 
 Spiritty peut dicter directement dans le prompt du chat sans envoyer un seul octet dans le cloud.
 
+> **Raccourci via l'installeur :** `install.sh` demande maintenant *« Installer l'entrée vocale locale ? »* — répondez **oui** et il détecte/compile `whisper.cpp`, télécharge le modèle GGML dans `~/.config/spiritty/models/` et active `[voice]` pour vous. Les étapes manuelles ci-dessous ne sont utiles qu'autrement.
+
 **Prérequis (une seule fois) :** un enregistreur (`arecord` via *alsa-utils* sous Linux, ou `ffmpeg` / `sox`), puis [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) (`whisper-cli`) et un modèle GGML.
 
 ```bash

@@ -342,6 +342,173 @@ EOF
     success "Entrée d'application et icône installées dans ${app_dir}/spiritty.desktop !"
 }
 
+# --- 8. Optional 100% Local Voice Input (whisper.cpp + model) ---
+#
+# Adds the offline dictation prerequisites: an audio recorder check, a local
+# `whisper-cli` (from PATH, an existing build, or a from-source build), a GGML
+# model download, and the `[voice]` section of the config. Never blocks the
+# install: every step degrades to a warning.
+setup_voice_input() {
+    # Non-interactive (piped/CI) installs skip the ~500 MB model download.
+    if [ ! -e /dev/tty ]; then
+        return 0
+    fi
+
+    echo ""
+    printf "${BOLD}Installer l'entrée vocale locale 100%% hors-ligne (whisper.cpp + modèle) ? [O/n] ${NC}"
+    local response="o"
+    read -r response < /dev/tty || response="o"
+    case "$response" in
+        [oOyY]|"")
+            ;;
+        *)
+            info "Entrée vocale ignorée. Activez-la plus tard via la section [voice] de la configuration."
+            return 0
+            ;;
+    esac
+
+    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spiritty"
+    local models_dir="${config_dir}/models"
+    local model_size="${SPIRITTY_VOICE_MODEL:-small}"
+    local model_path="${models_dir}/ggml-${model_size}.bin"
+    local whisper_dir="${SPIRITTY_WHISPER_DIR:-$HOME/.local/opt/whisper.cpp}"
+    local whisper_bin="${SPIRITTY_WHISPER_BIN:-}"
+
+    # 1. Audio recorder (best-effort: never fatal).
+    if ! command -v arecord >/dev/null 2>&1 \
+        && ! command -v ffmpeg >/dev/null 2>&1 \
+        && ! command -v sox >/dev/null 2>&1; then
+        warn "Aucun enregistreur audio trouvé (arecord, ffmpeg ou sox)."
+        echo -e "${GRAY}   Installez-en un (ex. 'alsa-utils' pour arecord) pour capturer le micro.${NC}"
+    else
+        success "Enregistreur audio détecté."
+    fi
+
+    # 2. Locate or build whisper-cli.
+    if [ -n "$whisper_bin" ] && [ -x "$whisper_bin" ]; then
+        :
+    elif command -v whisper-cli >/dev/null 2>&1; then
+        whisper_bin="$(command -v whisper-cli)"
+    elif [ -x "${whisper_dir}/build/bin/whisper-cli" ]; then
+        whisper_bin="${whisper_dir}/build/bin/whisper-cli"
+    else
+        local can_build=1
+        for tool in git cmake; do
+            command -v "$tool" >/dev/null 2>&1 || can_build=0
+        done
+        if [ "$can_build" -eq 0 ]; then
+            warn "git/cmake introuvables : impossible de compiler whisper.cpp."
+            echo -e "${GRAY}   Compilez-le manuellement ou installez un paquet 'whisper-cpp', puis relancez.${NC}"
+            return 0
+        fi
+
+        info "Compilation locale de whisper.cpp dans ${whisper_dir} (quelques minutes)..."
+        if [ ! -d "${whisper_dir}/.git" ]; then
+            git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$whisper_dir" \
+                || { warn "Clonage de whisper.cpp échoué."; return 0; }
+        fi
+        cmake -S "$whisper_dir" -B "${whisper_dir}/build" -DCMAKE_BUILD_TYPE=Release \
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF >/dev/null 2>&1 \
+            || { warn "Configuration CMake de whisper.cpp échouée."; return 0; }
+        cmake --build "${whisper_dir}/build" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" >/dev/null 2>&1 \
+            || { warn "Compilation de whisper.cpp échouée."; return 0; }
+        whisper_bin="${whisper_dir}/build/bin/whisper-cli"
+    fi
+
+    if [ ! -x "$whisper_bin" ]; then
+        warn "Binaire whisper-cli introuvable après installation."
+        return 0
+    fi
+    success "whisper-cli prêt : ${whisper_bin}"
+
+    # 3. Download the GGML model (skipped when already present).
+    mkdir -p "$models_dir"
+    if [ -s "$model_path" ]; then
+        success "Modèle déjà présent : ${model_path}"
+    else
+        info "Téléchargement du modèle Whisper '${model_size}' (~500 Mo)..."
+        local model_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model_size}.bin"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fL --retry 3 -o "$model_path" "$model_url" \
+                || { warn "Téléchargement du modèle échoué."; rm -f "$model_path"; return 0; }
+        else
+            wget -q -O "$model_path" "$model_url" \
+                || { warn "Téléchargement du modèle échoué."; rm -f "$model_path"; return 0; }
+        fi
+        success "Modèle installé : ${model_path}"
+    fi
+
+    # 4. Enable [voice] in the config (patch in place, or create a minimal one).
+    local config_file="${config_dir}/config.toml"
+    set_voice_config "$config_file" "$whisper_bin" "$model_path"
+    success "Entrée vocale activée dans ${config_file}"
+
+    echo ""
+    echo -e "${GRAY}   Dans Spiritty : ${NC}${BOLD}F7${NC}${GRAY} = dictée continue (pause = validation), ${NC}${BOLD}F8${NC}${GRAY} = segment manuel.${NC}"
+    echo -e "${GRAY}   Pour l'envoi automatique, réglez ${NC}${BOLD}auto_submit = true${NC}${GRAY} dans [voice].${NC}"
+}
+
+# Patches `[voice]` in a TOML file without disturbing the rest of the config:
+# replaces `enabled`, `whisper_bin` and `model_path` when present, inserts the
+# missing ones (or the whole section when absent). Leaves every other key intact.
+set_voice_config() {
+    local config_file="$1" whisper_bin="$2" model_path="$3"
+    mkdir -p "$(dirname "$config_file")"
+
+    if [ ! -f "$config_file" ]; then
+        cat > "$config_file" <<EOF
+[voice]
+enabled = true
+whisper_bin = "$whisper_bin"
+model_path = "$model_path"
+EOF
+        chmod 600 "$config_file" 2>/dev/null || true
+        return 0
+    fi
+
+    local tmp="${config_file}.tmp"
+    if awk -v wb="$whisper_bin" -v mp="$model_path" '
+        function flush_missing() {
+            if (!done_en) { print "enabled = true"; done_en = 1 }
+            if (!done_wb) { print "whisper_bin = \"" wb "\""; done_wb = 1 }
+            if (!done_mp) { print "model_path = \"" mp "\""; done_mp = 1 }
+        }
+        BEGIN { in_voice = 0; found_voice = 0 }
+        /^\[/ {
+            if (in_voice) flush_missing()
+            in_voice = ($0 ~ /^\[voice\][[:space:]]*$/)
+            if (in_voice) found_voice = 1
+            print
+            next
+        }
+        {
+            if (in_voice) {
+                if ($0 ~ /^[[:space:]]*enabled[[:space:]]*=/) { print "enabled = true"; done_en = 1; next }
+                if ($0 ~ /^[[:space:]]*whisper_bin[[:space:]]*=/) { print "whisper_bin = \"" wb "\""; done_wb = 1; next }
+                if ($0 ~ /^[[:space:]]*model_path[[:space:]]*=/) { print "model_path = \"" mp "\""; done_mp = 1; next }
+            }
+            print
+        }
+        END {
+            if (in_voice) flush_missing()
+            if (!found_voice) {
+                print ""
+                print "[voice]"
+                print "enabled = true"
+                print "whisper_bin = \"" wb "\""
+                print "model_path = \"" mp "\""
+            }
+        }
+    ' "$config_file" > "$tmp"; then
+        mv "$tmp" "$config_file"
+    else
+        rm -f "$tmp"
+        warn "Impossible de mettre à jour ${config_file}; configurez [voice] manuellement."
+    fi
+    chmod 600 "$config_file" 2>/dev/null || true
+    return 0
+}
+
 main() {
     print_banner
     check_dependencies
@@ -351,6 +518,7 @@ main() {
     install_binary
     check_path
     setup_desktop_entry
+    setup_voice_input
 
     echo ""
     echo -e "${GREEN}${BOLD}🎉 Installation terminée !${NC}"
