@@ -613,14 +613,21 @@ fn build_left_metrics(
         }
     }
 
-    // 2b. Thinking Level (directly to the right of model)
+    // 2b. Thinking Level (directly to the right of model). When the configured effort is
+    //     `Default`, show the provider's documented default level instead of a vague "Auto"
+    //     (display only — no extra parameter is sent to the API).
     let reasoning = app.get_active_reasoning_effort();
-    let (th_label, th_color) = match reasoning {
-        crate::config::ReasoningEffort::Default => ("Auto", Color::DarkGray),
-        crate::config::ReasoningEffort::Off => ("Off", Color::DarkGray),
-        crate::config::ReasoningEffort::Low => ("Low", Color::Green),
-        crate::config::ReasoningEffort::Medium => ("Med", Color::Yellow),
-        crate::config::ReasoningEffort::High => ("High", Color::Magenta),
+    let effective = if reasoning == crate::config::ReasoningEffort::Default {
+        app.resolved_default_reasoning()
+    } else {
+        Some(reasoning)
+    };
+    let (th_label, th_color) = match effective {
+        Some(crate::config::ReasoningEffort::Off) => ("Off", Color::DarkGray),
+        Some(crate::config::ReasoningEffort::Low) => ("Low", Color::Green),
+        Some(crate::config::ReasoningEffort::Medium) => ("Med", Color::Yellow),
+        Some(crate::config::ReasoningEffort::High) => ("High", Color::Magenta),
+        _ => ("Model", Color::DarkGray),
     };
     let th_span = Span::styled(
         format!(" 🧠 {}", th_label),

@@ -351,6 +351,53 @@ models = ["gemini-3.8-flash"]
 }
 
 #[test]
+fn test_documented_default_reasoning_mapping() {
+    use spiritty::config::{documented_default_reasoning, ProviderType, ReasoningEffort};
+
+    // OpenAI-compatible reasoning providers default to "medium".
+    assert_eq!(
+        documented_default_reasoning(ProviderType::DeepSeek, "deepseek-flash"),
+        Some(ReasoningEffort::Medium)
+    );
+    assert_eq!(
+        documented_default_reasoning(ProviderType::OpenAI, "gpt-5"),
+        Some(ReasoningEffort::Medium)
+    );
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Grok, "grok-4"),
+        Some(ReasoningEffort::Medium)
+    );
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Zai, "glm-5.3"),
+        Some(ReasoningEffort::Medium)
+    );
+
+    // Anthropic needs an explicit budget: default is off.
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Anthropic, "claude-sonnet"),
+        Some(ReasoningEffort::Off)
+    );
+
+    // Gemini defaults depend on the model family.
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Gemini, "gemini-3.8-flash"),
+        Some(ReasoningEffort::Medium)
+    );
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Gemini, "gemini-3.1-pro-preview"),
+        Some(ReasoningEffort::High)
+    );
+    assert_eq!(
+        documented_default_reasoning(ProviderType::Gemini, "gemini-3.5-flash-lite"),
+        Some(ReasoningEffort::Low)
+    );
+
+    // Local providers: model-dependent, so unknown.
+    assert_eq!(documented_default_reasoning(ProviderType::Ollama, "qwen2.5"), None);
+    assert_eq!(documented_default_reasoning(ProviderType::LmStudio, "any"), None);
+}
+
+#[test]
 fn test_voice_config_defaults_and_persistence() {
     use spiritty::config::expand_tilde;
     use spiritty::i18n::Language;

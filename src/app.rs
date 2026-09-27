@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     agent::AgentEngine,
-    config::{AutoApproveLevel, Config, ProviderType, SplitOrientation},
+    config::{AutoApproveLevel, Config, ProviderType, ReasoningEffort, SplitOrientation},
     event::AppEvent,
     i18n::{I18nKey, Language},
     pty::PtyProcess,
@@ -1824,6 +1824,16 @@ impl App {
 
     pub fn get_active_reasoning_effort(&self) -> crate::config::ReasoningEffort {
         self.config.get_active_provider_config().reasoning_effort
+    }
+
+    /// Concrete reasoning level to DISPLAY when the configured effort is `Default`. Purely
+    /// informational: Spiritty still sends no `reasoning_effort` in that case, the provider
+    /// applies its own documented default. `None` = unknown (local models).
+    pub fn resolved_default_reasoning(&self) -> Option<ReasoningEffort> {
+        crate::config::documented_default_reasoning(
+            self.config.default_provider,
+            &self.get_active_model_name(),
+        )
     }
 
     pub fn get_context_window_limit(&self) -> usize {

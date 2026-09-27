@@ -19,6 +19,7 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Changed
 
+- **Thinking badge shows the real default level**: when the configured reasoning effort is `Default`, the status bar now displays the provider's documented default (`Med` for DeepSeek/OpenAI/Grok/Z.ai, `High`/`Med`/`Low` for Gemini by model, `Off` for Anthropic, `Model` for local) instead of a vague `Auto`. Display only — Spiritty still sends no `reasoning_effort` in that case.
 - **Status bar cost precision**: the live session cost is now shown at the thousandth of a dollar (`$0.032` instead of `$0.0324`), saving a column; it stays hidden until the session reaches `$0.001`.
 
 ---

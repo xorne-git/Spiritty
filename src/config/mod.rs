@@ -262,6 +262,36 @@ impl ReasoningEffort {
     }
 }
 
+/// Documented default reasoning level for a provider/model, used **for display only**:
+/// when `ReasoningEffort::Default` is configured, Spiritty sends no `reasoning_effort`
+/// and the provider applies its own default. This mapping mirrors the provider docs so
+/// the status bar can show the effective level instead of a vague "Auto". Returns `None`
+/// for local providers whose default depends entirely on the loaded model.
+pub fn documented_default_reasoning(
+    provider: ProviderType,
+    model: &str,
+) -> Option<ReasoningEffort> {
+    let m = model.to_ascii_lowercase();
+    match provider {
+        ProviderType::Ollama | ProviderType::LmStudio => None,
+        // Extended thinking needs an explicit budget: with none, it is off.
+        ProviderType::Anthropic => Some(ReasoningEffort::Off),
+        ProviderType::Gemini => {
+            if m.contains("lite") {
+                Some(ReasoningEffort::Low)
+            } else if m.contains("pro") {
+                Some(ReasoningEffort::High)
+            } else {
+                Some(ReasoningEffort::Medium)
+            }
+        }
+        // OpenAI reasoning models and the OpenAI-compatible providers default to "medium".
+        ProviderType::OpenAI | ProviderType::DeepSeek | ProviderType::Grok | ProviderType::Zai => {
+            Some(ReasoningEffort::Medium)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub model: String,
