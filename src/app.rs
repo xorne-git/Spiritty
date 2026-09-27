@@ -5293,6 +5293,18 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn prompt_vertical_movement_returns_to_end() {
+        let text = "j'ai besoin de la gestion de la voix, un speech2txt qui se retrouve dans le prompt, j'ai trouvé ce plugin";
+        for w in [40usize, 55, 71, 90] {
+            let up = super::prompt_move_cursor_vertical(text, w, text.len(), -1)
+                .expect("up from end should move");
+            let down = super::prompt_move_cursor_vertical(text, w, up, 1)
+                .expect("down should move");
+            assert_eq!(down, text.len(), "w={w}: down must return to the end");
+        }
+    }
+
+    #[test]
     fn insert_transcript_appends_with_separating_space() {
         let mut buf = String::from("hello");
         let mut cursor = buf.len();

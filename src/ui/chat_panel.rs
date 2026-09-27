@@ -2950,121 +2950,43 @@ pub(crate) fn prompt_visual_rows(text: &str, max_w: usize) -> Vec<PromptRow> {
     rows
 }
 
+/// Computes the cursor's visual `(row, column)` and the total number of input rows for
+/// the multiline prompt. Delegates the wrapping to [`prompt_visual_rows`] so the cursor
+/// display and the vertical cursor movement (`prompt_move_cursor_vertical`) always agree;
+/// the two used to diverge (notably for words longer than the prompt width), which
+/// stranded the cursor at the end of the wrong row and made the tail unreachable.
 fn compute_prompt_cursor_and_lines(
     text: &str,
     cursor_byte_pos: usize,
     max_w: usize,
 ) -> (u16, u16, u16) {
-    if max_w == 0 || text.is_empty() {
+    if max_w == 0 {
         return (0, 0, 1);
     }
 
-    let mut current_row: u16 = 0;
-    let mut current_col: usize = 0;
-    let mut cursor_row: u16 = 0;
-    let mut cursor_col: usize = 0;
-    let mut cursor_found = false;
-
-    let mut byte_offset: usize = 0;
-
-    let sublines: Vec<&str> = text.split('\n').collect();
-
-    for (sub_idx, subline) in sublines.iter().enumerate() {
-        if sub_idx > 0 {
-            if !cursor_found && byte_offset == cursor_byte_pos {
-                cursor_row = current_row;
-                cursor_col = current_col;
-                cursor_found = true;
-            }
-            byte_offset += 1; // for '\n'
-            current_row = current_row.saturating_add(1);
-            current_col = 0;
-        }
-
-        if subline.is_empty() {
-            if !cursor_found && byte_offset == cursor_byte_pos {
-                cursor_row = current_row;
-                cursor_col = current_col;
-                cursor_found = true;
-            }
-            continue;
-        }
-
-        for word in subline.split_inclusive(' ') {
-            let word_bytes = word.len();
-            let word_trimmed = word.trim_end_matches(' ');
-            let word_w = str_visual_width(word_trimmed);
-            let trailing_spaces = word.len() - word_trimmed.len();
-
-            if !cursor_found
-                && cursor_byte_pos >= byte_offset
-                && cursor_byte_pos <= byte_offset + word_bytes
-            {
-                let inside_offset = (cursor_byte_pos - byte_offset).min(word.len());
-                let inside_offset = word.floor_char_boundary(inside_offset);
-                let inside_str = &word[..inside_offset];
-                let inside_w = str_visual_width(inside_str);
-
-                if current_col + word_w <= max_w || current_col == 0 {
-                    cursor_row = current_row;
-                    cursor_col = current_col + inside_w;
-                } else {
-                    cursor_row = current_row.saturating_add(1);
-                    cursor_col = inside_w;
-                }
-                cursor_found = true;
-            }
-
-            if word_w == 0 {
-                if current_col + trailing_spaces <= max_w {
-                    current_col += trailing_spaces;
-                } else {
-                    current_row = current_row.saturating_add(1);
-                    current_col = 0;
-                }
-            } else if current_col + word_w <= max_w {
-                if current_col + word_w + trailing_spaces <= max_w {
-                    current_col += word_w + trailing_spaces;
-                } else {
-                    current_row = current_row.saturating_add(1);
-                    current_col = 0;
-                }
-            } else {
-                if current_col > 0 {
-                    current_row = current_row.saturating_add(1);
-                }
-
-                if word_w > max_w {
-                    let mut rem = word_w;
-                    while rem > max_w {
-                        current_row = current_row.saturating_add(1);
-                        rem -= max_w;
-                    }
-                    if rem + trailing_spaces <= max_w {
-                        current_col = rem + trailing_spaces;
-                    } else {
-                        current_row = current_row.saturating_add(1);
-                        current_col = 0;
-                    }
-                } else if word_w + trailing_spaces <= max_w {
-                    current_col = word_w + trailing_spaces;
-                } else {
-                    current_row = current_row.saturating_add(1);
-                    current_col = 0;
-                }
-            }
-
-            byte_offset += word_bytes;
-        }
+    let rows = prompt_visual_rows(text, max_w);
+    if rows.is_empty() {
+        return (0, 0, 1);
     }
 
-    if !cursor_found {
-        cursor_row = current_row;
-        cursor_col = current_col;
-    }
+    let cursor = cursor_byte_pos.min(text.len());
+    let row_idx = rows
+        .iter()
+        .rposition(|r| cursor >= r.byte_start)
+        .unwrap_or(0);
+    let row = &rows[row_idx];
 
-    let total_rows = current_row.saturating_add(1);
-    (cursor_row, cursor_col as u16, total_rows)
+    // A row's range includes its terminating '\n'; the cursor may rest on the content only.
+    let content_end = if row.byte_end > row.byte_start && text.as_bytes()[row.byte_end - 1] == b'\n'
+    {
+        row.byte_end - 1
+    } else {
+        row.byte_end
+    };
+    let pos = cursor.min(content_end);
+    let col = str_visual_width(&text[row.byte_start..pos]);
+
+    (row_idx as u16, col as u16, rows.len() as u16)
 }
 
 #[cfg(test)]
@@ -3086,6 +3008,67 @@ mod recovered_regression_tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Regression: the end cursor must land on the LAST visual row even when the prompt
+    /// contains a word longer than the prompt width (hard-split wrapping). The old
+    /// reimplementation kept the cursor on row 0 with a huge column, so the tail of the
+    /// prompt was visually unreachable.
+    #[test]
+    fn cursor_at_end_lands_on_last_row_for_long_unbreakable_word() {
+        let text = "a".repeat(140);
+        for w in 20usize..=60 {
+            let rows = prompt_visual_rows(&text, w);
+            let (row, col, total) = compute_prompt_cursor_and_lines(&text, text.len(), w);
+            assert_eq!(
+                row as usize,
+                rows.len() - 1,
+                "w={w}: end cursor must be on the last row (got row {row} of {})",
+                rows.len()
+            );
+            assert_eq!(total as usize, rows.len(), "w={w}: total rows mismatch");
+            // 140 is a multiple of every width here except when it isn't; the column is the
+            // width of the trailing chunk, always < max_w.
+            assert!((col as usize) < w, "w={w}: column {col} must stay inside the row");
+        }
+    }
+
+    /// Regression: cursor display must land the end cursor on the last visual row for a
+    /// wrapped prompt (the display and the movement share `prompt_visual_rows`).
+    #[test]
+    fn cursor_end_lands_on_last_row_for_wrapped_text() {
+        let text = "j'ai besoin de la gestion de la voix, un speech2txt qui se retrouve dans le prompt, j'ai trouvé ce plugin";
+        for w in [40usize, 55, 71, 90] {
+            let rows = prompt_visual_rows(text, w);
+            let (row, _col, total) = compute_prompt_cursor_and_lines(text, text.len(), w);
+            assert_eq!(row as usize, rows.len() - 1, "w={w}: end cursor row");
+            assert_eq!(total as usize, rows.len(), "w={w}: total rows");
+        }
+    }
+
+    /// The cursor lands at the start of the next row at a wrap boundary (not at the end of
+    /// the previous row, where there is no cell left to draw it).
+    #[test]
+    fn cursor_at_wrap_boundary_is_start_of_next_row() {
+        let text = "j'ai besoin de la gestion de la voix, un speech2txt qui se retrouve dans le prompt, j'ai trouvé ce plugin";
+        let w = 71;
+        let rows = prompt_visual_rows(text, w);
+        let boundary = rows[1].byte_start;
+        let (row, col, _total) = compute_prompt_cursor_and_lines(text, boundary, w);
+        assert_eq!(row, 1);
+        assert_eq!(col, 0);
+    }
+
+    /// A historical case (see `tests/basic_test.rs`) must keep its expected geometry.
+    #[test]
+    fn cursor_geometry_stable_for_historical_case() {
+        let text = "Fais-moi un bilan complet de ma configuration graphique et Wayland : versions des pilotes Nvidia / Mesa, état de niri et écran, et utilisation VRAM actuelle sous forme de tableau.";
+        let w = 74;
+        let (_r, c_col, t_rows) = compute_prompt_cursor_and_lines(text, text.len(), w);
+        let (_r2, c_col2, t_rows2) = compute_prompt_cursor_and_lines(text, text.len() - 1, w);
+        assert_eq!(t_rows, 3);
+        assert_eq!(t_rows2, 3);
+        assert_eq!(c_col2, c_col - 1);
     }
 
     /// While a tool consent is pending for a command, the matching fence in the

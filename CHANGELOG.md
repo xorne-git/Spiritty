@@ -19,6 +19,11 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 - **Installer voice setup (`install.sh`)**: the one-line installer now offers, with a French `[O/n]` prompt, to set up the 100% local voice input — it detects an existing `whisper-cli` or builds `whisper.cpp` into `~/.local/opt/whisper.cpp`, downloads the GGML model (`SPIRITTY_VOICE_MODEL`, default `small`) into `~/.config/spiritty/models/`, warns when no audio recorder is present, and enables the `[voice]` section of `config.toml` in place without touching the rest of the file. Non-interactive installs skip it.
 
+### Fixed
+
+- **Prompt cursor stuck at the tail of long prompts**: the cursor's visual position was computed by a second, independent reimplementation of the word-wrap, which diverged from `prompt_visual_rows` (used by the arrow-key movement) — most visibly for words longer than the prompt width (URLs, paths, unbreakable tokens), where the end cursor stayed on the first row at an out-of-range column and the tail appeared unreachable. The display now derives its `(row, column)` from `prompt_visual_rows`, so display and movement can no longer disagree.
+- **Agent silently ignoring a command written without a directive**: some models (observed with `deepseek-flash`) end their answer with the raw shell lines and a stray backtick instead of the required ```tool:run_command fence, so Spiritty neither ran nor proposed anything. A conservative last-resort recovery now recognizes that pattern (last paragraph is a multi-line executable block, message ends with an unmatched backtick) and routes it through the normal approval flow. Properly fenced blocks and single inline-code tokens are never affected.
+
 ### Changed
 
 ---
