@@ -28,6 +28,7 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 - **Status bar reworked**: the provider icon and name are gone (only the model is shown, followed by the thinking level, token/speed, cost and context metrics), and the **approval badge (`F3`, `Safe` by default) is now always visible** — it and `F1` are never dropped, even on the narrowest terminals, while `F4`/`F5`/voice/Config are dropped first.
 - **Help modal (`F1`)**: each section title is now followed by a blank line, making the shortcuts list easier to scan.
+- **Session id moved to the chat title**: the transient `📂 Session #…` footer toast is gone and the short session id is now part of the chat panel title (`🧞 Spiritty vX · #ID`), freeing status-bar space.
 
 ---
 

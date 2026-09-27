@@ -1318,8 +1318,8 @@ impl App {
                 self.chat_input.clear();
                 self.cursor_pos = 0;
                 self.reset_chat_scroll();
-                let short_id = self.current_session.short_id();
-                self.set_toast(format!("📂 Session {}", short_id));
+                // The session id now lives in the chat panel title, so it no longer clutters
+                // the footer with a transient toast.
                 self.maybe_offer_ssh_reconnect(resumed_ssh);
             }
             Err(e) => {
