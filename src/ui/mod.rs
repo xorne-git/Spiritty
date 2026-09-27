@@ -325,11 +325,12 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
     )
 }
 
-/// Builds the right-hand footer shortcuts, prioritising (in order) **F3 approval, Config,
-/// F4, F5, F7/F8 voice and F1**. Optional groups (Sessions, MCP, Hosts) are pulled in only
-/// when they fit, and rendering degrades from bracketed pills to compact badges and then to
-/// bare keys before any of the essentials is dropped (F1 is always kept last). The voice
-/// item reflects the live state (`● REC` / `⟳ Transcription…`) while dictating.
+/// Builds the right-hand footer shortcuts, prioritising (in order) **F3 approval, F1, Config,
+/// F4, F5, F7/F8 voice**. Optional groups (Sessions, MCP, Hosts) are pulled in only when they
+/// fit, and rendering degrades from bracketed pills to compact badges and then to bare keys.
+/// The **approval badge (F3) and the help key (F1) are always kept** — even on the narrowest
+/// terminals — while F4/F5/voice/Config are dropped first. The voice item reflects the live
+/// state (`● REC` / `⟳ Transcription…`) while dictating.
 fn right_shortcut_spans(
     lang: Language,
     auto_approve: crate::config::AutoApproveLevel,
@@ -523,9 +524,10 @@ fn right_shortcut_spans(
         }
     }
 
-    // If even the bare keys do not fit, drop F3 then F4 then F5 then F8 then Config, keeping F1 last.
+    // If even the bare keys do not fit, drop F4 then F5 then F7/F8 then Config — the approval
+    // badge (F3) and the help key (F1) are always kept, even on the narrowest terminals.
     if group_total(style, &chosen) > available_width {
-        for &drop in &[0usize, 5, 6, 7, 1] {
+        for &drop in &[5usize, 6, 7, 1] {
             if group_total(style, &chosen) <= available_width {
                 break;
             }
@@ -554,7 +556,6 @@ fn build_left_metrics(
     let mut current_width = 0;
     let mut cost_col_range = None;
 
-    let provider_name = app.get_active_provider_name();
     let model_name = app.get_active_model_name();
     let tokens_used = if app.current_session.total_tokens > 0 {
         app.current_session.total_tokens
@@ -572,30 +573,8 @@ fn build_left_metrics(
     let is_active_generating = is_generating && app.pending_tool_approval.is_none();
     let spinner_char = get_spinner_char(app.spinner_frame);
 
-    // 1. Provider
-    let p_icon = Span::styled(
-        " 󰚩 ",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    );
-    let p_name = Span::styled(
-        provider_name.to_string(),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    );
-    let p_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-
-    let p_w = p_icon.width() + p_name.width() + p_sep.width();
-    if current_width + p_w <= max_width {
-        current_width += p_w;
-        spans.push(p_icon);
-        spans.push(p_name);
-        spans.push(p_sep);
-    }
-
-    // 2. Model Name
+    // 1. Model Name (the provider name/icon is intentionally omitted to leave room for the
+    //    always-visible approval badge in the right-hand shortcuts).
     let m_span = if is_generating {
         if is_active_generating {
             Span::styled(
@@ -1198,14 +1177,15 @@ mod tests {
         }
         assert!(!mt.contains("MCP"), "optional MCP should be dropped: {mt}");
 
-        // Very narrow: only F1 survives.
+        // Very narrow: the approval badge (F3) and F1 always survive.
         let tiny = text(&right_shortcut_spans(
             Language::En,
             AutoApproveLevel::Safe,
             VoiceState::Idle,
             5,
         ));
-        assert!(tiny.contains("F1"));
+        assert!(tiny.contains("F1"), "F1 must always be kept: {tiny}");
+        assert!(tiny.contains("F3"), "approval must always be kept: {tiny}");
         assert!(!tiny.contains("F4"));
 
         // Below the floor: nothing is rendered.

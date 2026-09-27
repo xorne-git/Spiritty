@@ -231,6 +231,7 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         Color::Cyan,
         header_w,
     ));
+    lines.push(Line::from(""));
 
     let mut focus = key_pill(
         format!(
@@ -351,6 +352,7 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         Color::Green,
         header_w,
     ));
+    lines.push(Line::from(""));
 
     let mut f3 = key_pill("F3", Color::Green);
     f3.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
@@ -404,6 +406,7 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         Color::Yellow,
         header_w,
     ));
+    lines.push(Line::from(""));
 
     lines.push(make_help_row(
         key_pill(
@@ -460,6 +463,7 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         Color::LightCyan,
         header_w,
     ));
+    lines.push(Line::from(""));
 
     lines.push(make_help_row(
         key_pill("F1", Color::Cyan),

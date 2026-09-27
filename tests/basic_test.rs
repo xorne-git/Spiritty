@@ -881,6 +881,8 @@ async fn test_responsive_footer_rendering_at_various_widths() {
     let mut app = App::new(tx, 24, 80).unwrap();
 
     // Test across various terminal widths: 60 (narrow), 80 (standard), 100 (medium), 140 (wide)
+    let model_name = app.get_active_model_name();
+
     for width in [60, 80, 100, 140] {
         let backend = TestBackend::new(width, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -898,15 +900,25 @@ async fn test_responsive_footer_rendering_at_various_widths() {
             footer_text.push_str(buf.cell((x, footer_y)).map(|c| c.symbol()).unwrap_or(" "));
         }
 
-        // 1. Left info (Provider & Model) must always be present (full priority)
+        // 1. Left info: the model name is shown; the provider (icon + name) is intentionally
+        //    omitted to leave room for the always-visible approval badge.
         assert!(
-            footer_text.contains("󰚩")
-                || footer_text.contains("Ollama")
-                || footer_text.contains("DeepSeek"),
-            "Width {} should contain provider/model info! Rendered: '{}'",
+            !footer_text.contains("󰚩")
+                && !footer_text.contains("Ollama")
+                && !footer_text.contains("DeepSeek"),
+            "Width {} must not show the provider anymore! Rendered: '{}'",
             width,
             footer_text
         );
+        if width >= 80 {
+            assert!(
+                footer_text.contains(&model_name),
+                "Width {} should contain the model name '{}'! Rendered: '{}'",
+                width,
+                model_name,
+                footer_text
+            );
+        }
 
         // 2. Right shortcuts: F1 and Ctrl+P / ^P are prioritized
         assert!(

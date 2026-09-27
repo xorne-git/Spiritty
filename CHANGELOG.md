@@ -26,6 +26,9 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Changed
 
+- **Status bar reworked**: the provider icon and name are gone (only the model is shown, followed by the thinking level, token/speed, cost and context metrics), and the **approval badge (`F3`, `Safe` by default) is now always visible** — it and `F1` are never dropped, even on the narrowest terminals, while `F4`/`F5`/voice/Config are dropped first.
+- **Help modal (`F1`)**: each section title is now followed by a blank line, making the shortcuts list easier to scan.
+
 ---
 
 ## v0.9.0 — 2026-09-27
