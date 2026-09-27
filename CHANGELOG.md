@@ -19,6 +19,8 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Changed
 
+- **Status bar cost precision**: the live session cost is now shown at the thousandth of a dollar (`$0.032` instead of `$0.0324`), saving a column; it stays hidden until the session reaches `$0.001`.
+
 ---
 
 ## v0.9.1 — 2026-09-27

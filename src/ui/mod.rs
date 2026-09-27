@@ -658,7 +658,7 @@ fn build_left_metrics(
         .ok()
         .and_then(|guard| app.current_session.estimated_cost_opt(&guard));
     if let Some(cost) = known_cost {
-        if cost > 0.00005 {
+        if cost >= 0.0005 {
             let is_deepseek = app
                 .current_session
                 .provider
@@ -688,7 +688,7 @@ fn build_left_metrics(
             let c_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
             let c_icon = Span::styled("💵 ", Style::default().fg(cost_color));
             let c_val = Span::styled(
-                format!("${:.4}", cost),
+                format!("${:.3}", cost),
                 Style::default().fg(cost_color).add_modifier(Modifier::BOLD),
             );
             let c_w = c_sep.width() + c_icon.width() + c_val.width();
