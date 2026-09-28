@@ -142,7 +142,7 @@ pub fn translate(key: I18nKey) -> &'static str {
 
         // Local voice input
         I18nKey::VoiceDisabledHint => "Voice input disabled: enable [voice] in the config",
-        I18nKey::VoiceRecordingToast => "🎙 Recording… press F8 again to stop",
+        I18nKey::VoiceRecordingToast => "Recording… press F8 again to stop",
         I18nKey::VoiceTranscribingToast => "Transcribing locally…",
         I18nKey::VoiceTranscribedHint => "Transcript inserted into the prompt (F7/F8 to dictate again)",
         I18nKey::VoiceError => "Voice input error: ",

@@ -148,7 +148,7 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::VoiceDisabledHint => {
             "Entrée vocale désactivée : activez [voice] dans la configuration"
         }
-        I18nKey::VoiceRecordingToast => "🎙 Enregistrement… appuyez à nouveau sur F8 pour arrêter",
+        I18nKey::VoiceRecordingToast => "Enregistrement… appuyez à nouveau sur F8 pour arrêter",
         I18nKey::VoiceTranscribingToast => "Transcription locale en cours…",
         I18nKey::VoiceTranscribedHint => "Transcription insérée dans le prompt (F7/F8 pour redicter)",
         I18nKey::VoiceError => "Erreur d'entrée vocale : ",
