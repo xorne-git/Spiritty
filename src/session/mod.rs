@@ -409,7 +409,8 @@ fn extract_ssh_target(content: &str) -> Option<String> {
             if !tok.contains('@') || tok.contains("://") {
                 continue;
             }
-            let tok = tok.trim_start_matches('[').trim_end_matches(']');
+            let tok = tok.trim_end_matches(']');
+            let tok = tok.rsplit_once('[').map_or(tok, |(_, after)| after);
             let (user, rest) = tok.split_once('@')?;
             if user.is_empty() {
                 continue;
