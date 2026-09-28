@@ -14,6 +14,13 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 ---
 
 ## Unreleased
+### Added
+### Changed
+### Fixed
+
+---
+
+## v0.10.0 — 2026-09-28
 
 ### Added
 
