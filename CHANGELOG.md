@@ -20,6 +20,20 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ---
 
+## v0.11.0 — 2026-09-28
+
+### Added
+- **Full key reporting in enhanced keyboard mode (`REPORT_ALL_KEYS_AS_ESCAPE_CODES`)**: the terminal is now initialized with both `DISAMBIGUATE_ESCAPE_CODES` and `REPORT_ALL_KEYS_AS_ESCAPE_CODES` keyboard enhancement flags. This makes key detection fully unambiguous — modifier-only presses and otherwise ambiguous keys are reported as distinct escape sequences, eliminating mis-detected shortcuts on terminals supporting the Kitty keyboard protocol.
+
+### Changed
+- **Toasts rendered as a centered popup instead of the status bar**: voice (recording / transcribing), clipboard-copy confirmations and notifications are no longer squeezed into the single-line footer. They are now drawn by a dedicated `render_toast_popup()` as a centered popup, so they stay visible on narrow terminals where the footer previously masked them. Voice states keep their color coding (`🎙 Recording` light red, `⏳ Transcribing` light yellow), the clipboard toast auto-dismisses after 2.5 s, and the popup is skipped entirely on terminals smaller than 16×4. The now-dead `current_width` accumulator in `build_left_metrics` was also dropped.
+
+### Fixed
+- **SSH target extraction with bracketed IPv6 addresses (`user@[::1]`)**: `extract_ssh_target` previously stripped leading `[` and trailing `]` blindly, which corrupted IPv6 hosts written as `user@[::1]`. It now removes only the trailing `]` and takes the substring after the last `[`, so bracketed IPv6 targets parse correctly while plain `user@host` targets keep working.
+- **Existing `config.toml` is never overwritten when it fails to parse**: on a parse or read error the config file is now left untouched (defaults are used in memory only) and a backup is written to `config.toml.bak`, instead of silently replacing the user's file with defaults. Defaults are persisted only on a genuine first launch (no existing file); a `spiritty: refusing to overwrite existing config.toml with defaults` message is logged when a broken file is detected.
+- **Duplicate 🎙 emoji in the voice-recording toast**: the recording indicator emoji is now added once by the UI, so the `VoiceRecordingToast` strings (FR/EN) no longer render a doubled `🎙 🎙`.
+
+---
 ## v0.10.0 — 2026-09-28
 
 ### Added

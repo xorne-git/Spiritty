@@ -27,7 +27,7 @@
   <rect x="0" y="0" width="1200" height="700" rx="14" fill="url(#bgh)" stroke="#1f2b45"/>
 
   <!-- Title bar -->
-  <text class="mono cyan" x="18" y="24" font-size="15">🧞 Spiritty v0.10.0 · #161205</text>
+  <text class="mono cyan" x="18" y="24" font-size="15">🧞 Spiritty v0.11.0 · #161205</text>
   <text class="mono dim" x="1182" y="24" text-anchor="end" font-size="13">disposition horizontale</text>
   <line x1="0" y1="34" x2="1200" y2="34" stroke="#1f2b45"/>
 
