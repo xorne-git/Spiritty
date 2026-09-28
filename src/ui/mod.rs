@@ -245,6 +245,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.modal.render(size, frame.buffer_mut(), app.theme, lang);
     }
 
+    // 3.5 Popup toast centrée (voix / presse-papier / notifications)
+    render_toast_popup(app, size, frame.buffer_mut());
+
     // 4. Set Hardware Cursor on focused panel only when no modal is open
     if !app.modal.is_open() {
         let active_cursor = match app.focus {
@@ -284,7 +287,7 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
     };
     let max_left_width = width.saturating_sub(min_reserved_for_shortcuts);
 
-    let (left_spans, cost_range) = build_left_metrics(app, lang, max_left_width);
+    let (left_spans, cost_range) = build_left_metrics(app, max_left_width);
     let left_width: usize = left_spans.iter().map(|s| s.width()).sum();
 
     // 2. Compute available space for right shortcuts (guaranteeing at least 2 spaces gap)
@@ -314,6 +317,78 @@ fn render_footer(app: &App, area: Rect, buf: &mut Buffer) {
             render_pricing_tooltip(app, area, buf, abs_start as u16, lang);
         }
     }
+}
+
+
+/// Petite popup centrée pour les messages transitoires (enregistrement/transcription
+/// vocale, copie presse-papier, notifications). Reste visible sur les fenêtres étroites,
+/// là où la barre d'état d'une seule ligne les masquait.
+fn render_toast_popup(app: &App, area: Rect, buf: &mut Buffer) {
+    if area.width < 16 || area.height < 4 {
+        return;
+    }
+    let lang = app.config.get_language();
+    let (icon, text, color): (&str, String, Color) = match app.voice_state {
+        VoiceState::Recording => (
+            "🎙 ",
+            lang.t(I18nKey::VoiceRecordingToast).to_string(),
+            Color::LightRed,
+        ),
+        VoiceState::Transcribing => (
+            "⏳ ",
+            lang.t(I18nKey::VoiceTranscribingToast).to_string(),
+            Color::LightYellow,
+        ),
+        _ => {
+            if let Some((time, len)) = app.clipboard_toast {
+                if time.elapsed().as_millis() < 2500 {
+                    let msg = if lang == Language::Fr {
+                        format!("Copié ({} car.)", len)
+                    } else {
+                        format!("Copied ({} chars)", len)
+                    };
+                    ("📋 ", msg, Color::LightGreen)
+                } else {
+                    return;
+                }
+            } else if let Some((time, ref msg)) = app.toast_message {
+                if time.elapsed().as_millis() < 4500 {
+                    ("", msg.clone(), Color::Cyan)
+                } else {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+    };
+    let span = Span::styled(
+        format!("{icon}{text}"),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    );
+    let popup_w = ((span.width() as u16) + 4)
+        .min(area.width.saturating_sub(2))
+        .max(12);
+    let popup_h = 3u16;
+    let x = area.x + area.width.saturating_sub(popup_w) / 2;
+    let y = area.y + area.height.saturating_sub(popup_h) / 2;
+    let popup = Rect::new(x, y, popup_w, popup_h);
+    Clear.render(popup, buf);
+    let border = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(border)
+        .render(popup, buf);
+    let inner = Rect::new(
+        popup.x.saturating_add(2),
+        popup.y.saturating_add(1),
+        popup.width.saturating_sub(4),
+        1,
+    );
+    Paragraph::new(Line::from(span))
+        .alignment(ratatui::layout::Alignment::Center)
+        .style(border)
+        .render(inner, buf);
 }
 
 fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> Vec<Span<'static>> {
@@ -509,7 +584,6 @@ fn right_shortcut_spans(
 }
 fn build_left_metrics(
     app: &App,
-    lang: Language,
     max_width: usize,
 ) -> (Vec<Span<'static>>, Option<(usize, usize)>) {
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -683,50 +757,9 @@ fn build_left_metrics(
     let ctx_w = ctx_sep.width() + ctx_icon.width() + ctx_val.width();
 
     if current_width + ctx_w <= max_width {
-        current_width += ctx_w;
         spans.push(ctx_sep);
         spans.push(ctx_icon);
         spans.push(ctx_val);
-    }
-
-    // 6. Toasts (Clipboard or Notification)
-    if let Some((time, len)) = app.clipboard_toast {
-        if time.elapsed().as_millis() < 2500 {
-            let toast_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-            let toast_icon = Span::styled("📋 ", Style::default().fg(Color::Green));
-            let msg = if lang == Language::Fr {
-                format!("Copié ({} car.)", len)
-            } else {
-                format!("Copied ({} chars)", len)
-            };
-            let toast_val = Span::styled(
-                msg,
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            );
-            let toast_w = toast_sep.width() + toast_icon.width() + toast_val.width();
-            if current_width + toast_w <= max_width {
-                spans.push(toast_sep);
-                spans.push(toast_icon);
-                spans.push(toast_val);
-            }
-        }
-    } else if let Some((time, ref msg)) = app.toast_message {
-        if time.elapsed().as_millis() < 4500 {
-            let toast_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-            let toast_val = Span::styled(
-                msg.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            );
-            let toast_w = toast_sep.width() + toast_val.width();
-            if current_width + toast_w <= max_width {
-                spans.push(toast_sep);
-                spans.push(toast_val);
-            }
-        }
     }
 
     (spans, cost_col_range)
