@@ -770,6 +770,7 @@ impl Config {
 
     pub fn load() -> Self {
         Self::load_shell_env();
+        let mut parse_failed = false;
         if let Ok(path) = Self::config_path() {
             if path.exists() {
                 if let Ok(content) = fs::read_to_string(&path) {
@@ -825,14 +826,35 @@ impl Config {
                         }
                         Self::ensure_default_prompt_file();
                         return config;
+                    } else {
+                        eprintln!(
+                            "spiritty: cannot parse {} — leaving config.toml untouched (defaults used in memory)",
+                            path.display()
+                        );
+                        if let Err(e) = toml::from_str::<Config>(&content) { eprintln!("spiritty: TOML parse error: {e}"); }
+                        let backup = path.with_extension("toml.bak");
+                        if let Err(be) = fs::copy(&path, &backup) {
+                            eprintln!("spiritty: backup failed for {}: {be}", backup.display());
+                        }
+                        parse_failed = true;
                     }
+                } else {
+                    eprintln!(
+                        "spiritty: cannot read {} — leaving config.toml untouched (defaults used in memory)",
+                        path.display()
+                    );
+                    parse_failed = true;
                 }
             }
         }
 
-        // Generate and persist default config
+        // Only persist defaults when no existing config file was present (first launch).
         let default_config = Self::default();
-        let _ = default_config.save();
+        if parse_failed {
+            eprintln!("spiritty: refusing to overwrite existing config.toml with defaults");
+        } else {
+            let _ = default_config.save();
+        }
         Self::ensure_default_prompt_file();
         default_config
     }
