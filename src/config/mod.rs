@@ -455,8 +455,8 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoApproveLevel {
-    Off,
     #[default]
+    Off,
     Safe,
     Sudo,
     Yolo,
@@ -566,14 +566,14 @@ fn default_mcp_enabled() -> bool {
 
 /// Orientation of the chat/terminal split.
 ///
-/// `Vertical` places the chat and the terminal side by side (chat on the left); `Horizontal`
-/// stacks the chat **on top** of the terminal (width-constrained shells stay readable). It can
+/// `Horizontal` (default) stacks the chat **on top** of the terminal (width-constrained shells stay
+/// readable); `Vertical` places the chat and the terminal side by side (chat on the left). It can
 /// be toggled at runtime with `F4` and is persisted in `config.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitOrientation {
     #[default]
-    Vertical,
     Horizontal,
+    Vertical,
 }
 
 impl SplitOrientation {
@@ -584,12 +584,13 @@ impl SplitOrientation {
         }
     }
 
-    /// Parses a persisted orientation string, defaulting to `Vertical` on anything
+    /// Parses a persisted orientation string, defaulting to `Horizontal` on anything
     /// unrecognized (including legacy configs that predate the field).
     pub fn parse_or_default(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {
+            "vertical" | "v" | "col" | "column" => SplitOrientation::Vertical,
             "horizontal" | "h" | "row" | "stack" => SplitOrientation::Horizontal,
-            _ => SplitOrientation::Vertical,
+            _ => SplitOrientation::Horizontal,
         }
     }
 
@@ -623,10 +624,10 @@ pub struct Config {
     pub system_prompt_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_ratio: Option<u16>,
-    /// Chat height percentage when the split is horizontal (chat on top). Defaults to 70.
+    /// Chat height percentage when the split is horizontal (chat on top). Defaults to 79.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_ratio_horizontal: Option<u16>,
-    /// Persisted split orientation ("horizontal" or "vertical"). Defaults to vertical.
+    /// Persisted split orientation ("horizontal" or "vertical"). Defaults to horizontal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_orientation: Option<String>,
     /// Persisted panel order. `false` (default) keeps the chat first (left/top) and the
@@ -664,7 +665,7 @@ impl Default for Config {
 
         Self {
             language: None,
-            auto_approve: AutoApproveLevel::Safe,
+            auto_approve: AutoApproveLevel::Off,
             default_provider: ProviderType::Ollama,
             providers,
             web_search: WebSearchConfig::default(),
@@ -673,8 +674,8 @@ impl Default for Config {
             system_prompt: None,
             system_prompt_file: None,
             split_ratio: Some(50),
-            split_ratio_horizontal: Some(70),
-            split_orientation: Some("vertical".to_string()),
+            split_ratio_horizontal: Some(79),
+            split_orientation: Some("horizontal".to_string()),
             split_swapped: Some(false),
             theme: Some("spiritty_dark".to_string()),
             export_dir: None,
@@ -700,7 +701,7 @@ impl Config {
     pub fn get_split_ratio_for(&self, orientation: SplitOrientation) -> u16 {
         match orientation {
             SplitOrientation::Vertical => self.split_ratio.unwrap_or(50).clamp(15, 85),
-            SplitOrientation::Horizontal => self.split_ratio_horizontal.unwrap_or(70).clamp(15, 85),
+            SplitOrientation::Horizontal => self.split_ratio_horizontal.unwrap_or(79).clamp(15, 85),
         }
     }
 

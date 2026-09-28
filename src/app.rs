@@ -419,6 +419,8 @@ pub struct App {
     /// The chat messages area rectangle and current scroll offset, filled by the draw
     /// pass so the click handler can translate screen coords to content rows.
     pub chat_messages_geo: std::cell::RefCell<(ratatui::layout::Rect, u16)>,
+    /// Hit-target of the pinned prompt header when active: (screen rect, msg index, content top row).
+    pub chat_pinned_hit: std::cell::RefCell<Option<(ratatui::layout::Rect, usize, u16)>>,
     pub chat_history: Vec<String>,
     pub history_index: Option<usize>,
     pub input_draft: String,
@@ -744,6 +746,7 @@ impl App {
             expanded_thought: None,
             chat_thought_hits: std::cell::RefCell::new(Vec::new()),
             chat_messages_geo: std::cell::RefCell::new((ratatui::layout::Rect::ZERO, 0)),
+            chat_pinned_hit: std::cell::RefCell::new(None),
             chat_history: Vec::new(),
             history_index: None,
             input_draft: String::new(),
@@ -1405,6 +1408,7 @@ impl App {
         self.chat_input.clear();
         self.cursor_pos = 0;
         self.reset_chat_scroll();
+        *self.chat_pinned_hit.borrow_mut() = None;
         self.modal = ModalState::None;
         let lang = self.config.get_language();
         self.set_toast(if lang == Language::Fr {
@@ -1981,9 +1985,10 @@ impl App {
                     .top()
                     .max(self.terminal_area.top())
                     .saturating_sub(1);
-                // Only the divider row and the row above it (never the terminal tab bar
-                // sitting right below, which must stay clickable).
-                y >= border_y.saturating_sub(1) && y <= border_y && x >= ws_left && x < ws_right
+                // Only the exact divider row (so clicks on the prompt line directly
+                // above it place the cursor instead of dragging the split).
+                y == border_y && x >= ws_left && x < ws_right
+
             }
         };
 
@@ -1995,6 +2000,15 @@ impl App {
                 } else if self.chat_area.contains(ratatui::layout::Position { x, y }) {
                     self.focus = Focus::Chat;
                     self.is_dragging_split = false;
+                    let pinned_hit = *self.chat_pinned_hit.borrow();
+                    if let Some((pinned_rect, _u_idx, content_top)) = pinned_hit {
+                        if pinned_rect.contains(ratatui::layout::Position { x, y }) {
+                            let scroll_offset = self.chat_messages_geo.borrow().1;
+                            let scroll_lines = scroll_offset.saturating_sub(content_top);
+                            self.scroll_chat_up(scroll_lines);
+                            return;
+                        }
+                    }
                     if self.toggle_thought_on_click(x, y) {
                         return;
                     }
@@ -2833,11 +2847,23 @@ impl App {
         if let Some(ref injected) = self.last_injected_cmd {
             return vec![injected.clone()];
         }
+        if let Some(ref pending) = self.pending_tool_approval {
+            return vec![pending.command.clone()];
+        }
         for msg in self.messages.iter().rev() {
-            if msg.role == MessageRole::Assistant {
+            if msg.role == MessageRole::User {
+                let trimmed = msg.content.trim_start();
+                if trimmed.starts_with("💻") || trimmed.starts_with("[RÉSULTAT DE L'EXÉCUTION") {
+                    // Previous proposals have already been executed
+                    break;
+                }
+            } else if msg.role == MessageRole::Assistant {
                 let proposals = extract_all_command_proposals(&msg.content);
                 if !proposals.is_empty() {
                     return proposals;
+                }
+                if let Some(ref cmd) = msg.command_proposal {
+                    return vec![cmd.clone()];
                 }
             }
         }
@@ -2867,11 +2893,18 @@ impl App {
 
     pub fn execute_command_by_index(&mut self, index: usize, auto_run: bool) -> bool {
         self.proactive_error_diagnosis = None;
-        // One consent at a time: while a tool authorization is pending, Alt+N must NOT
-        // fire — it would bypass the very consent being requested (the model's proposal
-        // card and the approval card can carry the same command). While a PTY capture is
-        // running, a new injection would hijack/overwrite the active capture.
+        // If a tool execution approval is pending (from a streaming tool call) and the user
+        // triggers command index 0 with auto_run (e.g. via Enter or voice transcript auto-submit),
+        // fulfill the consent directly!
         if self.pending_tool_approval.is_some() {
+            if auto_run && index == 0 {
+                if let Some(mut pending) = self.pending_tool_approval.take() {
+                    if let Some(tx) = pending.approval_tx.take() {
+                        let _ = tx.send(true);
+                    }
+                    return true;
+                }
+            }
             let lang = self.config.get_language();
             self.set_toast(if lang == crate::i18n::Language::Fr {
                 "⏳ Une demande d'autorisation est en cours : répondez d'abord (F10 / oui / Esc)"
@@ -3361,6 +3394,7 @@ impl App {
                         last_msg.content = last_msg.content[..line_start].trim_end().to_string();
                     }
                 }
+                last_msg.command_proposal = Some(command.clone());
             }
         }
         self.pending_tool_approval = Some(PendingToolApproval {
@@ -3725,7 +3759,9 @@ impl App {
 
         if let Some(last_msg) = self.messages.last_mut() {
             if last_msg.role == MessageRole::Assistant {
-                last_msg.command_proposal = extract_command_proposal(&last_msg.content);
+                if let Some(p) = extract_command_proposal(&last_msg.content) {
+                    last_msg.command_proposal = Some(p);
+                }
             }
         }
         self.save_current_session();
@@ -3739,7 +3775,14 @@ impl App {
         {
             let proposals = if let Some(last_msg) = self.messages.last() {
                 if last_msg.role == MessageRole::Assistant {
-                    extract_all_command_proposals(&last_msg.content)
+                    let p = extract_all_command_proposals(&last_msg.content);
+                    if !p.is_empty() {
+                        p
+                    } else if let Some(ref cmd) = last_msg.command_proposal {
+                        vec![cmd.clone()]
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     Vec::new()
                 }
@@ -4252,44 +4295,97 @@ pub fn sanitize_proposed_command(raw: &str) -> String {
 }
 
 pub fn is_natural_approval_phrase(text: &str) -> bool {
-    let clean = text
-        .trim()
-        .trim_end_matches(['.', '!', '…', '?', ' '])
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // A bare question mark (e.g. "?", "??", "?!", "? ", " ? ") when a command proposal
+    // is awaiting confirmation expresses "well, go ahead!" / "execute it!".
+    if trimmed
+        .chars()
+        .all(|c| c == '?' || c == '!' || c == '.' || c == '…' || c == ' ')
+        && trimmed.contains('?')
+    {
+        return true;
+    }
+
+    // Strip trailing sentence punctuation and commas
+    let clean = trimmed
+        .trim_end_matches(['.', '!', '…', '?', ' ', ','])
         .trim()
         .to_lowercase();
     if clean.is_empty() {
         return false;
     }
 
+    // Normalize commas inside phrase (e.g. "ok, vas-y" -> "ok vas-y", "oui, lance" -> "oui lance")
+    let normalized = clean.replace(',', " ");
+    let normalized_words: Vec<&str> = normalized.split_whitespace().collect();
+    let normalized = normalized_words.join(" ");
+
     if matches!(
-        clean.as_str(),
+        normalized.as_str(),
         "ok" | "oui"
             | "o"
             | "yes"
             | "y"
+            | "ouais"
+            | "ouep"
+            | "yep"
+            | "si"
+            | "sure"
             | "vas y"
             | "vas-y"
             | "vazy"
+            | "allons y"
+            | "allons-y"
             | "fais le"
             | "fais-le"
             | "faisle"
+            | "fais"
+            | "do it"
             | "go"
             | "lance"
+            | "lance la"
+            | "lance-la"
+            | "lance le"
+            | "lance-le"
             | "exécute"
             | "execute"
+            | "exécute la"
+            | "exécute-la"
+            | "exécute le"
+            | "exécute-le"
+            | "envoie"
+            | "roule"
             | "continue"
+            | "proceed"
             | "d'accord"
             | "daccord"
-            | "sure"
-            | "do it"
-            | "proceed"
-            | "yep"
-            | "ouep"
+            | "d'acc"
+            | "dacc"
+            | "ça marche"
+            | "ca marche"
+            | "c'est bon"
+            | "cest bon"
+            | "c bon"
+            | "c'est ok"
+            | "cest ok"
+            | "c ok"
+            | "alors"
             | "oui vas y"
             | "oui vas-y"
             | "oui vazy"
             | "ok vas y"
             | "ok vas-y"
+            | "ouais vas y"
+            | "ouais vas-y"
+            | "vas y lance"
+            | "vas-y lance"
+            | "vas y fais le"
+            | "vas-y fais le"
+            | "vas-y fais-le"
             | "oui fais le"
             | "oui fais-le"
             | "oui go"
@@ -4308,6 +4404,13 @@ pub fn is_natural_approval_phrase(text: &str) -> bool {
             | "oui bien sûr"
             | "bien sur"
             | "bien sûr"
+            | "ok pour moi"
+            | "c'est ok pour moi"
+            | "cest ok pour moi"
+            | "c ok pour moi"
+            | "c'est bon pour moi"
+            | "cest bon pour moi"
+            | "c bon pour moi"
             | "yes please"
             | "yes go"
             | "yes do it"
@@ -4316,19 +4419,24 @@ pub fn is_natural_approval_phrase(text: &str) -> bool {
         return true;
     }
 
-    // Prefix check for short affirmative expressions (e.g., "oui stp", "ok vas-y vite")
-    if clean.len() <= 30 {
-        let starts_affirmative =
-            clean.starts_with("oui ") || clean.starts_with("ok ") || clean.starts_with("yes ");
-        let contains_negative = clean.contains("non")
-            || clean.contains("pas")
-            || clean.contains("ne ")
-            || clean.contains("mais")
-            || clean.contains("sauf")
-            || clean.contains("attends")
-            || clean.contains("wait")
-            || clean.contains("stop")
-            || clean.contains("cancel");
+    // Prefix check for short affirmative expressions (e.g., "oui stp", "ok vas-y vite", "ouais fais le")
+    if normalized.len() <= 40 {
+        let starts_affirmative = normalized.starts_with("oui ")
+            || normalized.starts_with("ok ")
+            || normalized.starts_with("ouais ")
+            || normalized.starts_with("yes ")
+            || normalized.starts_with("vas y ")
+            || normalized.starts_with("vas-y ")
+            || normalized.starts_with("go ");
+        let contains_negative = normalized.contains("non")
+            || normalized.contains("pas")
+            || normalized.contains("ne ")
+            || normalized.contains("mais")
+            || normalized.contains("sauf")
+            || normalized.contains("attends")
+            || normalized.contains("wait")
+            || normalized.contains("stop")
+            || normalized.contains("cancel");
         if starts_affirmative && !contains_negative {
             return true;
         }
@@ -4340,7 +4448,7 @@ pub fn is_natural_approval_phrase(text: &str) -> bool {
 pub fn is_natural_decline_phrase(text: &str) -> bool {
     let clean = text
         .trim()
-        .trim_end_matches(['.', '!', '…', '?', ' '])
+        .trim_end_matches(['.', '!', '…', '?', ' ', ','])
         .trim()
         .to_lowercase();
     matches!(

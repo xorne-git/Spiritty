@@ -48,7 +48,13 @@ impl<'a> ChatPanel<'a> {
             prompt_text_width as usize,
         );
 
-        let max_input_height = (area.height.saturating_sub(6) / 2).clamp(2, 8);
+        let is_top_of_horizontal_split = self.app.split_orientation
+            == crate::config::SplitOrientation::Horizontal
+            && !self.app.split_swapped;
+        let bottom_pad: u16 = if is_top_of_horizontal_split { 1 } else { 0 };
+        let effective_bottom = area.bottom().saturating_sub(bottom_pad);
+
+        let max_input_height = (area.height.saturating_sub(6 + bottom_pad) / 2).clamp(2, 8);
         let needed_input_height = total_input_lines.clamp(2, max_input_height);
 
         // 1b. Compact image preview (Ctrl+Shift+V) — a status line + a small half-block
@@ -108,7 +114,8 @@ impl<'a> ChatPanel<'a> {
         let preview_zone = preview_rows.saturating_add(1); // preview rows + status caption
         let prompt_total_zone = needed_input_height
             .saturating_add(1)
-            .saturating_add(preview_zone);
+            .saturating_add(preview_zone)
+            .saturating_add(bottom_pad);
         let messages_box_height = area.height.saturating_sub(prompt_total_zone + 1);
 
         let messages_area = Rect {
@@ -118,11 +125,9 @@ impl<'a> ChatPanel<'a> {
             height: messages_box_height,
         };
 
-        let preview_sep_y = area
-            .bottom()
+        let preview_sep_y = effective_bottom
             .saturating_sub(needed_input_height + 1 + preview_zone);
-        let preview_y = area
-            .bottom()
+        let preview_y = effective_bottom
             .saturating_sub(needed_input_height + 1 + preview_rows);
         let preview_area = Rect {
             x: prompt_pad_x,
@@ -130,8 +135,8 @@ impl<'a> ChatPanel<'a> {
             width: prompt_text_width,
             height: preview_rows,
         };
-        let prompt_sep_y = area.bottom().saturating_sub(needed_input_height + 1);
-        let prompt_y = area.bottom().saturating_sub(needed_input_height);
+        let prompt_sep_y = effective_bottom.saturating_sub(needed_input_height + 1);
+        let prompt_y = effective_bottom.saturating_sub(needed_input_height);
         let input_area = Rect {
             x: prompt_pad_x,
             y: prompt_y,
@@ -288,8 +293,6 @@ impl<'a> ChatPanel<'a> {
             });
         let approval_rows = compute_wrapped_lines_count(&approval_lines, messages_area.width);
 
-        let visible_height = messages_area.height;
-
         // ---- Pass B: assemble ONLY the visible row window from cached compositions.
         //
         // The former implementation concatenated the WHOLE history (thousands of
@@ -308,10 +311,62 @@ impl<'a> ChatPanel<'a> {
         //     by the offset within the window (O(visible rows))
         let content_visual_lines = history_rows_total.saturating_add(approval_rows);
 
+        // Preliminary scroll calculation using full messages_area height
+        let prelim_visible_height = messages_area.height;
+        let prelim_max_scroll = content_visual_lines.saturating_sub(prelim_visible_height);
+        let prelim_scroll_from_bottom = self.app.chat_scroll_from_bottom.min(prelim_max_scroll);
+        let prelim_scroll_offset = prelim_max_scroll.saturating_sub(prelim_scroll_from_bottom);
+        let prelim_window_end = prelim_scroll_offset.saturating_add(prelim_visible_height);
+
+        let mut prelim_lo = 0usize;
+        while prelim_lo < msg_geo.len() && msg_geo[prelim_lo].0 + msg_geo[prelim_lo].1 <= prelim_scroll_offset {
+            prelim_lo += 1;
+        }
+        let mut prelim_hi = prelim_lo;
+        while prelim_hi < msg_geo.len() && msg_geo[prelim_hi].0 < prelim_window_end {
+            prelim_hi += 1;
+        }
+
+        // Check if ANY real user prompt is visible in the viewport
+        let any_user_prompt_visible = (prelim_lo..prelim_hi.min(total_messages))
+            .any(|i| is_pinnable_user_prompt(&self.app.messages[i]));
+
+        // If no user prompt is visible in the viewport and there is a preceding prompt,
+        // pin it as a sticky header at the top of the chat area.
+        let pinned_user_idx = if messages_area.height >= 6 && !any_user_prompt_visible {
+            (0..prelim_lo)
+                .rev()
+                .find(|&i| is_pinnable_user_prompt(&self.app.messages[i]))
+        } else {
+            None
+        };
+
+        let (active_messages_area, pinned_area) = if let Some(u_idx) = pinned_user_idx {
+            let p_area = Rect {
+                x: messages_area.x,
+                y: messages_area.y,
+                width: messages_area.width,
+                height: 1,
+            };
+            let m_area = Rect {
+                x: messages_area.x,
+                y: messages_area.y.saturating_add(1),
+                width: messages_area.width,
+                height: messages_area.height.saturating_sub(1),
+            };
+            let content_top = msg_geo.get(u_idx).map(|g| g.0).unwrap_or(0);
+            *self.app.chat_pinned_hit.borrow_mut() = Some((p_area, u_idx, content_top));
+            (m_area, Some(p_area))
+        } else {
+            *self.app.chat_pinned_hit.borrow_mut() = None;
+            (messages_area, None)
+        };
+
+        let visible_height = active_messages_area.height;
         let max_scroll = content_visual_lines.saturating_sub(visible_height);
         let scroll_from_bottom = self.app.chat_scroll_from_bottom.min(max_scroll);
         let scroll_offset = max_scroll.saturating_sub(scroll_from_bottom);
-        *self.app.chat_messages_geo.borrow_mut() = (messages_area, scroll_offset);
+        *self.app.chat_messages_geo.borrow_mut() = (active_messages_area, scroll_offset);
 
         // Build the visible row window: the first message whose rows reach past
         // `scroll_offset` (i.e. the top of the viewport) through the last message
@@ -345,7 +400,11 @@ impl<'a> ChatPanel<'a> {
         let messages_paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         messages_paragraph
             .scroll((scroll_offset.saturating_sub(subset_start_row), 0))
-            .render(messages_area, buf);
+            .render(active_messages_area, buf);
+
+        if let (Some(u_idx), Some(p_area)) = (pinned_user_idx, pinned_area) {
+            render_pinned_prompt(&self.app.messages[u_idx], p_area, buf, lang, &palette);
+        }
 
         // Render scroll indicator badge on the top border (liseret)
         if area.width > 25 {
@@ -1374,6 +1433,148 @@ fn wrap_wide_word(word: &str, max_w: usize) -> Vec<String> {
     }
     chunks
 }
+
+/// Determines whether a message is an actual user prompt (ignoring internal tool outputs,
+/// PTY capture results, and rejection notices).
+fn is_pinnable_user_prompt(msg: &crate::app::ChatMessage) -> bool {
+    if msg.role != MessageRole::User {
+        return false;
+    }
+    let trimmed = msg.content.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Filter out internal tool outputs, execution captures, MCP/web outputs, and decline notices
+    if trimmed.starts_with("[RÉSULTAT")
+        || trimmed.starts_with("[L'utilisateur")
+        || trimmed.starts_with("[FIN ")
+        || trimmed.starts_with("[Analysez")
+        || trimmed.starts_with("[TOOL")
+        || (trimmed.starts_with('[') && trimmed.contains("RÉSULTAT"))
+    {
+        return false;
+    }
+    true
+}
+
+/// Renders the 1-row pinned prompt bar fixed at the top of the chat area when scrolling.
+fn render_pinned_prompt(
+    msg: &crate::app::ChatMessage,
+    area: Rect,
+    buf: &mut Buffer,
+    lang: Language,
+    palette: &crate::ui::ThemePalette,
+) {
+    if area.height == 0 || area.width < 10 {
+        return;
+    }
+
+    let is_cmd = msg.content.starts_with("💻 ");
+    let (icon, prefix_label) = if is_cmd {
+        ("💻 ", lang.t(I18nKey::ChatPinnedCommandPrefix))
+    } else {
+        ("📌 ", lang.t(I18nKey::ChatPinnedPromptPrefix))
+    };
+
+    let raw_text = if is_cmd {
+        msg.content
+            .strip_prefix("💻 ")
+            .unwrap_or(&msg.content)
+            .trim()
+            .trim_matches('`')
+    } else {
+        &msg.content
+    };
+
+    // Compact multiline prompt to single line with clean connector
+    let compact_text: String = raw_text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ↵ ");
+
+    let total_width = area.width as usize;
+    let bg_color = palette.selection_bg;
+
+    // Up badge on the right: [↑]
+    let up_badge = " [↑] ";
+    let up_badge_w = str_visual_width(up_badge);
+
+    let prefix_str = format!("{} : ", prefix_label);
+    let icon_w = str_visual_width(icon);
+    let prefix_w = str_visual_width(&prefix_str);
+
+    let reserved = icon_w + prefix_w + up_badge_w;
+    let max_text_w = total_width.saturating_sub(reserved);
+
+    let display_text = if str_visual_width(&compact_text) > max_text_w {
+        let mut truncated = String::new();
+        let mut cur_w = 0;
+        for c in compact_text.chars() {
+            let cw = c.width().unwrap_or(0).max(1);
+            if cur_w + cw + 1 > max_text_w {
+                truncated.push('…');
+                break;
+            }
+            truncated.push(c);
+            cur_w += cw;
+        }
+        truncated
+    } else {
+        compact_text
+    };
+
+    let text_w = str_visual_width(&display_text);
+    let used_w = icon_w + prefix_w + text_w + up_badge_w;
+    let fill_spaces = total_width.saturating_sub(used_w);
+
+    let mut spans = Vec::new();
+    // 1. Icon & Prefix
+    spans.push(Span::styled(
+        icon,
+        Style::default()
+            .fg(palette.accent_primary)
+            .bg(bg_color)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        prefix_str,
+        Style::default()
+            .fg(palette.accent_primary)
+            .bg(bg_color)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    // 2. Prompt Text
+    spans.push(Span::styled(
+        display_text,
+        Style::default()
+            .fg(palette.text_primary)
+            .bg(bg_color),
+    ));
+
+    // 3. Middle fill
+    if fill_spaces > 0 {
+        spans.push(Span::styled(
+            " ".repeat(fill_spaces),
+            Style::default().bg(bg_color),
+        ));
+    }
+
+    // 4. [↑] Hint badge
+    spans.push(Span::styled(
+        up_badge,
+        Style::default()
+            .fg(palette.accent_secondary)
+            .bg(bg_color)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    let line = Line::from(spans);
+    buf.set_line(area.x, area.y, &line, area.width);
+}
+
 
 /// Renders a sequence of markdown lines with automatic grouping of markdown tables
 fn render_text_lines(text: &str, lines: &mut Vec<Line<'static>>, mut leading_prefix: Option<&str>) {

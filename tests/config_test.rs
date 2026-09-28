@@ -112,7 +112,7 @@ fn test_auto_approve_deserialization() {
 
     // Test default
     let cfg_default: Config = toml::from_str("").unwrap();
-    assert_eq!(cfg_default.auto_approve, AutoApproveLevel::Safe);
+    assert_eq!(cfg_default.auto_approve, AutoApproveLevel::Off);
 
     // Test string variants
     let cfg_safe: Config = toml::from_str("auto_approve = \"safe\"").unwrap();
@@ -140,16 +140,20 @@ fn test_split_ratio_and_theme_persistence() {
     use spiritty::config::SplitOrientation;
     use spiritty::ui::theme::ThemeId;
 
-    // Default: vertical split (side by side) with 50% chat width; horizontal keeps 70% height
+    // Default: horizontal split (chat on top) with 79% chat height; vertical keeps 50% width
     let cfg_default = Config::default();
     assert_eq!(
         cfg_default.get_split_orientation(),
-        SplitOrientation::Vertical
+        SplitOrientation::Horizontal
     );
-    assert_eq!(cfg_default.get_split_ratio(), 50);
+    assert_eq!(cfg_default.get_split_ratio(), 79);
     assert_eq!(
         cfg_default.get_split_ratio_for(SplitOrientation::Horizontal),
-        70
+        79
+    );
+    assert_eq!(
+        cfg_default.get_split_ratio_for(SplitOrientation::Vertical),
+        50
     );
     assert_eq!(cfg_default.get_theme(), "spiritty_dark");
 
@@ -170,12 +174,13 @@ theme = "tokyo_night"
         ThemeId::TokyoNight
     );
 
-    // Legacy config without an orientation field defaults to vertical (50% chat width),
+    // Legacy config without an orientation field defaults to horizontal (79% chat height),
     // while the historical `split_ratio` value is preserved for the vertical layout.
     let legacy: Config = toml::from_str("split_ratio = 42").unwrap();
-    assert_eq!(legacy.get_split_orientation(), SplitOrientation::Vertical);
-    assert_eq!(legacy.get_split_ratio(), 42);
-    assert_eq!(legacy.get_split_ratio_for(SplitOrientation::Horizontal), 70);
+    assert_eq!(legacy.get_split_orientation(), SplitOrientation::Horizontal);
+    assert_eq!(legacy.get_split_ratio(), 79);
+    assert_eq!(legacy.get_split_ratio_for(SplitOrientation::Vertical), 42);
+    assert_eq!(legacy.get_split_ratio_for(SplitOrientation::Horizontal), 79);
 
     // Test clamp on split ratio
     let clamped_low: Config = toml::from_str("split_ratio = 5").unwrap();
@@ -203,17 +208,17 @@ fn test_split_orientation_parse_and_toggle() {
         SplitOrientation::parse_or_default("VERTICAL"),
         SplitOrientation::Vertical
     );
-    // Unknown / empty strings fall back to vertical
+    // Unknown / empty strings fall back to horizontal
     assert_eq!(
         SplitOrientation::parse_or_default("sideways"),
-        SplitOrientation::Vertical
+        SplitOrientation::Horizontal
     );
     assert_eq!(
         SplitOrientation::parse_or_default(""),
-        SplitOrientation::Vertical
+        SplitOrientation::Horizontal
     );
 
-    assert_eq!(SplitOrientation::default(), SplitOrientation::Vertical);
+    assert_eq!(SplitOrientation::default(), SplitOrientation::Horizontal);
     assert_eq!(
         SplitOrientation::Horizontal.toggle(),
         SplitOrientation::Vertical

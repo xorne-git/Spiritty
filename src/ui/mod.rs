@@ -24,7 +24,7 @@ use chat_panel::ChatPanel;
 use terminal_panel::TerminalPanel;
 
 /// Accent colour for the local voice-input shortcut in the footer.
-const VOICE_COLOR: Color = Color::Rgb(255, 165, 0);
+const VOICE_COLOR: Color = Color::Cyan;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
@@ -325,12 +325,9 @@ fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> V
     )
 }
 
-/// Builds the right-hand footer shortcuts, prioritising (in order) **F3 approval, F1, Config,
-/// F4, F5, F7/F8 voice**. Optional groups (Sessions, MCP, Hosts) are pulled in only when they
-/// fit, and rendering degrades from bracketed pills to compact badges and then to bare keys.
-/// The **approval badge (F3) and the help key (F1) are always kept** — even on the narrowest
-/// terminals — while F4/F5/voice/Config are dropped first. The voice item reflects the live
-/// state (`● REC` / `⟳ Transcription…`) while dictating.
+/// Builds the right-hand footer shortcuts in exact order:
+/// **F3 approval, F7/F8 voice, F4 layout, F5 swap, F1 help**.
+/// All `Ctrl+*` shortcuts have been removed. F1 is always present at the end of the line.
 fn right_shortcut_spans(
     lang: Language,
     auto_approve: crate::config::AutoApproveLevel,
@@ -350,15 +347,14 @@ fn right_shortcut_spans(
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
     let help_label = if lang == Language::Fr { "Aide" } else { "Help" };
-    let swap_label = if lang == Language::Fr { "Inverser" } else { "Swap" };
     let voice_label = lang.t(I18nKey::FooterVoiceLabel);
 
     struct Item {
-        /// Rich: `[ Ctrl + P ] Config `.
+        /// Rich: `[ F4/F5 ] Layout/Switch `.
         pill: Vec<Span<'static>>,
-        /// Compact: `[^P] Config `.
+        /// Compact: `[F4/F5] Layout/Switch `.
         compact: Vec<Span<'static>>,
-        /// Bare key: `[^P]`.
+        /// Bare key: `[F4/F5]`.
         keys: Vec<Span<'static>>,
     }
 
@@ -414,7 +410,7 @@ fn right_shortcut_spans(
         ),
     };
 
-    // Display order: F3 approval | Config | Hosts | MCP | Sessions | F4 layout | F5 swap | F8 voice | F1 help.
+    // Display order: F3 approval | F7/F8 voice | F4/F5 layout/switch | F1 help.
     let items: Vec<Item> = vec![
         Item {
             pill: {
@@ -448,44 +444,19 @@ fn right_shortcut_spans(
             )],
         },
         Item {
-            pill: pill("Ctrl + P".to_string(), Color::Magenta, "Config"),
-            compact: compact("[^P]", Color::Magenta, "Config"),
-            keys: bare("[^P]", Color::Magenta),
-        },
-        Item {
-            pill: pill("Ctrl + B".to_string(), Color::Cyan, "Hosts"),
-            compact: compact("[^B]", Color::Cyan, "Hosts"),
-            keys: bare("[^B]", Color::Cyan),
-        },
-        Item {
-            pill: pill("Ctrl + M".to_string(), Color::Rgb(140, 100, 240), "MCP"),
-            compact: compact("[^M]", Color::Rgb(140, 100, 240), "MCP"),
-            keys: bare("[^M]", Color::Rgb(140, 100, 240)),
-        },
-        Item {
-            pill: pill("Ctrl + H".to_string(), Color::LightCyan, "Sessions"),
-            compact: compact("[^H]", Color::LightCyan, "Sess"),
-            keys: bare("[^H]", Color::LightCyan),
-        },
-        Item {
-            pill: pill("F4".to_string(), Color::Cyan, "Layout"),
-            compact: compact("[F4]", Color::Cyan, "Layout"),
-            keys: bare("[F4]", Color::Cyan),
-        },
-        Item {
-            pill: pill("F5".to_string(), Color::Cyan, swap_label),
-            compact: compact("[F5]", Color::Cyan, swap_label),
-            keys: bare("[F5]", Color::Cyan),
-        },
-        Item {
             pill: voice_pill.clone(),
             compact: voice_compact.clone(),
             keys: voice_keys.clone(),
         },
         Item {
-            pill: pill("F1".to_string(), Color::Cyan, help_label),
-            compact: compact("[F1]", Color::Cyan, help_label),
-            keys: bare("[F1]", Color::Cyan),
+            pill: pill("F4/F5".to_string(), Color::Cyan, "Layout/Switch"),
+            compact: compact("[F4/F5]", Color::Cyan, "Layout/Switch"),
+            keys: bare("[F4/F5]", Color::Cyan),
+        },
+        Item {
+            pill: pill("F1".to_string(), Color::LightYellow, help_label),
+            compact: compact("[F1]", Color::LightYellow, help_label),
+            keys: bare("[F1]", Color::LightYellow),
         },
     ];
 
@@ -504,30 +475,19 @@ fn right_shortcut_spans(
         body + idxs.len().saturating_sub(1)
     };
 
-    // Essentials always present unless the terminal is extremely narrow.
-    let essential = [0usize, 1, 5, 6, 7, 8]; // F3, Config, F4, F5, F8, F1
-    let optional_by_importance = [4usize, 3, 2]; // Sessions, MCP, Hosts
+    let all_items = [0usize, 1, 2, 3]; // F3, F7/F8, F4/F5, F1
 
-    // Richest style whose essentials fit; falls back to bare keys.
+    // Richest style whose items fit; falls back to bare keys.
     let style = (0..3)
-        .find(|&s| group_total(s, &essential) <= available_width)
+        .find(|&s| group_total(s, &all_items) <= available_width)
         .unwrap_or(2);
 
-    let mut chosen: Vec<usize> = essential.to_vec();
+    let mut chosen: Vec<usize> = all_items.to_vec();
 
-    // Pull in optional groups (most useful first) whenever they still fit.
-    for &idx in &optional_by_importance {
-        let mut trial = chosen.clone();
-        trial.push(idx);
-        if group_total(style, &trial) <= available_width {
-            chosen = trial;
-        }
-    }
-
-    // If even the bare keys do not fit, drop F4 then F5 then F7/F8 then Config — the approval
-    // badge (F3) and the help key (F1) are always kept, even on the narrowest terminals.
+    // If even the bare keys do not fit, drop in order: F4/F5 then F7/F8 then F3.
+    // F1 is ALWAYS kept at the end of the line.
     if group_total(style, &chosen) > available_width {
-        for &drop in &[5usize, 6, 7, 1] {
+        for &drop in &[2usize, 1, 0] {
             if group_total(style, &chosen) <= available_width {
                 break;
             }
@@ -535,7 +495,7 @@ fn right_shortcut_spans(
         }
     }
 
-    // Assemble in display order (ascending item index).
+    // Assemble in display order (ascending item index: 0=F3, 1=F7/F8, 2=F4/F5, 3=F1).
     chosen.sort_unstable();
     let mut right: Vec<Span<'static>> = Vec::new();
     for (n, &idx) in chosen.iter().enumerate() {
@@ -1152,39 +1112,38 @@ mod tests {
     }
 
     #[test]
-    fn footer_prioritizes_f3_config_f4_f5_voice_f1() {
+    fn footer_prioritizes_f3_f7_f8_f4_f5_f1() {
         let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 240);
         let t = text(&spans);
-        for expected in ["F3", "Config", "F4", "F5", "F7/F8", "F1"] {
+        for expected in ["F3", "F7/F8", "F4/F5", "F1", "Layout/Switch"] {
             assert!(t.contains(expected), "footer missing `{expected}`: {t}");
         }
+        assert!(!t.contains("Config"));
+        assert!(!t.contains("Ctrl"));
         let i_f3 = t.find("F3").expect("F3");
-        let i_cfg = t.find("Config").expect("Config");
-        let i_f4 = t.find("F4").expect("F4");
-        let i_f5 = t.find("F5").expect("F5");
         let i_voice = t.find("F7/F8").expect("F7/F8");
+        let i_layout = t.find("F4/F5").expect("F4/F5");
         let i_f1 = t.find("F1").expect("F1");
         assert!(
-            i_f3 < i_cfg && i_cfg < i_f4 && i_f4 < i_f5 && i_f5 < i_voice && i_voice < i_f1,
-            "footer order must be F3 -> Config -> F4 -> F5 -> F7/F8 -> F1: {t}"
+            i_f3 < i_voice && i_voice < i_layout && i_layout < i_f1,
+            "footer order must be F3 -> F7/F8 -> F4/F5 -> F1: {t}"
         );
     }
 
     #[test]
     fn footer_keeps_essentials_when_narrow() {
-        // Mid width: optional groups are dropped first, essentials remain (compact style
-        // still fits, so labels like "Config" are present).
+        // Mid width: all 4 shortcuts fit (compact style).
         let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 90);
         let mt = text(&mid);
-        for expected in ["F3", "Config", "F4", "F5", "F7/F8", "F1"] {
+        for expected in ["F3", "F7/F8", "F4/F5", "F1"] {
             assert!(
                 mt.contains(expected),
-                "essential `{expected}` dropped: {mt}"
+                "shortcut `{expected}` missing in mid-width: {mt}"
             );
         }
-        assert!(!mt.contains("MCP"), "optional MCP should be dropped: {mt}");
+        assert!(!mt.contains("Ctrl"), "Ctrl+* must not be present: {mt}");
 
-        // Very narrow: the approval badge (F3) and F1 always survive.
+        // Very narrow: F1 and F3 always survive, F1 at the end.
         let tiny = text(&right_shortcut_spans(
             Language::En,
             AutoApproveLevel::Safe,
@@ -1192,13 +1151,13 @@ mod tests {
             5,
         ));
         assert!(tiny.contains("F1"), "F1 must always be kept: {tiny}");
-        assert!(tiny.contains("F3"), "approval must always be kept: {tiny}");
-        assert!(!tiny.contains("F4"));
+        assert!(!tiny.contains("F4/F5"));
 
         // Below the floor: nothing is rendered.
         assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 2)
             .is_empty());
     }
+
 
     #[test]
     fn footer_shows_voice_state_badge_while_dictating() {

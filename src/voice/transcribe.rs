@@ -8,7 +8,14 @@ use crate::i18n::Language;
 use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::timeout;
+
+/// Hard cap on a single `whisper-cli` run. A 30 s segment transcribes far under this;
+/// the limit only exists so a stalled or OOM-killed process can never block a
+/// transcription (and thus the whole voice feature) indefinitely.
+const WHISPER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The `whisper.cpp` CLI binary to use (config override or the conventional `whisper-cli`).
 /// A leading `~` is expanded so config paths like `~/.local/opt/...` work.
@@ -80,12 +87,20 @@ pub async fn transcribe(cfg: &VoiceConfig, ui: Language, wav: &Path) -> Result<S
     let mut cmd = build_whisper_command(cfg, wav, &lang, &out_base);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // Ensure a dropped future (e.g. on timeout) also kills the child, so a hung
+        // whisper-cli can never linger as an orphan process.
+        .kill_on_drop(true);
 
-    let output = cmd
-        .output()
-        .await
-        .with_context(|| format!("Failed to run `{}`", whisper_binary(cfg)))?;
+    let output = match timeout(WHISPER_TIMEOUT, cmd.output()).await {
+        Ok(res) => res.with_context(|| format!("Failed to run `{}`", whisper_binary(cfg)))?,
+        Err(_) => {
+            return Err(anyhow!(
+                "whisper-cli timed out after {}s (model stalled or out of memory)",
+                WHISPER_TIMEOUT.as_secs()
+            ));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

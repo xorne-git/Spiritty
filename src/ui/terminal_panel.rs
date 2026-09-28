@@ -237,13 +237,19 @@ impl<'a> TerminalPanel<'a> {
             buf.set_string(badge_x, area.top(), &badge_text, badge_style);
         }
 
+        let is_top_of_horizontal_split = self.app.split_orientation
+            == crate::config::SplitOrientation::Horizontal
+            && self.app.split_swapped;
+        let bottom_pad: u16 = if is_top_of_horizontal_split { 1 } else { 0 };
+
         // Inner area for VT100: begins below top liseret, leaves 1 char margin on left
         let inner_area = Rect {
             x: area.left() + 1,
             y: area.top() + 1,
             width: area.width.saturating_sub(1),
-            height: area.height.saturating_sub(1),
+            height: area.height.saturating_sub(1 + bottom_pad),
         };
+
 
         if inner_area.width == 0 || inner_area.height == 0 {
             return None;

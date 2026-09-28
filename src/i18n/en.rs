@@ -114,6 +114,8 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::ChatThoughtStreaming => "╭─ 💭 Thinking in progress...",
         I18nKey::ChatWelcomeTitle => "Welcome to Spiritty!",
         I18nKey::ChatWelcomeSubtitle => "Ask system questions or get assistance on your terminal.",
+        I18nKey::ChatPinnedPromptPrefix => "You",
+        I18nKey::ChatPinnedCommandPrefix => "Command",
 
         // SSH & Host Management
         I18nKey::SshDetected => "SSH session detected to",

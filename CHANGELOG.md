@@ -17,9 +17,27 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ### Added
 
+- **Sticky / pinned prompt header on chat scroll**: when the assistant's streaming answer, thinking block, or command execution output causes the chat view to scroll down and pushes the user prompt off the top of the viewport, a fixed 1-row header (`📌 Vous : <prompt> [↑]` / `📌 You : <prompt> [↑]`) stays pinned at the top of the chat panel. Clicking on the pinned header immediately scrolls the chat back up to reveal the full prompt, and scrolling back up naturally re-integrates the prompt into the flow while dismissing the sticky banner.
+
 ### Changed
 
+- **Footer shortcuts cleanup and grouping**: removed all `Ctrl+*` shortcuts from the bottom status bar (`Ctrl+P`, `Ctrl+B`, `Ctrl+M`, `Ctrl+H`). Grouped layout orientation and panel swap into a single shortcut `[F4/F5] Layout/Switch`, and set `[F7/F8]` (voice STT badge) to cyan (`Color::Cyan`). The footer shortcuts now follow the clean, focused sequence: `F3` (approval level) → `F7/F8` (cyan voice STT badge) → `F4/F5` (Layout/Switch) → `F1` (vivid light-yellow help modal, guaranteed always present at the end of the line).
+- **Vivid `[F1]` badge color in footer**: `[F1]` Help now renders in bright, vivid light yellow (`Color::LightYellow`) rather than sharing cyan with `[F4/F5]`, making the help shortcut immediately stand out at the end of the status bar.
+- **Default configuration aligned to horizontal layout & manual approval**: default configuration now uses horizontal split (`SplitOrientation::Horizontal`), a 79% chat height ratio (`split_ratio_horizontal = 79`), and manual command validation by default (`auto_approve = "off"` / `AutoApproveLevel::Off`).
+
+### Fixed
+
+- **Command proposal execution on short affirmations and questions (`"?"`, `"oui?"`, `"ok"`)**: commands proposed by the model were intermittently not executed when the user responded with short natural confirmations or prompts like `"?"`, `"oui?"`, `"ok?"`, or idiomatic French expressions (`"ouais"`, `"c'est bon"`, `"ça marche"`, `"ok, vas-y"`). Specifically:
+  1. Bare question marks (`"?"`, `"??"`, `" ? "`) are now accepted as natural approval triggers when a proposed command or tool approval is pending.
+  2. Question-punctuated approvals (`"oui?"`, `"ok?"`, `"ouais ?"`) and comma-separated directives (`"ok, vas y"`, `"oui, lance"`) now normalize internal punctuation cleanly.
+  3. `all_command_proposals()` now accounts for active `pending_tool_approval` and falls back to `ChatMessage::command_proposal`, preventing proposals from vanishing when the directive fence is stripped from message content.
+  4. Backward scanning for proposals now stops at user execution boundaries (`💻`, `[RÉSULTAT DE L'EXÉCUTION...]`), avoiding duplicate execution of already-completed commands when the user acknowledges a finished task with `"ok"`.
+  5. `execute_command_by_index` now directly fulfills `pending_tool_approval` when invoked for index 0, allowing natural chat and voice submissions to approve pending tool calls without triggering false "demande d'autorisation en cours" toast errors.
+- **Horizontal split prompt wrapping overwritten by divider**: in horizontal split orientation (`SplitOrientation::Horizontal`), the 1-row separator line (`split_y`) was drawn directly over the bottom row of the top panel (`first_area.bottom() - 1`). When the chat panel was on top, the second visual line of the prompt was drawn on that row and immediately overwritten by `"─"`, trapping the cursor on the divider and hiding what the user was typing. Both the chat panel and the terminal panel now reserve `bottom_pad = 1` when placed at the top of a horizontal split, and horizontal divider hit-testing is restricted to the exact separator row so clicking the prompt line directly above it no longer initiates a split drag.
+- **Voice transcription could hang forever on a stalled `whisper-cli`**: the local transcription step spawned `whisper-cli` and waited on its output with no time limit, so a model that stalled, was OOM-killed or deadlocked would block the transcription task — and therefore the whole voice feature, since the state machine never returned to idle — until Spiritty was restarted. The run is now wrapped in a hard 120 s timeout (far above the few seconds a 30 s segment needs) and the child is spawned with `kill_on_drop(true)`, so an expiry both surfaces a clear error and guarantees no orphan process is left behind.
+
 ---
+
 
 ## v0.9.3 — 2026-09-28
 

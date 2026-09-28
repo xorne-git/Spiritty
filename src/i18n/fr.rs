@@ -116,6 +116,8 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::ChatWelcomeSubtitle => {
             "Posez vos questions système ou demandez de l'aide sur votre terminal."
         }
+        I18nKey::ChatPinnedPromptPrefix => "Vous",
+        I18nKey::ChatPinnedCommandPrefix => "Commande",
 
         // SSH & Host Management
         I18nKey::SshDetected => "Session SSH détectée vers",

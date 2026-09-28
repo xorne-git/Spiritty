@@ -175,6 +175,8 @@ pub enum I18nKey {
     ChatThoughtStreaming,
     ChatWelcomeTitle,
     ChatWelcomeSubtitle,
+    ChatPinnedPromptPrefix,
+    ChatPinnedCommandPrefix,
 
     // SSH & Host Management
     SshDetected,

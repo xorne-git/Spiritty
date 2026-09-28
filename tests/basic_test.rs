@@ -618,6 +618,33 @@ fn test_parse_command_execution_request() {
     assert_eq!(parse_command_execution_request("lance", 3), Some(0));
     assert_eq!(parse_command_execution_request("go", 3), Some(0));
 
+    // Bare question marks and question-punctuated approvals ("?", "oui?", "ok?", "ouais ?")
+    assert_eq!(parse_command_execution_request("?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("??", 3), Some(0));
+    assert_eq!(parse_command_execution_request(" ? ", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui ?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ok?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ok ?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ouais", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ouais ?", 3), Some(0));
+
+    // Idiomatic French & English affirmative expressions with commas / punctuation
+    assert_eq!(parse_command_execution_request("ok, vas y", 3), Some(0));
+    assert_eq!(parse_command_execution_request("oui, vas-y", 3), Some(0));
+    assert_eq!(parse_command_execution_request("c'est bon", 3), Some(0));
+    assert_eq!(parse_command_execution_request("c bon", 3), Some(0));
+    assert_eq!(parse_command_execution_request("c'est ok", 3), Some(0));
+    assert_eq!(parse_command_execution_request("c ok", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ça marche", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ca marche", 3), Some(0));
+    assert_eq!(parse_command_execution_request("lance la", 3), Some(0));
+    assert_eq!(parse_command_execution_request("fais", 3), Some(0));
+    assert_eq!(parse_command_execution_request("alors ?", 3), Some(0));
+    assert_eq!(parse_command_execution_request("ok pour moi", 3), Some(0));
+    assert_eq!(parse_command_execution_request("d'acc", 3), Some(0));
+    assert_eq!(parse_command_execution_request("envoie", 3), Some(0));
+
     // Numbered commands
     assert_eq!(parse_command_execution_request("1", 3), Some(0));
     assert_eq!(parse_command_execution_request("2", 3), Some(1));
@@ -633,7 +660,18 @@ fn test_parse_command_execution_request() {
         parse_command_execution_request("comment installer nginx ?", 3),
         None
     );
+    assert_eq!(
+        parse_command_execution_request("pourquoi cette commande ?", 3),
+        None
+    );
+    assert_eq!(
+        parse_command_execution_request("c'est quoi ce script ?", 3),
+        None
+    );
+    assert_eq!(parse_command_execution_request("non", 3), None);
+    assert_eq!(parse_command_execution_request("attends", 3), None);
     assert_eq!(parse_command_execution_request("ok", 0), None);
+    assert_eq!(parse_command_execution_request("?", 0), None);
 }
 
 #[test]
@@ -920,7 +958,7 @@ async fn test_responsive_footer_rendering_at_various_widths() {
             );
         }
 
-        // 2. Right shortcuts: F1 and Ctrl+P / ^P are prioritized
+        // 2. Right shortcuts: F1 is prioritized and always present, all Ctrl+* are removed
         assert!(
             footer_text.contains("F1"),
             "Width {} should contain F1 shortcut! Rendered: '{}'",
@@ -928,8 +966,8 @@ async fn test_responsive_footer_rendering_at_various_widths() {
             footer_text
         );
         assert!(
-            footer_text.contains("P") || footer_text.contains("Config"),
-            "Width {} should contain P/Config shortcut! Rendered: '{}'",
+            !footer_text.contains("Ctrl +") && !footer_text.contains("Config"),
+            "Width {} should not contain Ctrl+* shortcuts! Rendered: '{}'",
             width,
             footer_text
         );
@@ -945,10 +983,8 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
 
         if width >= 140 {
-            // Priority shortcuts (F3 approval, Config, F4 layout, F5 swap, F8 voice, F1 help)
-            // must all be visible on a wide terminal; Hosts/MCP/Sessions are now optional.
-            // At this width the left metrics leave room for the bare essential keys only.
-            for expected in ["F3", "F4", "F5", "F7/F8", "F1"] {
+            // Priority shortcuts (F3 approval, F7/F8 voice, F4/F5 layout/switch, F1 help)
+            for expected in ["F3", "F7/F8", "F4/F5", "F1", "Layout/Switch"] {
                 assert!(
                     footer_text.contains(expected),
                     "Width {} should contain {}! Rendered: '{}'",
@@ -960,6 +996,7 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
     }
 }
+
 
 // ---------------------------------------------------------------------------
 // Render-cache streaming regressions (chat panel, two-pass draw)
@@ -1590,3 +1627,267 @@ async fn test_dead_turn_recovery_promotes_reasoning_command() {
         "the recovered command must be actionable"
     );
 }
+
+#[tokio::test]
+async fn test_horizontal_split_prompt_wrapping_not_overwritten_by_divider() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::App;
+    use spiritty::config::SplitOrientation;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 40, 80).unwrap();
+
+    app.split_orientation = SplitOrientation::Horizontal;
+    app.split_ratio = 50;
+    app.chat_input = "x".repeat(100);
+    app.cursor_pos = app.chat_input.len();
+
+    let backend = TestBackend::new(80, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .expect("horizontal draw must not panic");
+
+    let pos = terminal.get_cursor_position().unwrap();
+    let (cx, cy) = (pos.x, pos.y);
+    let cell = terminal.backend().buffer().cell((cx, cy)).unwrap();
+    assert_ne!(
+        cell.symbol(),
+        "─",
+        "cursor is sitting on the divider '─' at ({}, {})",
+        cx,
+        cy
+    );
+}
+
+#[tokio::test]
+async fn test_natural_approval_execution_lifecycle() {
+    use spiritty::app::{App, ChatMessage, MessageRole};
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 24, 80).expect("create app");
+
+    // 1. Assistant proposes a command
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Voici la commande :\n```bash\nsudo mkdir -p /mnt/data\n```".to_string(),
+        command_proposal: Some("sudo mkdir -p /mnt/data".to_string()),
+        attachments: Vec::new(),
+    });
+
+    assert_eq!(
+        app.all_command_proposals(),
+        vec!["sudo mkdir -p /mnt/data".to_string()]
+    );
+
+    // 2. User types "?" -> executes the command!
+    app.chat_input = "?".to_string();
+    app.submit_chat_input();
+
+    assert!(
+        app.active_pty_tool.is_some(),
+        "Typing '?' must execute the proposed command"
+    );
+    let last_user_msg = app.messages.iter().rev().find(|m| m.role == MessageRole::User).unwrap();
+    assert_eq!(last_user_msg.content, "💻 `sudo mkdir -p /mnt/data`");
+
+    // Clear active pty tool to simulate completed execution
+    app.active_pty_tool = None;
+    app.agent.is_generating = false;
+
+    // Simulate completion result in history
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'sudo mkdir -p /mnt/data']:\nOK".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Le point de montage est prêt.".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // 3. User says "ok" after completion -> must NOT re-execute already completed command
+    assert!(
+        app.all_command_proposals().is_empty(),
+        "Finished proposals must not be re-executed when acknowledging completion"
+    );
+    app.chat_input = "ok".to_string();
+    app.submit_chat_input();
+    assert!(
+        app.active_pty_tool.is_none(),
+        "Must not trigger re-execution of finished command"
+    );
+
+    // 4. Test pending tool approval with "?" directly approving
+    let (approval_tx, mut approval_rx) = tokio::sync::oneshot::channel::<bool>();
+    app.on_agent_tool_request("systemctl restart nginx".to_string(), approval_tx);
+    assert!(app.pending_tool_approval.is_some());
+
+    // Fulfill via execute_command_by_index directly
+    assert!(app.execute_command_by_index(0, true));
+    assert!(app.pending_tool_approval.is_none());
+    assert_eq!(approval_rx.try_recv().unwrap(), true);
+}
+
+#[tokio::test]
+async fn test_pinned_prompt_header_when_scrolled() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::{App, ChatMessage, MessageRole};
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 25, 80).expect("create app");
+
+    // Add user message
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "installer nginx et php-fpm sur debian".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Add a very long assistant message that will force scrolling
+    let long_response = (1..=30)
+        .map(|i| format!("Ligne de réponse numéro {} avec des détails techniques.", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: long_response,
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Chat is scrolled to the bottom (chat_scroll_from_bottom == 0)
+    app.chat_scroll_from_bottom = 0;
+
+    let backend = TestBackend::new(80, 25);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .expect("draw must succeed");
+
+    // Pinned header must be active because the user message scrolled above the viewport
+    assert!(
+        app.chat_pinned_hit.borrow().is_some(),
+        "chat_pinned_hit must be populated when user prompt is scrolled off-screen"
+    );
+
+    // Verify rendered buffer contains the pinned indicator and text
+    let buffer = terminal.backend().buffer();
+    let content: String = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer.cell((x, y)).unwrap().symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        content.contains("📌") || content.contains("Vous") || content.contains("You"),
+        "Buffer should contain pinned prompt icon/prefix"
+    );
+    assert!(
+        content.contains("installer nginx"),
+        "Buffer should contain pinned prompt text"
+    );
+    assert!(
+        content.contains("[↑]"),
+        "Buffer should contain pinned hint badge [↑]"
+    );
+
+    // Now click the pinned header to jump back to the prompt
+    let (pinned_rect, _u_idx, _content_top) = app.chat_pinned_hit.borrow().unwrap();
+    let click_x = pinned_rect.x + 2;
+    let click_y = pinned_rect.y;
+
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    app.handle_mouse(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: click_x,
+            row: click_y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        },
+        80,
+    );
+
+    // Redraw: after jumping to the prompt, the prompt is in the viewport so pinned header disappears
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .expect("draw must succeed");
+
+    assert!(
+        app.chat_pinned_hit.borrow().is_none(),
+        "chat_pinned_hit must disappear once the prompt is visible on screen"
+    );
+
+    // 2. Test that intermediate tool execution captures [RÉSULTAT...] are never pinned!
+    // Scroll back down
+    app.chat_scroll_from_bottom = 0;
+    // Add intermediate tool result message (like tool:run_command execution)
+    app.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: "[RÉSULTAT DE L'EXÉCUTION DE LA COMMANDE 'echo \"=== REGISTRY INFO ===\"']: OK".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    // Add assistant reply analyzing the tool result
+    let long_analysis = (1..=20)
+        .map(|i| format!("Analyse du résultat ligne {}.", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: long_analysis,
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .expect("draw must succeed");
+
+    assert!(
+        app.chat_pinned_hit.borrow().is_some(),
+        "chat_pinned_hit must be active"
+    );
+
+    let buffer2 = terminal.backend().buffer();
+    let content2: String = (0..buffer2.area.height)
+        .map(|y| {
+            (0..buffer2.area.width)
+                .map(|x| buffer2.cell((x, y)).unwrap().symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Must still pin the real user prompt, NOT the raw [RÉSULTAT...] internal block
+    assert!(
+        content2.contains("installer nginx"),
+        "Buffer should pin the original user prompt, found:\n{}",
+        content2
+    );
+    assert!(
+        !content2.contains("RÉSULTAT"),
+        "Pinned prompt header must NEVER pin raw [RÉSULTAT...] capture blocks!"
+    );
+}
+
