@@ -17,6 +17,14 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 ### Added
 ### Changed
 ### Fixed
+---
+## v0.11.1 — 2026-09-29
+### Changed
+- **Barre de métriques réordonnée et compactée** : dans `build_left_metrics`, le compteur de tokens de contexte passe désormais **avant** le coût, les séparateurs sont rendus en `Gray` et les tokens adoptent un format compact (`12k/128k`, sans espaces). L'accumulateur mort `current_width` a été retiré (build sans warning).
+### Fixed
+- **Majuscules dans le prompt (`REPORT_ALTERNATE_KEYS`)** : le mode clavier étendu active désormais `REPORT_ALTERNATE_KEYS`, de sorte que `Shift` + touche produise le glyphe majuscule attendu dans la ligne de saisie.
+- **Indice `last_ssh_target` corrompu rejeté** : un hint `last_ssh_target` corrompu est désormais écarté au lieu d'être réutilisé.
+
 
 ---
 
