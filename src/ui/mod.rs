@@ -663,18 +663,20 @@ fn build_left_metrics(
         Some(crate::config::ReasoningEffort::High) => ("High", Color::Magenta),
         _ => ("Model", Color::DarkGray),
     };
+    let th_sep = Span::styled(" │ ", Style::default().fg(Color::Gray));
     let th_span = Span::styled(
-        format!(" 🧠 {}", th_label),
+        format!("🧠 {}", th_label),
         Style::default().fg(th_color).add_modifier(Modifier::BOLD),
     );
-    let th_w = th_span.width();
+    let th_w = th_sep.width() + th_span.width();
     if current_width + th_w <= max_width {
         current_width += th_w;
+        spans.push(th_sep);
         spans.push(th_span);
     }
 
     // 3. Tokens & Speed
-    let t_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+    let t_sep = Span::styled(" │ ", Style::default().fg(Color::Gray));
     let t_icon = Span::styled("⚡ ", Style::default().fg(Color::Yellow));
     let tok_str = if let Some(tps) = app.get_tokens_per_sec() {
         format!("{} tok ({:.1} t/s)", format_token_count(tokens_used), tps)
@@ -691,7 +693,25 @@ fn build_left_metrics(
         spans.push(t_val);
     }
 
-    // 4. Cost estimation — shown ONLY when a tariff is actually configured for the active
+    // 4. Context window usage
+    let ctx_sep = Span::styled(" │ ", Style::default().fg(Color::Gray));
+    let ctx_icon = Span::styled("📊 ", Style::default().fg(Color::Magenta));
+    let ctx_str = format!(
+        "Ctx: {}/{} ({:.0}%)",
+        format_token_count(ctx_used),
+        format_token_count(ctx_total),
+        ctx_pct
+    );
+    let ctx_val = Span::styled(ctx_str, Style::default().fg(Color::Gray));
+    let ctx_w = ctx_sep.width() + ctx_icon.width() + ctx_val.width();
+
+    if current_width + ctx_w <= max_width {
+        spans.push(ctx_sep);
+        spans.push(ctx_icon);
+        spans.push(ctx_val);
+    }
+
+    // 5. Cost estimation — shown ONLY when a tariff is actually configured for the active
     //    model; unknown models display nothing rather than an invented price.
     let known_cost = app
         .pricing_registry
@@ -726,7 +746,7 @@ fn build_left_metrics(
                 Color::LightGreen
             };
 
-            let c_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
+            let c_sep = Span::styled(" │ ", Style::default().fg(Color::Gray));
             let c_icon = Span::styled("💵 ", Style::default().fg(cost_color));
             let c_val = Span::styled(
                 format!("${:.3}", cost),
@@ -736,30 +756,11 @@ fn build_left_metrics(
 
             if current_width + c_w <= max_width {
                 cost_col_range = Some((current_width, current_width + c_w));
-                current_width += c_w;
                 spans.push(c_sep);
                 spans.push(c_icon);
                 spans.push(c_val);
             }
         }
-    }
-
-    // 5. Context window usage
-    let ctx_sep = Span::styled(" │ ", Style::default().fg(Color::DarkGray));
-    let ctx_icon = Span::styled("📊 ", Style::default().fg(Color::Magenta));
-    let ctx_str = format!(
-        "Ctx: {} / {} ({:.0}%)",
-        format_token_count(ctx_used),
-        format_token_count(ctx_total),
-        ctx_pct
-    );
-    let ctx_val = Span::styled(ctx_str, Style::default().fg(Color::Gray));
-    let ctx_w = ctx_sep.width() + ctx_icon.width() + ctx_val.width();
-
-    if current_width + ctx_w <= max_width {
-        spans.push(ctx_sep);
-        spans.push(ctx_icon);
-        spans.push(ctx_val);
     }
 
     (spans, cost_col_range)
