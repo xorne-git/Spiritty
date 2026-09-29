@@ -27,7 +27,11 @@ pub struct Session {
     /// automatically whenever a save happens while an SSH session is detected, and
     /// reused to display a "SSH resumed" hint when continuing the session with `-c`
     /// before the user reconnects to the remote host.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_ssh_target_opt"
+    )]
     pub last_ssh_target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auto_approve: Option<crate::config::AutoApproveLevel>,
@@ -87,8 +91,16 @@ impl Session {
     /// Scans the most recent messages for an explicit `ssh …` command or a remote
     /// prompt remnant (`user@host:~$`), newest first.
     pub fn infer_last_ssh_target(&mut self) {
+        // A value persisted by an older build (or corrupted on disk) must never be
+        // trusted: purge anything that is not a plausible `[user@]host[:port]`.
+        // This is what stops a stale `12\n[xorne@prod` from re-triggering the SSH
+        // modal on every `-c` resume (the old code returned early on any `Some`).
         if self.last_ssh_target.is_some() {
-            return;
+            self.last_ssh_target =
+                self.last_ssh_target.take().and_then(|t| sanitize_ssh_target(&t));
+            if self.last_ssh_target.is_some() {
+                return;
+            }
         }
         for m in self.messages.iter().rev().take(80) {
             if let Some(target) = extract_ssh_target(&m.content) {
@@ -452,6 +464,74 @@ pub fn format_short_session_id(id: &str) -> String {
     }
 }
 
+/// Validates and normalizes a persisted SSH hint.
+///
+/// Only `[user@]host[:port]` shapes survive: user/host must be ASCII
+/// alphanumeric plus `.`, `_`, `-`, and the port (when present) must be
+/// numeric. Anything carrying whitespace, newlines, brackets, backslashes,
+/// slashes, quotes or backticks -- i.e. every flavour of prompt/output debris --
+/// is rejected and returns `None`.
+///
+/// For instance `12\n[xorne@prod` is rejected: it contains a newline and `[`.
+pub fn sanitize_ssh_target(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.len() > 253 {
+        return None;
+    }
+    // Whitelist every character that can appear in `[user@]host[:port]`; reject
+    // anything else (spaces, newlines, `[`/`]`, `\`, `/`, quotes, ...).
+    if !raw
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':'))
+    {
+        return None;
+    }
+    let (user, hostport) = match raw.split_once('@') {
+        Some((u, h)) => (u, h),
+        None => ("", raw),
+    };
+    let user_ok = user.is_empty()
+        || user
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !user_ok {
+        return None;
+    }
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (hostport, None),
+    };
+    if host.is_empty()
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return None;
+    }
+    if let Some(p) = port {
+        if p.is_empty() || !p.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+    }
+    // Rebuild explicitly so nothing stray can ride along.
+    Some(match (user.is_empty(), port) {
+        (true, None) => host.to_string(),
+        (true, Some(p)) => format!("{host}:{p}"),
+        (false, None) => format!("{user}@{host}"),
+        (false, Some(p)) => format!("{user}@{host}:{p}"),
+    })
+}
+
+/// serde adapter: silently drops a persisted `last_ssh_target` that fails
+/// [`sanitize_ssh_target`], so a corrupted on-disk value can never reach the UI.
+fn deserialize_ssh_target_opt<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(raw.and_then(|s| sanitize_ssh_target(&s)))
+}
+
 #[cfg(test)]
 mod compaction_tests {
     use super::{compact_chat_messages, Session};
@@ -641,5 +721,60 @@ mod ssh_hint_tests {
         );
         assert_eq!(format_short_session_id("sess_custom"), "#custom");
         assert_eq!(format_short_session_id("1234"), "#1234");
+    }
+}
+
+#[cfg(test)]
+mod ssh_target_sanitize_tests {
+    use super::sanitize_ssh_target;
+
+    #[test]
+    fn rejects_prompt_debris() {
+        // The exact corruption found persisted on disk.
+        assert_eq!(sanitize_ssh_target("12\n[xorne@prod"), None);
+        assert_eq!(sanitize_ssh_target("[xorne@prod:/var/www]"), None);
+        assert_eq!(sanitize_ssh_target("xorne@vps-prod:~"), None);
+        assert_eq!(sanitize_ssh_target(""), None);
+        assert_eq!(sanitize_ssh_target("   "), None);
+        assert_eq!(sanitize_ssh_target("foo bar"), None);
+    }
+
+    #[test]
+    fn accepts_plausible_targets() {
+        assert_eq!(sanitize_ssh_target("prod"), Some("prod".to_string()));
+        assert_eq!(sanitize_ssh_target("vps-prod"), Some("vps-prod".to_string()));
+        assert_eq!(
+            sanitize_ssh_target("xorne@vps-prod"),
+            Some("xorne@vps-prod".to_string())
+        );
+        assert_eq!(
+            sanitize_ssh_target("root@ducasse-seine.com:22"),
+            Some("root@ducasse-seine.com:22".to_string())
+        );
+        assert_eq!(
+            sanitize_ssh_target("  xorne@prod  "),
+            Some("xorne@prod".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_git_url_and_trailing_colon() {
+        assert_eq!(
+            sanitize_ssh_target("git@github.com:xorne-git/Spiritty.git"),
+            None
+        );
+        assert_eq!(sanitize_ssh_target("node-domexception@1.0.0:"), None);
+    }
+
+    #[test]
+    fn legacy_corrupted_value_is_purged() {
+        let mut s = crate::session::Session::new("openai", "gpt-4o");
+        s.last_ssh_target = Some("12\n[xorne@prod".to_string());
+        s.infer_last_ssh_target();
+        assert!(
+            s.last_ssh_target.is_none(),
+            "corrupted hint must be purged, got {:?}",
+            s.last_ssh_target
+        );
     }
 }

@@ -1200,7 +1200,7 @@ impl App {
     /// running PTY capture, and never shows when already connected (the live 🌐
     /// title covers that case).
     fn maybe_offer_ssh_reconnect(&mut self, resumed_ssh: Option<String>) {
-        if let Some(target) = resumed_ssh.filter(|t| !t.is_empty()) {
+        if let Some(target) = resumed_ssh.and_then(|t| crate::session::sanitize_ssh_target(&t)) {
             if !self.system_context.active_session.is_ssh() && self.active_pty_tool.is_none() {
                 // A prompt-inferred target may be a bare remote hostname (`prod`),
                 // which is not directly connectable — resolve it to the address that
@@ -1211,7 +1211,8 @@ impl App {
                     .hosts_store
                     .resolve_connectable_target(&target);
                 if connectable != target {
-                    self.current_session.last_ssh_target = Some(connectable.clone());
+                    self.current_session.last_ssh_target =
+                        crate::session::sanitize_ssh_target(&connectable);
                 }
                 self.modal = ModalState::SshReconnect {
                     target: connectable,
@@ -1227,8 +1228,9 @@ impl App {
         if let crate::system::ActiveSession::Ssh { target, .. } =
             &self.system_context.active_session
         {
-            if self.current_session.last_ssh_target.as_deref() != Some(target.as_str()) {
-                self.current_session.last_ssh_target = Some(target.clone());
+            let sanitized = crate::session::sanitize_ssh_target(target);
+            if self.current_session.last_ssh_target != sanitized {
+                self.current_session.last_ssh_target = sanitized;
             }
         }
     }
