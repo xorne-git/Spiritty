@@ -436,6 +436,43 @@ impl VoiceConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillSelectionMode {
+    #[default]
+    Auto,
+    Manual,
+}
+
+impl SkillSelectionMode {
+    pub fn toggle(self) -> Self {
+        match self {
+            SkillSelectionMode::Auto => SkillSelectionMode::Manual,
+            SkillSelectionMode::Manual => SkillSelectionMode::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillsConfig {
+    #[serde(default)]
+    pub mode: SkillSelectionMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            mode: SkillSelectionMode::Auto,
+            enabled: Vec::new(),
+            disabled: Vec::new(),
+        }
+    }
+}
+
 /// Expands a leading `~` (home directory) in a user-supplied path. Paths without `~` are
 /// returned unchanged.
 pub fn expand_tilde(path: &str) -> std::path::PathBuf {
@@ -641,6 +678,9 @@ pub struct Config {
     /// 100% local voice input settings.
     #[serde(default)]
     pub voice: VoiceConfig,
+    /// Specialized skills & expertise directives configuration.
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 impl Default for Config {
@@ -680,6 +720,7 @@ impl Default for Config {
             theme: Some("spiritty_dark".to_string()),
             export_dir: None,
             voice: VoiceConfig::default(),
+            skills: SkillsConfig::default(),
         }
     }
 }

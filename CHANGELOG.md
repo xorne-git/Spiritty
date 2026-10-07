@@ -15,7 +15,10 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ## Unreleased
 ### Added
+- **Gestionnaire de Skills et directives d'expertise (`Ctrl+S` / `/skills`)** : ajout d'un système complet de gestion des skills avec modale dédiée TUI (`Ctrl+S` ou commande slash `/skills` / `/skill`). Comprend deux modes de sélection (`Auto` par défaut avec injection JIT par mots-clés/triggers, et `Manuel` basculable via `Tab`/`M`), 5 skills intégrés orientés gestion de terminal et shell (`shell-guru`, `git-cli`, `process-triage`, `text-processing`, `network-tools`), la possibilité de créer des skills personnalisés locaux (`N` dans `~/.config/spiritty/skills/`), ainsi que la documentation du raccourci dans l'aide (`F1`).
+- **Bouton d'activation vocale dans la modale de configuration (`F2`)** : ajout de l'option « 4. Entrée Vocale (STT) » dans la modale de configuration permettant de basculer la reconnaissance vocale en `Activée (ON)` ou `Désactivée (OFF)` avec `Espace` ou les flèches `←` / `→`. La sauvegarde synchronise l'état en mémoire et persiste le paramètre dans `config.toml`, évitant que la configuration vocale ne soit réinitialisée lors du redémarrage de la machine.
 ### Changed
+- **Zone de saisie du prompt compactée (1 ligne par défaut, extension à 2 lignes puis défilement)** : la hauteur de la zone de saisie du chat est désormais réduite à 1 seule ligne par défaut pour maximiser l'espace d'affichage des messages. Lorsqu'un prompt dépasse une ligne (saut de ligne ou retour automatique), la zone s'étend dynamiquement à 2 lignes ; au-delà de 2 lignes, la hauteur reste plafonnée à 2 lignes et le contenu défile verticalement avec hystérésis fluide en suivant le curseur.
 ### Fixed
 ---
 ## v0.11.1 — 2026-09-29

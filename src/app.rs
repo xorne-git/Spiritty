@@ -421,6 +421,8 @@ pub struct App {
     pub chat_messages_geo: std::cell::RefCell<(ratatui::layout::Rect, u16)>,
     /// Hit-target of the pinned prompt header when active: (screen rect, msg index, content top row).
     pub chat_pinned_hit: std::cell::RefCell<Option<(ratatui::layout::Rect, usize, u16)>>,
+    /// Current visual scroll offset of the chat prompt input when overflowing (> 2 lines).
+    pub chat_input_scroll: std::cell::Cell<u16>,
     pub chat_history: Vec<String>,
     pub history_index: Option<usize>,
     pub input_draft: String,
@@ -747,6 +749,7 @@ impl App {
             chat_thought_hits: std::cell::RefCell::new(Vec::new()),
             chat_messages_geo: std::cell::RefCell::new((ratatui::layout::Rect::ZERO, 0)),
             chat_pinned_hit: std::cell::RefCell::new(None),
+            chat_input_scroll: std::cell::Cell::new(0),
             chat_history: Vec::new(),
             history_index: None,
             input_draft: String::new(),
@@ -1148,9 +1151,33 @@ impl App {
                     mcp_state.sync_with_config(&self.config);
                 }
             }
+            ModalOutcome::SkillsChanged => {
+                if let Ok(mut sm) = self.agent.skills_manager.write() {
+                    sm.reload();
+                }
+                if let ModalState::Skills(ref mut skills_state) = self.modal {
+                    if let Ok(sm) = self.agent.skills_manager.read() {
+                        skills_state.refresh(&sm);
+                    }
+                }
+            }
             ModalOutcome::SaveConfigAndClose => {
                 if let ModalState::Config(ref config_state) = self.modal {
                     self.theme = config_state.theme;
+                }
+                if self.config.voice.enabled {
+                    if self.voice_state == VoiceState::Off {
+                        self.voice_state = VoiceState::Idle;
+                    }
+                } else {
+                    if self.voice_continuous {
+                        self.voice.stop_continuous();
+                        self.voice_continuous = false;
+                    }
+                    if self.voice_state == VoiceState::Recording {
+                        self.voice.stop_segment();
+                    }
+                    self.voice_state = VoiceState::Off;
                 }
                 self.agent
                     .reload_config(self.config.clone(), Some(self.event_tx.clone()));
@@ -1582,12 +1609,27 @@ impl App {
             return;
         }
 
+        // Slash command to open Skills management modal
+        if input.eq_ignore_ascii_case("/skills") || input.eq_ignore_ascii_case("/skill") {
+            self.chat_input.clear();
+            self.cursor_pos = 0;
+            self.chat_input_scroll.set(0);
+            if let Ok(mut sm) = self.agent.skills_manager.write() {
+                sm.reload();
+            }
+            self.modal = ModalState::Skills(crate::ui::components::SkillsModalState::new(
+                &self.config.skills,
+            ));
+            return;
+        }
+
         // Natural command execution request ("ok", "oui", "vas y", "lance", "2", …)
         let proposals = self.all_command_proposals();
         if let Some(target_idx) = parse_command_execution_request(&input, proposals.len()) {
             self.consecutive_auto_proposals = 0;
             self.chat_input.clear();
             self.cursor_pos = 0;
+            self.chat_input_scroll.set(0);
             self.history_index = None;
             self.input_draft.clear();
             if self.execute_command_by_index(target_idx, true) {
@@ -1625,6 +1667,7 @@ impl App {
 
         self.chat_input.clear();
         self.cursor_pos = 0;
+        self.chat_input_scroll.set(0);
         self.reset_chat_scroll();
         self.generation_start_time = Some(std::time::Instant::now());
         self.current_turn_tokens = 0;
@@ -2413,6 +2456,23 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            self.modal = match self.modal {
+                ModalState::Skills(_) => ModalState::None,
+                _ => {
+                    if let Ok(mut sm) = self.agent.skills_manager.write() {
+                        sm.reload();
+                    }
+                    ModalState::Skills(crate::ui::components::SkillsModalState::new(
+                        &self.config.skills,
+                    ))
+                }
+            };
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F'))
         {
             self.chat_search_active = !self.chat_search_active;
@@ -3088,10 +3148,10 @@ impl App {
             }
         }
 
-        // 3. Esc or Ctrl+C / Ctrl+S cancels active generation or active PTY tool
+        // 3. Esc or Ctrl+C cancels active generation or active PTY tool
         let is_stop_key = key.code == KeyCode::Esc
             || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && (key.code == KeyCode::Char('c') || key.code == KeyCode::Char('s')));
+                && key.code == KeyCode::Char('c'));
 
         if is_stop_key && self.agent.is_generating {
             self.stop_agent_generation();

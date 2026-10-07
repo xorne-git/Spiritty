@@ -90,10 +90,20 @@ async fn test_markdown_export_generation() {
         attachments: Vec::new(),
     });
 
+    // Verify default path format without writing to $HOME
+    let default_path = app.default_export_path();
+    assert!(default_path.starts_with("~/spiritty_rapport_"));
+    assert!(default_path.ends_with("_optimisation_nginx___php-fpm.md"));
+
+    // Route export to a temporary directory to avoid polluting $HOME during tests
+    let temp_dir = tempfile::tempdir().unwrap();
+    app.config.export_dir = Some(temp_dir.path().to_string_lossy().to_string());
+
     let export_path = app
         .export_current_session_markdown()
         .expect("Markdown export failed");
     assert!(std::path::Path::new(&export_path).exists());
+    assert!(export_path.starts_with(temp_dir.path().to_str().unwrap()));
 
     let content = std::fs::read_to_string(&export_path).unwrap();
     assert!(content.contains("# 🧞 Rapport d'Intervention Spiritty — Optimisation Nginx & PHP-FPM"));

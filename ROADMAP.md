@@ -182,3 +182,15 @@ This document defines the key milestones in the development of **Spiritty**, fro
 - [x] **Manual segment (`F8`)** for noisy environments.
 - [x] **Config `[voice]` section**, i18n keys (fr/en), footer state badge and help rows.
 - [ ] **Model management:** `~/.config/spiritty/models/ggml-<size>.bin` + downloader.
+
+---
+
+## 📌 Phase 7: Skills & Domain Expertise Directives [COMPLETE ✅]
+*Objective: Equip the AI agent with modular domain expertise (POSIX shell, Git CLI, process triage, text stream processing, network inspection) selectable automatically (JIT keyword triggers) or manually, with full custom extension support.*
+
+- [x] **Modular Skills Manager (`src/agent/skills.rs`):** frontmatter Markdown parser (`SKILL.md`), hierarchical scanning in `~/.config/spiritty/skills/` and `.spiritty/skills/`.
+- [x] **First wave of terminal-oriented built-in skills:** `shell-guru`, `git-cli`, `process-triage`, `text-processing`, `network-tools`.
+- [x] **Dual selection modes (`Auto` / `Manual`):** JIT prompt injection upon trigger detection + standby skills catalog in `Auto` mode; user-controlled toggles in `Manual` mode.
+- [x] **Dedicated TUI modal (`Ctrl+S` / `/skills`):** two-column layout, detailed directive preview, mode switcher (`Tab`/`M`), state cycler (`Space`), and new skill scaffolding (`N`).
+- [x] **Typed i18n & Help modal integration:** catalog translations (FR/EN) and shortcut documentation in `F1`.
+

@@ -5,17 +5,19 @@ pub mod help_modal;
 pub mod mcp_modal;
 pub mod rename_tab_modal;
 pub mod session_modal;
+pub mod skills_modal;
 pub mod ssh_reconnect_modal;
 
 pub use bookmarks_modal::{
     AddHostState, BookmarksModal, BookmarksModalAction, BookmarksModalState,
 };
-pub use config_modal::{ConfigModalAction, ConfigModalState};
+pub use config_modal::{ConfigField, ConfigModalAction, ConfigModalState};
 pub use export_modal::{ExportModal, ExportModalAction, ExportModalState};
 pub use help_modal::{HelpModal, HelpModalState};
 pub use mcp_modal::{AddMcpState, McpModal, McpModalAction, McpModalState};
 pub use rename_tab_modal::{RenameTabAction, RenameTabModalState};
 pub use session_modal::{SessionModalAction, SessionModalState};
+pub use skills_modal::{SkillsModal, SkillsModalAction, SkillsModalState};
 pub use ssh_reconnect_modal::{SshReconnectAction, SshReconnectModal};
 
 use ratatui::widgets::Widget;
@@ -30,6 +32,7 @@ pub enum ModalOutcome {
     TriggerHostScan,
     ExportMarkdown(String),
     McpServersChanged,
+    SkillsChanged,
     SaveConfigAndClose,
     UpdatePricing,
     RefreshProviderModels,
@@ -49,6 +52,7 @@ pub enum ModalState {
     Bookmarks(BookmarksModalState),
     Export(ExportModalState),
     Mcp(McpModalState),
+    Skills(SkillsModalState),
     /// Small prompt offering to reconnect to the SSH host of a `-c`-resumed session
     /// whose PTY is currently local.
     SshReconnect {
@@ -107,6 +111,11 @@ impl ModalState {
                 Some(McpModalAction::Close) => ModalOutcome::Close,
                 None => ModalOutcome::None,
             },
+            ModalState::Skills(skills_state) => match skills_state.handle_key(key, config) {
+                Some(SkillsModalAction::SkillsChanged) => ModalOutcome::SkillsChanged,
+                Some(SkillsModalAction::Close) => ModalOutcome::Close,
+                None => ModalOutcome::None,
+            },
             ModalState::SshReconnect { target } => {
                 match SshReconnectModal::handle_key(key, target) {
                     Some(SshReconnectAction::Connect(t)) => ModalOutcome::ConnectSsh(t),
@@ -131,6 +140,7 @@ impl ModalState {
             ModalState::Bookmarks(bm_state) => bm_state.handle_paste(text.to_string()),
             ModalState::Export(export_state) => export_state.handle_paste(text.to_string()),
             ModalState::Mcp(mcp_state) => mcp_state.handle_paste(text.to_string()),
+            ModalState::Skills(skills_state) => skills_state.handle_paste(text),
             ModalState::RenameTab(rename_state) => rename_state.handle_paste(text),
             ModalState::None
             | ModalState::Help(_)
@@ -158,6 +168,9 @@ impl ModalState {
                 ExportModal::render_modal(area, buf, export_state, lang)
             }
             ModalState::Mcp(mcp_state) => McpModal::new(mcp_state, lang).render(area, buf),
+            ModalState::Skills(skills_state) => {
+                SkillsModal::new(skills_state, lang).render(area, buf)
+            }
             ModalState::SshReconnect { target } => {
                 SshReconnectModal::render_modal(area, buf, target, lang)
             }
@@ -223,6 +236,20 @@ mod tests {
                 tab_index: 2,
                 title: Some("old-nam new".to_string()),
             }
+        );
+
+        // 5. Skills
+        modal = ModalState::Skills(SkillsModalState::new(&config.skills));
+        assert!(modal.is_open());
+        // Toggle mode via Tab -> ModalOutcome::SkillsChanged
+        assert_eq!(
+            modal.handle_key(key(KeyCode::Tab), &mut config, &mut hosts_store),
+            ModalOutcome::SkillsChanged
+        );
+        // Esc -> ModalOutcome::Close
+        assert_eq!(
+            modal.handle_key(key(KeyCode::Esc), &mut config, &mut hosts_store),
+            ModalOutcome::Close
         );
     }
 }

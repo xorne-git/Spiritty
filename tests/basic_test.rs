@@ -1891,3 +1891,132 @@ async fn test_pinned_prompt_header_when_scrolled() {
     );
 }
 
+#[tokio::test]
+async fn test_dynamic_prompt_height_and_scrolling() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use spiritty::app::App;
+    use spiritty::config::SplitOrientation;
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 30, 80).unwrap();
+    app.focus = spiritty::app::Focus::Chat;
+    app.split_orientation = SplitOrientation::Vertical;
+    app.split_ratio = 50;
+
+    let backend = TestBackend::new(80, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    // 1. Empty prompt -> 1 line height.
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_empty = terminal.get_cursor_position().unwrap();
+
+    // Single line prompt -> still 1 line height, cursor y identical
+    app.chat_input = "Hello world".to_string();
+    app.cursor_pos = app.chat_input.len();
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_1line = terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        pos_empty.y, pos_1line.y,
+        "1-line prompt should have same bottom y as empty prompt"
+    );
+
+    // 2. 2-line prompt -> expands to 2 lines. Cursor is on line 2, so cursor.y is pos_1line.y,
+    // while line 1 is rendered at pos_1line.y - 1.
+    app.chat_input = "Line 1\nLine 2".to_string();
+    app.cursor_pos = app.chat_input.len();
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_2lines = terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        pos_2lines.y, pos_1line.y,
+        "Cursor on 2nd line should be on the bottom row"
+    );
+
+    // Move cursor up to Line 1
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_line1 = terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        pos_line1.y,
+        pos_1line.y - 1,
+        "Cursor on 1st line should be 1 row above bottom row"
+    );
+
+    // 3. 4-line prompt -> capped at 2 lines height, scrolls!
+    app.chat_input = "Line 1\nLine 2\nLine 3\nLine 4".to_string();
+    app.cursor_pos = app.chat_input.len();
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_4lines = terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        pos_4lines.y, pos_1line.y,
+        "Cursor on 4th line remains on bottom row of 2-line input"
+    );
+    assert_eq!(
+        app.chat_input_scroll.get(),
+        2,
+        "Scroll should be 2 to show Line 3 and Line 4"
+    );
+
+    // Move cursor up to Line 3: Line 3 was already visible (on top row of the 2-line box)
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    let pos_line3 = terminal.get_cursor_position().unwrap();
+    assert_eq!(
+        pos_line3.y,
+        pos_1line.y - 1,
+        "Cursor moves to top row of 2-line box without jumping scroll"
+    );
+    assert_eq!(app.chat_input_scroll.get(), 2, "Scroll remains 2");
+
+    // Move cursor up to Line 2: scrolls up by 1
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    assert_eq!(
+        app.chat_input_scroll.get(),
+        1,
+        "Scroll becomes 1 to show Line 2 and Line 3"
+    );
+
+    // Move cursor up to Line 1: scrolls up by 1
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    terminal
+        .draw(|f| {
+            spiritty::ui::draw(f, &mut app);
+        })
+        .unwrap();
+    assert_eq!(
+        app.chat_input_scroll.get(),
+        0,
+        "Scroll becomes 0 to show Line 1 and Line 2"
+    );
+}
+

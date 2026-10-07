@@ -392,6 +392,15 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
 
     lines.push(make_help_row(
         key_pill(
+            format!("{} + S", lang.t(I18nKey::HelpKeyCtrl)),
+            Color::Cyan,
+        ),
+        lang.t(I18nKey::HelpDescSkillsModal),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill(
             format!("{} + F", lang.t(I18nKey::HelpKeyCtrl)),
             Color::Yellow,
         ),

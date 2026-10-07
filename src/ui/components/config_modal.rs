@@ -20,6 +20,7 @@ pub enum ConfigField {
     Provider,
     AutoApprove,
     Theme,
+    Voice,
     Model,
     Reasoning,
     BaseUrl,
@@ -32,7 +33,8 @@ impl ConfigField {
         match self {
             ConfigField::Provider => ConfigField::AutoApprove,
             ConfigField::AutoApprove => ConfigField::Theme,
-            ConfigField::Theme => ConfigField::Model,
+            ConfigField::Theme => ConfigField::Voice,
+            ConfigField::Voice => ConfigField::Model,
             ConfigField::Model => ConfigField::Reasoning,
             ConfigField::Reasoning => ConfigField::BaseUrl,
             ConfigField::BaseUrl => ConfigField::ApiKey,
@@ -46,7 +48,8 @@ impl ConfigField {
             ConfigField::Provider => ConfigField::SaveButton,
             ConfigField::AutoApprove => ConfigField::Provider,
             ConfigField::Theme => ConfigField::AutoApprove,
-            ConfigField::Model => ConfigField::Theme,
+            ConfigField::Voice => ConfigField::Theme,
+            ConfigField::Model => ConfigField::Voice,
             ConfigField::Reasoning => ConfigField::Model,
             ConfigField::BaseUrl => ConfigField::Reasoning,
             ConfigField::ApiKey => ConfigField::BaseUrl,
@@ -75,6 +78,7 @@ pub struct ConfigModalState {
     pub selected_provider: ProviderType,
     pub auto_approve: crate::config::AutoApproveLevel,
     pub theme: ThemeId,
+    pub voice_enabled: bool,
     pub active_field: ConfigField,
     pub is_dropdown_open: bool,
     pub dropdown_selected_idx: usize,
@@ -232,6 +236,7 @@ impl ConfigModalState {
             active_field: ConfigField::Provider,
             auto_approve: config.auto_approve,
             theme,
+            voice_enabled: config.voice.enabled,
             model_input,
             base_url_input,
             api_key_input,
@@ -345,7 +350,7 @@ impl ConfigModalState {
         }
     }
 
-    pub fn save_config(&mut self, config: &mut Config) -> ConfigModalAction {
+    pub fn apply_to_config(&mut self, config: &mut Config) {
         // 1. Stash current provider inputs
         let cur_key = self.selected_provider.key_str().to_string();
         self.provider_edits.insert(
@@ -407,7 +412,11 @@ impl ConfigModalState {
         config.default_provider = self.selected_provider;
         config.auto_approve = self.auto_approve;
         config.theme = Some(self.theme.key_str().to_string());
+        config.voice.enabled = self.voice_enabled;
+    }
 
+    pub fn save_config(&mut self, config: &mut Config) -> ConfigModalAction {
+        self.apply_to_config(config);
         let _ = config.save();
         ConfigModalAction::SaveAndClose
     }
@@ -742,6 +751,9 @@ impl ConfigModalState {
                     };
                     self.theme = all[prev_idx];
                 }
+                ConfigField::Voice => {
+                    self.voice_enabled = !self.voice_enabled;
+                }
                 ConfigField::Model => {
                     if let Some(models) = self.models_per_provider.get(&prov_key) {
                         let len = models.len();
@@ -791,6 +803,9 @@ impl ConfigModalState {
                     let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
                     let next_idx = (current_idx + 1) % all.len();
                     self.theme = all[next_idx];
+                }
+                ConfigField::Voice => {
+                    self.voice_enabled = !self.voice_enabled;
                 }
                 ConfigField::Model => {
                     if let Some(models) = self.models_per_provider.get(&prov_key) {
@@ -854,6 +869,10 @@ impl ConfigModalState {
                     self.theme = all[(current_idx + 1) % all.len()];
                     return ConfigModalAction::None;
                 }
+                if self.active_field == ConfigField::Voice {
+                    self.voice_enabled = !self.voice_enabled;
+                    return ConfigModalAction::None;
+                }
 
                 return self.save_config(config);
             }
@@ -864,6 +883,7 @@ impl ConfigModalState {
                     let current_idx = all.iter().position(|t| *t == self.theme).unwrap_or(0);
                     self.theme = all[(current_idx + 1) % all.len()];
                 }
+                ConfigField::Voice => self.voice_enabled = !self.voice_enabled,
                 ConfigField::Model => self.is_dropdown_open = true,
                 ConfigField::Reasoning => self.reasoning_effort = self.reasoning_effort.next(),
                 ConfigField::BaseUrl => {
@@ -918,7 +938,7 @@ impl ConfigModalState {
         let modal_width = (area.width * 94 / 100)
             .clamp(88, 130)
             .min(area.width.saturating_sub(2));
-        let modal_height = 23.min(area.height.saturating_sub(2));
+        let modal_height = 25.min(area.height.saturating_sub(2));
 
         let x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
         let y = area.top() + (area.height.saturating_sub(modal_height)) / 2;
@@ -944,12 +964,13 @@ impl ConfigModalState {
         let f_provider = self.active_field == ConfigField::Provider;
         let f_auto = self.active_field == ConfigField::AutoApprove;
         let f_theme = self.active_field == ConfigField::Theme;
+        let f_voice = self.active_field == ConfigField::Voice;
         let f_model = self.active_field == ConfigField::Model;
         let f_reasoning = self.active_field == ConfigField::Reasoning;
         let f_url = self.active_field == ConfigField::BaseUrl;
         let f_key = self.active_field == ConfigField::ApiKey;
         let f_save = self.active_field == ConfigField::SaveButton;
-        let show_blank = modal_area.height >= 21;
+        let show_blank = modal_area.height >= 25;
 
         let mut lines = Vec::new();
 
@@ -1040,6 +1061,41 @@ impl ConfigModalState {
         ));
         l_theme.extend(key_pill("→", theme_arrow_color));
         lines.push(Line::from(l_theme));
+        if show_blank {
+            lines.push(Line::from(""));
+        }
+
+        // 4. Voice Input Field (ON / OFF)
+        let voice_badge_color = if self.voice_enabled {
+            Color::Green
+        } else {
+            Color::DarkGray
+        };
+        let voice_arrow_color = if f_voice { Color::Yellow } else { Color::Cyan };
+        let mut l_voice = vec![Span::styled(
+            lang.t(I18nKey::ConfigFieldVoice),
+            Style::default()
+                .fg(if f_voice { Color::Cyan } else { Color::White })
+                .add_modifier(Modifier::BOLD),
+        )];
+        l_voice.extend(key_pill("←", voice_arrow_color));
+        let voice_label = if self.voice_enabled {
+            lang.t(I18nKey::ConfigVoiceEnabled)
+        } else {
+            lang.t(I18nKey::ConfigVoiceDisabled)
+        };
+        l_voice.push(Span::styled(
+            format!("{:^32}", voice_label),
+            Style::default()
+                .fg(if f_voice {
+                    Color::Yellow
+                } else {
+                    voice_badge_color
+                })
+                .add_modifier(Modifier::BOLD),
+        ));
+        l_voice.extend(key_pill("→", voice_arrow_color));
+        lines.push(Line::from(l_voice));
         if show_blank {
             lines.push(Line::from(""));
         }
@@ -1200,7 +1256,7 @@ impl ConfigModalState {
         p_top.render(inner_area, buf);
 
         // Full-Width Horizontal Separator Line (├─────────────────────────┤)
-        let sep_y = if modal_area.height >= 23 {
+        let sep_y = if modal_area.height >= 25 {
             modal_area.bottom().saturating_sub(5)
         } else {
             modal_area.bottom().saturating_sub(4)

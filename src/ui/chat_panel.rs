@@ -37,7 +37,9 @@ impl<'a> ChatPanel<'a> {
             self.app.current_session.short_id()
         );
 
-        // 1. Dynamic prompt input sizing & line wrapping (2 lines minimum, with padding top/bot)
+        // 1. Dynamic prompt input sizing & line wrapping:
+        // Default to 1 line for compactness. Expands to 2 lines when content overflows,
+        // then scrolls vertically beyond 2 lines to keep the active cursor line visible.
         let prompt_pad_x = area.left() + 2;
         let prompt_text_width = area.width.saturating_sub(4);
         let cursor_byte_pos = self.app.cursor_pos.min(self.app.chat_input.len());
@@ -54,8 +56,8 @@ impl<'a> ChatPanel<'a> {
         let bottom_pad: u16 = if is_top_of_horizontal_split { 1 } else { 0 };
         let effective_bottom = area.bottom().saturating_sub(bottom_pad);
 
-        let max_input_height = (area.height.saturating_sub(6 + bottom_pad) / 2).clamp(2, 8);
-        let needed_input_height = total_input_lines.clamp(2, max_input_height);
+        let max_input_height = if area.height >= 5 + bottom_pad { 2 } else { 1 };
+        let needed_input_height = total_input_lines.clamp(1, max_input_height);
 
         // 1b. Compact image preview (Ctrl+Shift+V) — a status line + a small half-block
         // rendering above the input. A fixed 8-row budget unless the panel is too short.
@@ -498,7 +500,17 @@ impl<'a> ChatPanel<'a> {
             buf.set_string(area.left(), y, "▌", bar_style);
         }
 
-        let input_scroll = cursor_row.saturating_sub(needed_input_height.saturating_sub(1));
+        let current_scroll = self.app.chat_input_scroll.get();
+        let new_scroll = if cursor_row < current_scroll {
+            cursor_row
+        } else if cursor_row >= current_scroll.saturating_add(needed_input_height) {
+            cursor_row.saturating_sub(needed_input_height.saturating_sub(1))
+        } else {
+            current_scroll
+        };
+        let max_scroll = total_input_lines.saturating_sub(needed_input_height);
+        let input_scroll = new_scroll.min(max_scroll);
+        self.app.chat_input_scroll.set(input_scroll);
 
         if self.app.chat_input.is_empty() {
             let (placeholder_line, alignment) = if self.app.pending_tool_approval.is_some() {

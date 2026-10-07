@@ -459,3 +459,58 @@ silence_ms = 900
         std::path::PathBuf::from("/absolute/model.bin")
     );
 }
+
+#[test]
+fn test_config_modal_voice_toggle() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::ui::components::{ConfigField, ConfigModalState};
+
+    let mut cfg = Config::default();
+    assert!(!cfg.voice.enabled);
+
+    let mut modal = ConfigModalState::from_config(&cfg);
+    assert!(!modal.voice_enabled);
+
+    // Test next/prev navigation around Voice field
+    assert_eq!(ConfigField::Theme.next(), ConfigField::Voice);
+    assert_eq!(ConfigField::Voice.next(), ConfigField::Model);
+    assert_eq!(ConfigField::Model.prev(), ConfigField::Voice);
+    assert_eq!(ConfigField::Voice.prev(), ConfigField::Theme);
+
+    // Navigate to Voice field
+    modal.active_field = ConfigField::Voice;
+
+    // Toggle with Space
+    modal.handle_key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty()),
+        &mut cfg,
+    );
+    assert!(modal.voice_enabled);
+
+    // Toggle with Left
+    modal.handle_key(
+        KeyEvent::new(KeyCode::Left, KeyModifiers::empty()),
+        &mut cfg,
+    );
+    assert!(!modal.voice_enabled);
+
+    // Toggle with Right
+    modal.handle_key(
+        KeyEvent::new(KeyCode::Right, KeyModifiers::empty()),
+        &mut cfg,
+    );
+    assert!(modal.voice_enabled);
+
+    // Toggle with Enter
+    modal.handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+        &mut cfg,
+    );
+    assert!(!modal.voice_enabled);
+
+    // Re-enable and apply to config
+    modal.voice_enabled = true;
+    modal.apply_to_config(&mut cfg);
+    assert!(cfg.voice.enabled);
+}
+

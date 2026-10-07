@@ -2,6 +2,7 @@ pub mod mcp;
 pub mod prompt;
 pub mod providers;
 pub mod safety;
+pub mod skills;
 pub mod tools;
 
 use anyhow::Result;
@@ -91,6 +92,7 @@ pub struct AgentEngine {
     config: Config,
     provider: Arc<Box<dyn LlmProvider>>,
     pub mcp_manager: Arc<McpManager>,
+    pub skills_manager: Arc<std::sync::RwLock<skills::SkillsManager>>,
     pub is_generating: bool,
     cancel_token: Option<CancellationToken>,
 }
@@ -106,10 +108,12 @@ impl AgentEngine {
     ) -> Self {
         let provider = Arc::new(create_provider(&config));
         let mcp_manager = Arc::new(McpManager::load_from_config(&config, event_tx));
+        let skills_manager = Arc::new(std::sync::RwLock::new(skills::SkillsManager::new()));
         Self {
             config,
             provider,
             mcp_manager,
+            skills_manager,
             is_generating: false,
             cancel_token: None,
         }
@@ -154,6 +158,7 @@ impl AgentEngine {
 
         let provider = Arc::clone(&self.provider);
         let mcp_manager = Arc::clone(&self.mcp_manager);
+        let skills_manager = Arc::clone(&self.skills_manager);
         let config = self.config.clone();
         let lang = config.get_language();
         let auto_approve = config.auto_approve;
@@ -175,6 +180,17 @@ impl AgentEngine {
             let mcp_prompt_summary = mcp_manager.get_tools_summary_for_prompt().await;
             if !mcp_prompt_summary.is_empty() {
                 system_prompt.push_str(&mcp_prompt_summary);
+            }
+
+            let skills_prompt = {
+                if let Ok(sm) = skills_manager.read() {
+                    sm.build_prompt_section(&config.skills, &messages)
+                } else {
+                    String::new()
+                }
+            };
+            if !skills_prompt.is_empty() {
+                system_prompt.push_str(&skills_prompt);
             }
 
             tokio::select! {

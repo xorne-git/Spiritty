@@ -1,73 +1,86 @@
 # AGENTS.md — Development Directives for Spiritty
 
-Spiritty: a Rust TUI binary (ratatui + crossterm + tokio) combining an AI sysadmin agent (left panel) and an interactive PTY shell (right panel) in split-screen. Reference docs: [ARCHITECTURE.md](ARCHITECTURE.md) (design invariants), [ROADMAP.md](ROADMAP.md) (milestones), [CHANGELOG.md](CHANGELOG.md).
+Spiritty is a Rust TUI binary (Ratatui + Crossterm + Tokio) pairing an AI sysadmin agent (left panel) with an interactive PTY shell (right panel) in split-screen.
+Reference docs: [ARCHITECTURE.md](ARCHITECTURE.md) (design & subsystems), [ROADMAP.md](ROADMAP.md) (milestones), [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## 🛠️ Verification Commands
 
+Run in this order after modifying code:
+
 ```bash
-cargo check                # fast compilation
-cargo clippy -- -D warnings   # zero warnings tolerated
-cargo test                 # full suite (pure logic, runs headless)
-cargo test --test session_test   # a single integration file
-cargo build --release      # standalone binary in target/release/spiritty
+cargo check                        # Fast compilation check
+cargo clippy -- -D warnings       # Strict linting (zero warnings tolerated)
+cargo test                         # Full test suite (pure logic, runs headless)
+cargo test --test session_test     # Single integration test suite in tests/
+cargo test agent::safety::tests    # Single unit test module
+cargo test <test_name>             # Single focused test
+cargo build --release              # Standalone binary in target/release/spiritty
 ```
 
-- No `rustfmt.toml` or custom clippy config: default values.
-- Tests do not automate the TUI or the PTY: they are pure-logic tests (unit `#[cfg(test)]` inside modules + per-domain integration in `tests/`). Visual TUI validation (resizing, focus, shortcuts) is done manually.
+- **Toolchain config:** Uses standard Rust defaults; no custom `rustfmt.toml` or `clippy.toml`.
+- **Testing scope:** Tests are pure logic (`#[cfg(test)]` modules + `tests/*.rs`). TUI rendering, PTY interactions, and window resizing are verified manually.
 
 ---
 
 ## 🏛️ Non-Negotiable Invariants
 
-1. **Never block the event loop**: any long-running processing (LLM streaming, PTY I/O, system inspection) goes into a `tokio::spawn` task. Communication between subsystems (UI, PTY, agent) goes exclusively through typed `tokio::sync::mpsc` messages (see `src/event.rs`).
-2. **Human-in-the-loop**: no command is injected into the PTY without explicit consent (outside user-enabled YOLO mode). Risk classification lives in `src/agent/safety.rs` (`CommandRisk`: Safe / Standard / Sudo / Risky), and the active policy is `ApprovalLevel` (`Safe / Standard / Sudo / YOLO / Off`, cycled with `F3`).
-3. **Mandatory i18n**: every visible string (UI, modals, statuses, error messages) and every system prompt goes through `src/i18n/`. The `I18nKey` catalog is typed: adding a string = adding the enum variant **and** the entry in `fr.rs` **and** `en.rs`, otherwise `cargo check` fails. ⚠️ The default fallback is **French** (`Language::Fr` in `src/i18n/mod.rs`).
-4. **PTY responsiveness**: typing in the right-hand shell must remain indistinguishable from a native terminal (zero unnecessary allocations in the `crossterm::event` loop).
-5. **Errors**: no `unwrap()`/`expect()` outside tests; propagate via `thiserror`/`anyhow`. Runtime errors become typed events, never a TUI crash.
+1. **Never block the event loop:** Long-running operations (LLM streaming, PTY I/O, system checks) MUST run in a `tokio::spawn` task. All inter-subsystem communication (UI, PTY, agent, voice) flows exclusively through typed `tokio::sync::mpsc` messages (see `src/event.rs` `AppEvent`).
+2. **Human-in-the-loop safety:** No command executes in the PTY without explicit user consent (unless permitted by the active `ApprovalLevel`).
+   - Risk classification lives in `src/agent/safety.rs` (`CommandRisk`: `Safe` / `Standard` / `Sudo` / `Risky`).
+   - Active policy is `ApprovalLevel` (`Safe` / `Standard` / `Sudo` / `YOLO` / `Off`, toggled via `F3`).
+3. **Mandatory typed i18n:** Every user-visible string, toast, modal, and system prompt MUST use `src/i18n/`.
+   - Adding a string requires adding a variant to `I18nKey` in `src/i18n/mod.rs` AND implementations in BOTH `src/i18n/fr.rs` and `src/i18n/en.rs` (enforced at compile time).
+   - Default fallback is **French** (`Language::Fr`).
+4. **PTY responsiveness:** Shell typing in the terminal panel must feel native. Avoid allocations and heavy work in the `crossterm::event` loop.
+5. **Robust error handling:** No `unwrap()` or `expect()` in application code (tests only). Bubble errors up via `anyhow`/`thiserror` or emit typed `AppEvent` errors to display in the UI without crashing.
 
 ---
 
-## 🗺️ Module Map (actual state)
+## 🏗️ Architecture & Component Boundaries
 
-```
-src/
-├── main.rs            # Terminal bootstrap + panic/signal hooks + event loop (no business logic)
-├── lib.rs             # Exposes all modules (integration tests go through the lib)
-├── app.rs / event.rs  # Global state + central event router (keyboard, PTY, LLM, timers)
-├── cli.rs             # Hand-rolled CLI parsing (no clap): -S/--ssh, -m/--model, --yolo, -c/--continue
-├── brand.rs           # Brand identity / in-TUI glyph + embedded icon assets
-├── agent/             # AI agent: prompt.rs, tools.rs, safety.rs (command classification)
-│   ├── providers/     # ollama.rs, gemini.rs, anthropic.rs, openai.rs
-│   └── mcp/           # MCP client (manager + process)
-├── pty/               # mod.rs (abstraction), process.rs ($SHELL lifecycle), vt.rs (vt100→ratatui bridge), capture.rs (tool output capture)
-├── ui/                # mod.rs (layout), chat_panel.rs, terminal_panel.rs, theme.rs, components/ (modals, mod.rs)
-├── system/            # hosts.rs (SSH profiles/hosts.json), process_watcher.rs, supervisor.rs, clipboard.rs
-├── session/           # Persistence ~/.config/spiritty/sessions/ + context compaction; storage.rs
-├── pricing/           # Token costs (assets/pricing.json)
-├── i18n/              # mod.rs (I18nKey enum), fr.rs, en.rs
-├── voice/             # mod.rs (controller + tasks), capture.rs (arecord/ffmpeg/sox), vad.rs, transcribe.rs (whisper-cli)
-└── config/            # ~/.config/spiritty/config.toml + system_prompt.md override
-```
-
-- **LLM providers**: every OpenAI-compatible brand (DeepSeek, Z.ai/GLM, Grok, LM Studio...) goes through `providers/openai.rs` — do not create one file per brand. "Reasoning" models handle the `reasoning_content` field there (folded into `<think>…</think>` blocks).
-- **SSH context**: profiling of remote servers (`/proc` detection, `hosts.json` cache) adapts the system prompt to the remote distribution — see `src/system/hosts.rs`.
-- **Local voice input**: 100% offline STT. `voice::VoiceController` owns dedicated tasks; capture shells out to an external recorder and transcription to `whisper-cli` (no native build dependency), reporting through `AppEvent::Voice*`. `F7` = continuous VAD dictation, `F8` = manual segment. See `docs/plans/2026-09-27_local_voice_stt.md`.
+- **Entrypoints:**
+  - `src/main.rs`: Terminal initialization, raw mode, enhanced keyboard protocol, signal/panic hooks, and top-level event loop. Contains no business logic.
+  - `src/lib.rs`: Exposes crate modules for integration tests in `tests/`.
+- **LLM Providers (`src/agent/providers/`):**
+  - All OpenAI-compatible APIs (DeepSeek, Grok/xAI, Z.ai/GLM, LM Studio) share `providers/openai.rs` via configuration. Do not create separate provider files for OpenAI-compatible APIs.
+  - "Reasoning" models fold `reasoning_content` into `<think>...</think>` blocks inside `providers/openai.rs`.
+- **PTY & VT100 (`src/pty/`):**
+  - Spawns `$SHELL` via `portable-pty`.
+  - ANSI/VT100 escape codes are parsed by `vt100::Parser` into a virtual screen, then rendered into Ratatui buffer cells.
+  - `capture.rs` captures command outputs for the agent using completion sentinels (OSC 777) or prompt settling.
+- **UI & Layout (`src/ui/`):**
+  - Supports vertical and horizontal split layouts (`F4` toggles orientation, `F5` swaps panels).
+- **CLI Parsing (`src/cli.rs`):** Hand-rolled argument parsing (no `clap` dependency).
+- **Voice STT (`src/voice/`):**
+  - 100% offline local dictation handled by `VoiceController`.
+  - Shells out to external audio recorders (`arecord`/`ffmpeg`/`sox`) and `whisper-cli`. No C/C++ build dependencies in the Rust crate.
+  - Keybindings: `F7` (continuous VAD dictation), `F8` (manual segment).
+- **Config & Session Storage:**
+  - Config: `~/.config/spiritty/config.toml` (never overwritten on parse error; backed up to `config.toml.bak`).
+  - Sessions: JSON persistence in `~/.config/spiritty/sessions/`. Smart compaction keeps recent turns verbatim while summarizing older history in LLM context.
+  - Remote SSH profiles: cached in `~/.config/spiritty/hosts.json` to adapt system prompts to remote environments.
 
 ---
 
-## 🚀 Releases (exact ritual)
+## 🚀 Release Ritual
 
-1. Record changes in the **"Unreleased"** section of `CHANGELOG.md` as you go (categories: `Added` · `Changed` · `Fixed` · `Performance` · `Security`).
-2. At release: bump `version` in `Cargo.toml`, rename "Unreleased" to `## vX.Y.Z — YYYY-MM-DD`, open a new empty "Unreleased" section, commit `chore(release): vX.Y.Z — version bump, CHANGELOG and installer fallback`.
-3. A `v*` tag triggers `.github/workflows/release.yml`: Linux x86_64 + aarch64 builds (via `cross`) and macOS aarch64 only (Intel macOS runners have been removed — do not re-add `x86_64-apple-darwin`).
-4. Commit messages in conventional convention with scope: `feat(session):`, `fix(agent):`, `ci(release):`, `docs(roadmap):`...
+1. Accumulate changes in the `## Unreleased` section of `CHANGELOG.md` (`Added` · `Changed` · `Fixed` · `Performance` · `Security`).
+2. When releasing:
+   - Bump `version` in `Cargo.toml`.
+   - Update the `LATEST_TAG` fallback in `install.sh`.
+   - Rename `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z — YYYY-MM-DD` and open a fresh empty `## Unreleased` section.
+   - Commit: `chore(release): vX.Y.Z — version bump, CHANGELOG and installer fallback`.
+3. Pushing a tag `v*` triggers `.github/workflows/release.yml`:
+   - Builds Linux `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (via `cross`).
+   - Builds macOS `aarch64-apple-darwin` (Apple Silicon only; Intel macOS is not supported).
+4. Commit messages follow Conventional Commits with scope: `feat(session):`, `fix(ui):`, `chore(release):`, etc.
 
 ---
 
 ## 🔄 Workflow Rules
 
-1. Consult [ARCHITECTURE.md](ARCHITECTURE.md) before any redesign; detailed implementation plans live in `docs/plans/YYYY-MM-DD_name.md`.
-2. Keep [ROADMAP.md](ROADMAP.md) and the "Unreleased" section of the CHANGELOG up to date as tasks progress.
-3. **NEVER run `git commit` or `git push` on your own initiative** — only at the user's express request.
+1. Consult [ARCHITECTURE.md](ARCHITECTURE.md) before architectural changes; detailed specs live in `docs/plans/`.
+2. Keep [ROADMAP.md](ROADMAP.md) and `CHANGELOG.md` updated as features progress.
+3. **NEVER run `git commit` or `git push` on your own initiative** — only when explicitly requested by the user.

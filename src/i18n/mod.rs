@@ -69,6 +69,9 @@ pub enum I18nKey {
     ConfigFieldProvider,
     ConfigFieldAutoApprove,
     ConfigFieldTheme,
+    ConfigFieldVoice,
+    ConfigVoiceEnabled,
+    ConfigVoiceDisabled,
     ConfigFieldModel,
     ConfigFieldReasoning,
     ConfigFieldApiUrl,
@@ -129,6 +132,7 @@ pub enum I18nKey {
     HelpDescBookmarksModal,
     HelpDescExportSession,
     HelpDescMcpModal,
+    HelpDescSkillsModal,
     HelpDescChatSearch,
     HelpDescDiagnoseError,
     HelpDescNewTab,
@@ -213,6 +217,32 @@ pub enum I18nKey {
 
     // Safety & Auto-Approve
     AutoApproveMaxConsecutiveReached,
+
+    // Skills Management Modal
+    SkillsModalTitle,
+    SkillsModeAuto,
+    SkillsModeManual,
+    SkillsModeHelp,
+    SkillsStateAuto,
+    SkillsStateEnabled,
+    SkillsStateDisabled,
+    SkillsSourceBuiltin,
+    SkillsSourceGlobal,
+    SkillsSourceProject,
+    SkillsHelpToggleState,
+    SkillsHelpToggleMode,
+    SkillsHelpNew,
+    SkillsHelpScroll,
+    SkillsHelpClose,
+    SkillsDetailTriggers,
+    SkillsDetailDescription,
+    SkillsDetailDirectives,
+    SkillsEmptyList,
+    SkillsNewModalTitle,
+    SkillsNewPromptId,
+    SkillsCreatedSuccess,
+    SkillsTypeLabel,
+    SkillsNewModalHint,
 }
 
 pub fn t(key: I18nKey, lang: Language) -> &'static str {
