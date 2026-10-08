@@ -185,16 +185,29 @@ impl BookmarksModalState {
                     KeyCode::End => {
                         *cursor = input.chars().count();
                     }
-                    KeyCode::Char(c)
-                        if !key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
-                    {
-                        let mut chars: Vec<char> = input.chars().collect();
-                        chars.insert(*cursor, c);
-                        *input = chars.into_iter().collect();
-                        *cursor += 1;
+                    KeyCode::Char(c) => {
+                        let is_ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+                        let is_alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+                        let should_insert = if is_ctrl && is_alt {
+                            true
+                        } else if is_ctrl {
+                            false
+                        } else if is_alt {
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                        } else {
+                            true
+                        };
+                        if should_insert {
+                            let to_insert = if is_alt || (is_ctrl && is_alt) {
+                                crate::app::map_azerty_altgr(key.code).unwrap_or(c)
+                            } else {
+                                c
+                            };
+                            let mut chars: Vec<char> = input.chars().collect();
+                            chars.insert(*cursor, to_insert);
+                            *input = chars.into_iter().collect();
+                            *cursor += 1;
+                        }
                     }
                     _ => {}
                 }
@@ -251,16 +264,29 @@ impl BookmarksModalState {
                     KeyCode::End => {
                         *cursor = input.chars().count();
                     }
-                    KeyCode::Char(c)
-                        if !key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                            && !key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
-                    {
-                        let mut chars: Vec<char> = input.chars().collect();
-                        chars.insert(*cursor, c);
-                        *input = chars.into_iter().collect();
-                        *cursor += 1;
+                    KeyCode::Char(c) => {
+                        let is_ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+                        let is_alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
+                        let should_insert = if is_ctrl && is_alt {
+                            true
+                        } else if is_ctrl {
+                            false
+                        } else if is_alt {
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                        } else {
+                            true
+                        };
+                        if should_insert {
+                            let to_insert = if is_alt || (is_ctrl && is_alt) {
+                                crate::app::map_azerty_altgr(key.code).unwrap_or(c)
+                            } else {
+                                c
+                            };
+                            let mut chars: Vec<char> = input.chars().collect();
+                            chars.insert(*cursor, to_insert);
+                            *input = chars.into_iter().collect();
+                            *cursor += 1;
+                        }
                     }
                     _ => {}
                 }

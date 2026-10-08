@@ -46,11 +46,26 @@ impl RenameTabModalState {
                 self.input.pop();
                 None
             }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.input.push(c);
+            KeyCode::Char(c) => {
+                let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                let is_alt = key.modifiers.contains(KeyModifiers::ALT);
+                let should_insert = if is_ctrl && is_alt {
+                    true
+                } else if is_ctrl {
+                    false
+                } else if is_alt {
+                    !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                } else {
+                    true
+                };
+                if should_insert {
+                    let to_insert = if is_alt || (is_ctrl && is_alt) {
+                        crate::app::map_azerty_altgr(key.code).unwrap_or(c)
+                    } else {
+                        c
+                    };
+                    self.input.push(to_insert);
+                }
                 None
             }
             _ => None,

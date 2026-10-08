@@ -46,6 +46,17 @@ async fn main() -> Result<()> {
     // needed a manual `reset`. SIGKILL cannot be caught (only a manual `reset` helps).
     setup_termination_signal_hook();
 
+    // Ignore job control signals (SIGTTIN/SIGTTOU) so subshell probes or background
+    // terminal queries never suspend the TUI process.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGTTIN, libc::SIG_IGN);
+        libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+    }
+
+    // Load configuration FIRST (before modifying terminal raw mode)
+    let initial_config = spiritty::config::Config::load();
+
     // Initialize raw terminal, bracketed paste, mouse capture and alternate screen
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -71,7 +82,6 @@ async fn main() -> Result<()> {
 
     // Calculate initial split dimensions for the PTY (full screen height)
     let term_size = terminal.size()?;
-    let initial_config = spiritty::config::Config::load();
     let split_orientation = initial_config.get_split_orientation();
     let split_ratio = initial_config.get_split_ratio_for(split_orientation);
     let workspace_h = term_size.height.saturating_sub(3).max(1);

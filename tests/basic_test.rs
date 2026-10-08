@@ -2022,3 +2022,381 @@ async fn test_dynamic_prompt_height_and_scrolling() {
     );
 }
 
+#[tokio::test]
+async fn test_chat_prompt_alt_word_navigation_and_editing() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::{
+        prompt_move_cursor_word_backward, prompt_move_cursor_word_forward, App, Focus,
+    };
+    use tokio::sync::mpsc;
+
+    // 1. Direct function tests
+    assert_eq!(prompt_move_cursor_word_backward("hello world", 11), 6);
+    assert_eq!(prompt_move_cursor_word_backward("hello world", 6), 0);
+    assert_eq!(prompt_move_cursor_word_backward("hello world", 0), 0);
+    assert_eq!(prompt_move_cursor_word_forward("hello world", 0), 5);
+    assert_eq!(prompt_move_cursor_word_forward("hello world", 5), 11);
+    assert_eq!(prompt_move_cursor_word_forward("hello world", 11), 11);
+
+    // Punctuation and symbols navigation
+    assert_eq!(prompt_move_cursor_word_backward("foo-bar.baz", 11), 8);
+    assert_eq!(prompt_move_cursor_word_backward("foo-bar.baz", 8), 7);
+    assert_eq!(prompt_move_cursor_word_backward("foo-bar.baz", 7), 4);
+    assert_eq!(prompt_move_cursor_word_backward("foo-bar.baz", 4), 3);
+    assert_eq!(prompt_move_cursor_word_backward("foo-bar.baz", 3), 0);
+
+    // 2. Integration with App in Focus::Chat
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(tx, 24, 80).unwrap();
+    app.focus = Focus::Chat;
+
+    // Type "hello world"
+    for c in "hello world".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(app.chat_input, "hello world");
+    assert_eq!(app.cursor_pos, 11);
+
+    let initial_ratio = app.split_ratio;
+
+    // Alt+Left moves cursor to start of "world" (index 6), and must NOT resize split!
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 6);
+    assert_eq!(app.split_ratio, initial_ratio, "Alt+Left must not resize split in Chat focus");
+
+    // Alt+Left moves cursor to start of "hello" (index 0)
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 0);
+
+    // Alt+Right moves cursor to end of "hello" (index 5)
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 5);
+    assert_eq!(app.split_ratio, initial_ratio, "Alt+Right must not resize split in Chat focus");
+
+    // Alt+Right moves cursor to end of "world" (index 11)
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 11);
+
+    // Alt+b (backward word) moves cursor to 6
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 6);
+
+    // Alt+f (forward word) moves cursor to 11
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT));
+    assert_eq!(app.cursor_pos, 11);
+
+    // Alt+Backspace deletes "world"
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "hello ");
+    assert_eq!(app.cursor_pos, 6);
+
+    // Type "foo bar"
+    for c in "foo bar".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(app.chat_input, "hello foo bar");
+    assert_eq!(app.cursor_pos, 13);
+
+    // Ctrl+Left jumps to 10 ("bar")
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL));
+    assert_eq!(app.cursor_pos, 10);
+
+    // Alt+d deletes word forward ("bar")
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "hello foo ");
+    assert_eq!(app.cursor_pos, 10);
+
+    // Ctrl+Backspace deletes "foo "
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL));
+    assert_eq!(app.chat_input, "hello ");
+    assert_eq!(app.cursor_pos, 6);
+
+    // Alt+Enter inserts newline
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "hello \n");
+    assert_eq!(app.cursor_pos, 7);
+
+    // 3. Typing AltGr / Alt symbols into the prompt
+    // Symbols like @, ~, #, {, }, [, ], |, \, €
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+
+    let test_symbols = ['@', '~', '#', '{', '}', '[', ']', '|', '\\', '€'];
+    for sym in test_symbols {
+        // As pure Alt
+        app.handle_key(KeyEvent::new(KeyCode::Char(sym), KeyModifiers::ALT));
+    }
+    assert_eq!(app.chat_input, "@~#{}[]|\\€");
+
+    // As AltGr (CONTROL | ALT)
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    for sym in test_symbols {
+        app.handle_key(KeyEvent::new(
+            KeyCode::Char(sym),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
+    }
+    assert_eq!(app.chat_input, "@~#{}[]|\\€");
+
+    // As untranslated AZERTY keys with ALT (e.g. '0' -> '@', '5' -> '[', 'e' -> '€')
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::ALT | KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::ALT | KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT | KeyModifiers::CONTROL));
+    assert_eq!(app.chat_input, "@[€");
+
+    // 4. Alt+c, Alt+u, Alt+l case transformations
+    app.chat_input = "test word".to_string();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "Test word");
+    assert_eq!(app.cursor_pos, 4);
+
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "TEST word");
+    assert_eq!(app.cursor_pos, 4);
+
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT));
+    assert_eq!(app.chat_input, "test word");
+    assert_eq!(app.cursor_pos, 4);
+}
+
+#[tokio::test]
+async fn test_alt_x_and_alt_shift_command_shortcuts() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use spiritty::app::{App, ChatMessage, MessageRole};
+
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = App::new(event_tx, 25, 80).expect("create app");
+
+    // Add assistant message with 2 command proposals
+    let assistant_text = "Voici les commandes recommandées :\n```bash\nsystemctl status nginx\n```\nEt pour relancer :\n```bash\nsystemctl restart nginx\n```";
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: assistant_text.to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    let proposals = app.all_command_proposals();
+    assert_eq!(proposals.len(), 2);
+    assert_eq!(proposals[0], "systemctl status nginx");
+    assert_eq!(proposals[1], "systemctl restart nginx");
+
+    // 1. Alt + Shift + 1: Copies proposal #1 to clipboard and sets toast
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('1'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("#1") && m.contains("systemctl status nginx"))
+            .unwrap_or(false),
+        "Toast must confirm command #1 copied"
+    );
+
+    // 2. Alt + Shift + 2: Copies proposal #2 to clipboard
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("#2") && m.contains("systemctl restart nginx"))
+            .unwrap_or(false),
+        "Toast must confirm command #2 copied"
+    );
+
+    // 3. Alt + C: Copies proposal #1 to clipboard
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("#1") && m.contains("systemctl status nginx"))
+            .unwrap_or(false),
+        "Alt+C must copy proposal #1"
+    );
+
+    // 4. Alt + Shift + X: Copies proposal #1 to clipboard
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("#1") && m.contains("systemctl status nginx"))
+            .unwrap_or(false),
+        "Alt+Shift+X must copy proposal #1"
+    );
+
+    // 5. Alt + X: Executes proposal #1
+    let msgs_count_before = app.messages.len();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT));
+    assert_eq!(app.messages.len(), msgs_count_before + 2);
+    assert!(
+        app.messages[msgs_count_before]
+            .content
+            .contains("systemctl status nginx"),
+        "Alt+X must execute proposal #1"
+    );
+
+    // Simulate completion of first command and reset proposals for second execution test
+    app.active_pty_tool = None;
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: assistant_text.to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // 6. Alt + 2: Executes proposal #2
+    let msgs_count_before2 = app.messages.len();
+    app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT));
+    assert_eq!(app.messages.len(), msgs_count_before2 + 2);
+    assert!(
+        app.messages[msgs_count_before2]
+            .content
+            .contains("systemctl restart nginx"),
+        "Alt+2 must execute proposal #2"
+    );
+
+    // 7. Test copying generic code block (non-executable bash) with Alt+C
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Configuration YAML :\n```yaml\nversion: '3'\nservices:\n  web:\n    image: nginx\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Ensure all_command_proposals is empty for YAML
+    assert!(app.all_command_proposals().is_empty());
+    // But all_proposals_or_code_blocks finds the YAML block
+    assert_eq!(app.all_proposals_or_code_blocks().len(), 1);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::ALT));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("Code") && m.contains("version: '3'"))
+            .unwrap_or(false),
+        "Alt+C must copy YAML code block when no bash proposals exist"
+    );
+
+    // 8. Test AZERTY top-row keys (& for #1, é for #2)
+    app.active_pty_tool = None;
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: assistant_text.to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Alt + & (AZERTY without Shift) -> executes #1
+    let msgs_count_before3 = app.messages.len();
+    app.handle_key(KeyEvent::new(KeyCode::Char('&'), KeyModifiers::ALT));
+    assert_eq!(app.messages.len(), msgs_count_before3 + 2);
+    assert!(app.messages[msgs_count_before3]
+        .content
+        .contains("systemctl status nginx"));
+
+    // Reset for copy test
+    app.active_pty_tool = None;
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: assistant_text.to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Alt + Shift + 1 (Shift + key '&' on AZERTY) -> copies #1
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('1'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(app.toast_message
+        .as_ref()
+        .map(|(_, m)| m.contains("#1") && m.contains("systemctl status nginx"))
+        .unwrap_or(false));
+
+    // Alt + Shift + 2 (Shift + key 'é' on AZERTY) -> copies #2
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(app.toast_message
+        .as_ref()
+        .map(|(_, m)| m.contains("#2") && m.contains("systemctl restart nginx"))
+        .unwrap_or(false));
+
+    // 9. Test Alt + Shift + C on "pavés de code" (both with command card and without)
+    app.active_pty_tool = None;
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Voici le script python et la commande :\n```python\nimport sys\nprint('script pavé')\n```\nEt la commande :\n```bash\npython3 script.py\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // Alt + Shift + C specifically copies the python code block ("pavé de code")
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("Code") && m.contains("import sys"))
+            .unwrap_or(false),
+        "Alt+Shift+C must copy the passive code block rather than the command card"
+    );
+
+    // Whereas Alt + Shift + 1 copies the command card
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('1'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("Commande #1") && m.contains("python3 script.py"))
+            .unwrap_or(false),
+        "Alt+Shift+1 must copy the command proposal"
+    );
+
+    // 10. Test multi-code-block cycling with Alt + Shift + C
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Deux pavés de configuration :\n```yaml\napi: v1\n```\nEt le second :\n```toml\n[server]\nport = 8080\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+
+    // First press -> copies block 1 (api: v1)
+    app.last_copied_code_time = None;
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(app.toast_message
+        .as_ref()
+        .map(|(_, m)| m.contains("Code #1/2") && m.contains("api: v1"))
+        .unwrap_or(false));
+
+    // Second press immediately after -> cycles and copies block 2 (server)
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert!(app.toast_message
+        .as_ref()
+        .map(|(_, m)| m.contains("Code #2/2") && m.contains("[server]"))
+        .unwrap_or(false));
+}
+

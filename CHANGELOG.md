@@ -17,6 +17,26 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 
 ---
 
+## v0.12.2 — 2026-10-08
+
+### Added
+- **Intégration au panneau des agents Omarchy** : le script `tools/install-omarchy-integration.sh` déploie de façon idempotente le collector `tools/omarchy-agent-usage-spiritty` (symlink vers `/usr/share/omarchy/bin/`), l'icône du panneau et le rafraîchissement des métriques d'usage (coût, tokens, contexte). Spiritty apparaît désormais dans le widget agents d'Omarchy aux côtés des autres assistants.
+- **Raccourcis de copie et d'exécution rapide des commandes et snippets (`Alt+Shift+1..9`, `Alt+C`, `Alt+X`, `Alt+Shift+C`)** :
+  - **Copie directe des commandes dans le presse-papier (`Alt+Shift+1..9` / `Alt+C` / `Alt+Shift+X`)** : permet de copier instantanément la commande proposée correspondante (`Alt+Shift+1..9` ou symboles de rangée supérieure AZERTY/QWERTY) ou la première proposition (`Alt+Shift+X`) dans le presse-papier (Wayland, X11 et séquence OSC 52 pour les sessions SSH distantes). Un toast de notification confirme la copie avec un aperçu de la commande (`📋 Commande #N copiée : <preview>`).
+  - **Raccourci unique pour copier les pavés de code (`Alt+Shift+C`)** : permet de copier instantanément le contenu des blocs de code passifs (scripts Python/Bash, configs YAML/TOML/JSON, Rust, etc.) sans interférer avec les cartes de commandes exécutables. En présence de plusieurs pavés de code dans la même réponse, des appuis successifs sur `Alt+Shift+C` cyclent tour à tour sur chaque bloc (`📋 Code #1/2 copié : <preview>`). Chaque pavé de code Markdown fermé affiche un badge dédié `[ Alt + Shift + C ] Copier le code` aligné sur le pied de cadre.
+  - **Exécution rapide via `Alt+X`** : en complément de `Alt+1..9`, appui direct sur `Alt+X` pour lancer immédiatement la première commande proposée sans avoir à cibler le numéro.
+  - **Badges d'action dynamiques sur les cartes de commande** : affichage explicite et réactif dans le footer de chaque carte de commande de `[ Alt + N ] Exécuter` (en jaune/ambre) et `[ Alt + Shift + N ] Copier` (en cyan/bleu), ajustant la disposition et l'indicateur selon la largeur disponible de la console.
+  - **Documentation et aide interactive** : intégration de ces raccourcis dans la modale d'aide interactive (`F1`), la commande `--help` en CLI et les directives d'invite système.
+
+### Fixed
+- **Correction du blocage/gel du terminal par `SIGTTIN` / `SIGTTOU` au démarrage** : correction d'un arrêt immédiat du processus (`[1]+ Stopped spiritty`) causé par l'exécution de sous-shells interactifs (`bash -i`) lors de la détection des variables d'environnement (`load_shell_env()` et `probe_env_var()`) combinée au passage préalable du terminal en mode brut (`raw mode`). Spiritty charge désormais sa configuration avant l'activation du mode brut du terminal, ignore explicitement les signaux de contrôle de tâches de fond (`SIGTTIN` et `SIGTTOU`) et exécute les sous-shells sans le drapeau `-i`, sourçant proprement les fichiers de profil (`.bashrc` / `.zshrc`) sans perturber le terminal parent.
+- **Prise en charge complète de la touche ALT et de AltGr dans l'éditeur du prompt** :
+  - **Navigation et manipulation de texte par mot (Readline)** : `Alt+Left` / `Alt+Right` et `Ctrl+Left` / `Ctrl+Right` déplacent désormais le curseur de mot en mot au lieu de redimensionner intempestivement les panneaux de split. Ajout de `Alt+B` / `Alt+F` (recul / avance d'un mot), `Alt+Backspace` / `Ctrl+Backspace` (suppression du mot précédent), `Alt+D` / `Alt+Delete` / `Ctrl+Delete` (suppression du mot suivant) et des transformations de casse `Alt+C` (capitalisation), `Alt+U` (majuscules) et `Alt+L` (minuscules).
+  - **Saisie des caractères spéciaux AltGr et symboles internationaux** : correction d'un filtrage qui éliminait systématiquement les caractères saisis avec le modificateur `ALT` ou `Ctrl+Alt` (AltGr sous Windows et X11). Les symboles usuels (`@`, `~`, `#`, `{`, `}`, `[`, `]`, `|`, `\`, `` ` ``, `^`, `€`) ainsi que les caractères accentués ou diacritiques (macOS Option) sont désormais parfaitement insérés dans le prompt et dans l'ensemble des champs de texte de modales (`RenameTab`, `Bookmarks`, `MCP`, `Export`, recherche dans le chat).
+  - **Isolation des raccourcis globaux Ctrl** : les raccourcis système (`Ctrl+E`, `Ctrl+B`, `Ctrl+M`, `Ctrl+S`, `Ctrl+N`, `Ctrl+P`, etc.) n'interceptent plus les combinaisons AltGr (`Ctrl+Alt`), garantissant que la saisie de symboles comme `€` (`AltGr+E`) ne déclenche plus l'ouverture intempestive de la modale d'export.
+
+---
+
 ## v0.12.1 — 2026-10-08
 
 ### Added

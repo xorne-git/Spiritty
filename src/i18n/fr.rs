@@ -225,5 +225,11 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::ToastUnknownSlashCommand => "Commande inconnue. Tapez /help pour l'aide.",
         I18nKey::ToastPressCtrlCAgainToQuit => "Appuyez à nouveau sur Ctrl+C pour quitter",
         I18nKey::TerminalTooSmall => "Terminal trop petit — minimum 20x8",
+        I18nKey::CommandCardActionExecute => "Exécuter",
+        I18nKey::CommandCardActionCopy => "Copier",
+        I18nKey::CodeSnippetActionCopy => "Copier le code",
+        I18nKey::HelpDescExecuteCommand => "Exécuter la commande proposée (#1..9 ou Alt+X)",
+        I18nKey::HelpDescCopyCommand => "Copier la commande proposée (#1..9 ou Alt+C)",
+        I18nKey::HelpDescCopyCodeBlock => "Copier le pavé de code Markdown (Alt+Shift+C)",
     }
 }

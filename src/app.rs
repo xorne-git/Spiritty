@@ -458,6 +458,10 @@ pub struct App {
     pub voice_state: VoiceState,
     /// Whether continuous (silence-detected) dictation is currently requested (`F7`).
     pub voice_continuous: bool,
+    /// Index of the last copied code block when cycling through multiple snippets via Alt+Shift+C.
+    pub last_copied_code_idx: usize,
+    /// Timestamp of the last Alt+Shift+C invocation for rapid multi-snippet cycling.
+    pub last_copied_code_time: Option<std::time::Instant>,
 }
 
 /// Moves the prompt cursor vertically across the VISUAL rows of a (possibly
@@ -527,6 +531,108 @@ fn insert_transcript(buffer: &mut String, cursor: &mut usize, text: &str) {
     insert.push_str(text);
     buffer.insert_str(cursor_byte, &insert);
     *cursor = cursor_byte + insert.len();
+}
+
+/// Finds the byte index of the start of the previous word relative to `cursor_byte`.
+/// If `cursor_byte` is 0, returns 0. Follows standard Readline word navigation rules:
+/// 1. Skips any whitespace directly to the left of the cursor.
+/// 2. If the character immediately left is punctuation/symbols, skips contiguous punctuation/symbols.
+///    If it is alphanumeric or underscore, skips contiguous alphanumeric or underscore.
+pub fn prompt_move_cursor_word_backward(text: &str, cursor_byte: usize) -> usize {
+    let cursor = cursor_byte.min(text.len());
+    if cursor == 0 {
+        return 0;
+    }
+    let before = &text[..cursor];
+    let mut chars = before.char_indices().rev().peekable();
+
+    // 1. Skip whitespace to the left
+    while let Some(&(_, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+
+    // 2. Classify first non-whitespace char and skip matching contiguous sequence
+    if let Some(&(_, first_c)) = chars.peek() {
+        let is_word_char = first_c.is_alphanumeric() || first_c == '_';
+        let mut word_start = 0;
+        while let Some(&(idx, c)) = chars.peek() {
+            if c.is_whitespace() {
+                return word_start;
+            }
+            let c_is_word = c.is_alphanumeric() || c == '_';
+            if c_is_word == is_word_char {
+                word_start = idx;
+                chars.next();
+            } else {
+                return idx + c.len_utf8();
+            }
+        }
+        return word_start;
+    }
+    0
+}
+
+/// Finds the byte index of the end of the next word relative to `cursor_byte`.
+/// If `cursor_byte` >= text.len(), returns text.len(). Follows standard Readline word navigation rules:
+/// 1. Skips any whitespace directly to the right of the cursor.
+/// 2. If the character immediately right is punctuation/symbols, skips contiguous punctuation/symbols.
+///    If it is alphanumeric or underscore, skips contiguous alphanumeric or underscore.
+pub fn prompt_move_cursor_word_forward(text: &str, cursor_byte: usize) -> usize {
+    let cursor = cursor_byte.min(text.len());
+    if cursor >= text.len() {
+        return text.len();
+    }
+    let after = &text[cursor..];
+    let mut chars = after.char_indices().peekable();
+
+    // 1. Skip whitespace to the right
+    while let Some(&(_, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+
+    // 2. Classify first non-whitespace char and skip matching contiguous sequence
+    if let Some(&(_, first_c)) = chars.peek() {
+        let is_word_char = first_c.is_alphanumeric() || first_c == '_';
+        while let Some(&(idx, c)) = chars.peek() {
+            if c.is_whitespace() {
+                return cursor + idx;
+            }
+            let c_is_word = c.is_alphanumeric() || c == '_';
+            if c_is_word == is_word_char {
+                chars.next();
+            } else {
+                return cursor + idx;
+            }
+        }
+    }
+    text.len()
+}
+
+/// Maps raw French AZERTY keys to their AltGr symbols if a terminal sends un-translated keys with Alt/AltGr.
+pub fn map_azerty_altgr(code: KeyCode) -> Option<char> {
+    match code {
+        KeyCode::Char('2') | KeyCode::Char('é') => Some('~'),
+        KeyCode::Char('3') | KeyCode::Char('"') => Some('#'),
+        KeyCode::Char('4') | KeyCode::Char('\'') => Some('{'),
+        KeyCode::Char('5') | KeyCode::Char('(') => Some('['),
+        KeyCode::Char('6') | KeyCode::Char('-') => Some('|'),
+        KeyCode::Char('7') | KeyCode::Char('è') => Some('`'),
+        KeyCode::Char('8') | KeyCode::Char('_') => Some('\\'),
+        KeyCode::Char('9') | KeyCode::Char('ç') => Some('^'),
+        KeyCode::Char('0') | KeyCode::Char('à') => Some('@'),
+        KeyCode::Char(')') | KeyCode::Char('°') => Some(']'),
+        KeyCode::Char('=') | KeyCode::Char('+') => Some('}'),
+        KeyCode::Char('e') | KeyCode::Char('E') => Some('€'),
+        _ => None,
+    }
 }
 
 impl App {
@@ -784,6 +890,8 @@ impl App {
             voice,
             voice_state,
             voice_continuous: false,
+            last_copied_code_idx: 0,
+            last_copied_code_time: None,
         };
 
         app.probe_provider_models(ProviderType::LmStudio);
@@ -2582,6 +2690,76 @@ impl App {
         }
     }
 
+    /// Moves the prompt cursor backward by one word (e.g. Alt+b, Alt+Left, Ctrl+Left).
+    pub fn prompt_word_backward(&mut self) {
+        self.cursor_pos = prompt_move_cursor_word_backward(&self.chat_input, self.cursor_pos);
+    }
+
+    /// Moves the prompt cursor forward by one word (e.g. Alt+f, Alt+Right, Ctrl+Right).
+    pub fn prompt_word_forward(&mut self) {
+        self.cursor_pos = prompt_move_cursor_word_forward(&self.chat_input, self.cursor_pos);
+    }
+
+    /// Deletes the word immediately before the cursor (e.g. Alt+Backspace, Ctrl+Backspace, Ctrl+W).
+    pub fn prompt_backward_kill_word(&mut self) {
+        if self.cursor_pos > 0 {
+            let start = prompt_move_cursor_word_backward(&self.chat_input, self.cursor_pos);
+            self.chat_input.drain(start..self.cursor_pos);
+            self.cursor_pos = start;
+        }
+    }
+
+    /// Deletes the word immediately after the cursor (e.g. Alt+d, Alt+Delete, Ctrl+Delete).
+    pub fn prompt_forward_kill_word(&mut self) {
+        if self.cursor_pos < self.chat_input.len() {
+            let end = prompt_move_cursor_word_forward(&self.chat_input, self.cursor_pos);
+            self.chat_input.drain(self.cursor_pos..end);
+        }
+    }
+
+    /// Capitalizes the word from cursor forward and advances cursor (Alt+c).
+    pub fn prompt_capitalize_word(&mut self) {
+        if self.cursor_pos >= self.chat_input.len() {
+            return;
+        }
+        let end = prompt_move_cursor_word_forward(&self.chat_input, self.cursor_pos);
+        let slice = &self.chat_input[self.cursor_pos..end];
+        let mut capitalized = String::new();
+        let mut first = true;
+        for c in slice.chars() {
+            if first && c.is_alphabetic() {
+                capitalized.extend(c.to_uppercase());
+                first = false;
+            } else {
+                capitalized.extend(c.to_lowercase());
+            }
+        }
+        self.chat_input.replace_range(self.cursor_pos..end, &capitalized);
+        self.cursor_pos = end;
+    }
+
+    /// Uppercases the word from cursor forward and advances cursor (Alt+u).
+    pub fn prompt_upcase_word(&mut self) {
+        if self.cursor_pos >= self.chat_input.len() {
+            return;
+        }
+        let end = prompt_move_cursor_word_forward(&self.chat_input, self.cursor_pos);
+        let upper = self.chat_input[self.cursor_pos..end].to_uppercase();
+        self.chat_input.replace_range(self.cursor_pos..end, &upper);
+        self.cursor_pos = end;
+    }
+
+    /// Lowercases the word from cursor forward and advances cursor (Alt+l).
+    pub fn prompt_downcase_word(&mut self) {
+        if self.cursor_pos >= self.chat_input.len() {
+            return;
+        }
+        let end = prompt_move_cursor_word_forward(&self.chat_input, self.cursor_pos);
+        let lower = self.chat_input[self.cursor_pos..end].to_lowercase();
+        self.chat_input.replace_range(self.cursor_pos..end, &lower);
+        self.cursor_pos = end;
+    }
+
     pub fn cycle_auto_approve(&mut self) -> crate::config::AutoApproveLevel {
         let next_level = self.config.auto_approve.next();
         self.config.auto_approve = next_level;
@@ -2742,6 +2920,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
         {
             self.open_config_modal();
@@ -2749,6 +2928,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H'))
         {
             self.open_sessions_modal();
@@ -2756,6 +2936,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
         {
             self.open_bookmarks_modal();
@@ -2763,6 +2944,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
         {
             self.open_export_modal();
@@ -2770,6 +2952,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M'))
         {
             self.open_mcp_modal();
@@ -2777,6 +2960,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
         {
             self.open_skills_modal();
@@ -2784,6 +2968,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F'))
         {
             self.chat_search_active = !self.chat_search_active;
@@ -2797,6 +2982,7 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N'))
         {
             self.new_session();
@@ -2805,6 +2991,7 @@ impl App {
 
         // Multi-tab shortcuts: Ctrl+T (new tab), Ctrl+W (close tab), Ctrl+Tab / Ctrl+Shift+Tab (cycle)
         if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
             && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T'))
         {
             let _ = self.new_tab();
@@ -2840,8 +3027,11 @@ impl App {
             return;
         }
 
-        // Direct tab switch with Alt + 1..9 when terminal is focused
-        if self.focus == Focus::Terminal && key.modifiers.contains(KeyModifiers::ALT) {
+        // Direct tab switch with Alt + 1..9 when terminal is focused (without Shift)
+        if self.focus == Focus::Terminal
+            && key.modifiers.contains(KeyModifiers::ALT)
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+        {
             if let KeyCode::Char(c) = key.code {
                 if let Some(digit) = c.to_digit(10) {
                     if (1..=9).contains(&digit) {
@@ -2858,8 +3048,13 @@ impl App {
         }
 
 
-        // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss, Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
+        // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss,
+        //    Alt + 1..9 / AZERTY / Alt + X to execute proposed command cards,
+        //    Alt + Shift + 1..9 / Alt + C / Alt + Shift + X to copy proposed commands or code blocks,
+        //    and Alt+Left / Alt+Right for split resize
         if key.modifiers.contains(KeyModifiers::ALT) {
+            let is_shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
             if matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D'))
                 && self.proactive_error_diagnosis.is_some()
             {
@@ -2876,41 +3071,101 @@ impl App {
                 return;
             }
 
+            // Alt + X: Fast-execute proposed command card #1
+            if !is_shift
+                && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+                && self.execute_command_by_index(0, true)
+            {
+                return;
+            }
+
+            // Alt + Shift + X: Fast-copy proposed command card #1
+            if is_shift
+                && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
+                && self.copy_command_by_index(0)
+            {
+                return;
+            }
+
+            // Alt + Shift + C: Dedicated shortcut to copy code blocks ("pavés de code")
+            if is_shift
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+                && self.copy_code_block()
+            {
+                return;
+            }
+
+            // Alt + C (without Shift): Fast-copy proposed command card #1 or fallback code block
+            if !is_shift
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+                && self.copy_command_by_index(0)
+            {
+                return;
+            }
+
             if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
                 self.open_rename_tab_modal();
                 return;
             }
 
-            if let Some(idx) = key_to_card_index(key.code) {
-                self.consecutive_auto_proposals = 0;
-                if self.execute_command_by_index(idx, true) {
-                    return;
+            // Alt + Shift + 1..9: Copy proposal #N (0-based) to clipboard
+            if is_shift {
+                if let Some(idx) = key_to_shift_card_index(key.code) {
+                    if self.copy_command_by_index(idx) {
+                        return;
+                    }
+                }
+            } else {
+                // Alt + 1..9 / AZERTY unshifted: Execute proposal #N (0-based) in terminal
+                if let Some(idx) = key_to_card_index(key.code) {
+                    self.consecutive_auto_proposals = 0;
+                    if self.execute_command_by_index(idx, true) {
+                        return;
+                    }
                 }
             }
 
-            match self.split_orientation {
-                SplitOrientation::Vertical => match key.code {
-                    KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') => {
-                        self.adjust_split(self.split_direction(-1));
-                        return;
+            if self.focus == Focus::Terminal {
+                match self.split_orientation {
+                    SplitOrientation::Vertical => match key.code {
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            self.adjust_split(self.split_direction(-1));
+                            return;
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            self.adjust_split(self.split_direction(1));
+                            return;
+                        }
+                        _ => {}
+                    },
+                    SplitOrientation::Horizontal => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                            self.adjust_split(self.split_direction(-1));
+                            return;
+                        }
+                        KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                            self.adjust_split(self.split_direction(1));
+                            return;
+                        }
+                        _ => {}
+                    },
+                }
+            } else if self.focus == Focus::Chat {
+                // In chat focus, Alt+Up / Alt+Down adjusts split when orientation is horizontal,
+                // while Alt+Left / Alt+Right navigate words in the prompt editor without resizing.
+                if self.split_orientation == SplitOrientation::Horizontal {
+                    match key.code {
+                        KeyCode::Up => {
+                            self.adjust_split(self.split_direction(-1));
+                            return;
+                        }
+                        KeyCode::Down => {
+                            self.adjust_split(self.split_direction(1));
+                            return;
+                        }
+                        _ => {}
                     }
-                    KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') => {
-                        self.adjust_split(self.split_direction(1));
-                        return;
-                    }
-                    _ => {}
-                },
-                SplitOrientation::Horizontal => match key.code {
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
-                        self.adjust_split(self.split_direction(-1));
-                        return;
-                    }
-                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                        self.adjust_split(self.split_direction(1));
-                        return;
-                    }
-                    _ => {}
-                },
+                }
             }
         }
 
@@ -3248,6 +3503,162 @@ impl App {
         self.all_command_proposals().into_iter().next()
     }
 
+    pub fn all_proposals_or_code_blocks(&self) -> Vec<String> {
+        let proposals = self.all_command_proposals();
+        if !proposals.is_empty() {
+            return proposals;
+        }
+        // Fallback to any markdown code block in the latest assistant response
+        for msg in self.messages.iter().rev() {
+            if msg.role == MessageRole::Assistant {
+                let blocks = extract_all_code_blocks(&msg.content);
+                if !blocks.is_empty() {
+                    return blocks;
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    pub fn copy_command_by_index(&mut self, index: usize) -> bool {
+        let items = self.all_proposals_or_code_blocks();
+        if let Some(content) = items.get(index) {
+            let clean = content.trim();
+            if clean.is_empty() {
+                return false;
+            }
+            crate::system::clipboard::copy_to_clipboard(clean);
+            self.clipboard_toast = Some((std::time::Instant::now(), clean.len()));
+
+            let lang = self.config.get_language();
+            let is_proposal = index < self.all_command_proposals().len();
+            let line_count = clean.lines().count();
+            let preview = if let Some(first_line) = clean.lines().next() {
+                let fl = first_line.trim();
+                if line_count > 1 {
+                    if fl.chars().count() > 30 {
+                        let tr: String = fl.chars().take(27).collect();
+                        format!("{}... (+{} l.)", tr, line_count - 1)
+                    } else {
+                        format!("{} (+{} l.)", fl, line_count - 1)
+                    }
+                } else if fl.chars().count() > 40 {
+                    let tr: String = fl.chars().take(37).collect();
+                    format!("{}...", tr)
+                } else {
+                    fl.to_string()
+                }
+            } else {
+                String::new()
+            };
+
+            let card_num = index + 1;
+            let msg = if is_proposal {
+                if lang == Language::Fr {
+                    format!("📋 Commande #{} copiée : {}", card_num, preview)
+                } else {
+                    format!("📋 Command #{} copied: {}", card_num, preview)
+                }
+            } else {
+                if lang == Language::Fr {
+                    format!("📋 Code copié : {}", preview)
+                } else {
+                    format!("📋 Code copied: {}", preview)
+                }
+            };
+            self.set_toast(msg);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn all_passive_code_blocks(&self) -> Vec<String> {
+        for msg in self.messages.iter().rev() {
+            if msg.role == MessageRole::User {
+                let trimmed = msg.content.trim_start();
+                if trimmed.starts_with("💻") || trimmed.starts_with("[RÉSULTAT DE L'EXÉCUTION") {
+                    break;
+                }
+            } else if msg.role == MessageRole::Assistant {
+                let blocks = extract_passive_code_blocks(&msg.content);
+                if !blocks.is_empty() {
+                    return blocks;
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    pub fn copy_code_block(&mut self) -> bool {
+        let blocks = self.all_passive_code_blocks();
+        if blocks.is_empty() {
+            // Fallback: if there are no passive code blocks, copy latest proposal or code block
+            return self.copy_command_by_index(0);
+        }
+
+        let now = std::time::Instant::now();
+        let target_idx = if let Some(last_time) = self.last_copied_code_time {
+            if now.duration_since(last_time).as_secs() < 2 && blocks.len() > 1 {
+                (self.last_copied_code_idx + 1) % blocks.len()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        self.last_copied_code_idx = target_idx;
+        self.last_copied_code_time = Some(now);
+
+        let code = &blocks[target_idx];
+        let clean = code.trim();
+        if clean.is_empty() {
+            return false;
+        }
+
+        crate::system::clipboard::copy_to_clipboard(clean);
+        self.clipboard_toast = Some((now, clean.len()));
+
+        let lang = self.config.get_language();
+        let line_count = clean.lines().count();
+        let preview = if let Some(first_line) = clean.lines().next() {
+            let fl = first_line.trim();
+            if line_count > 1 {
+                if fl.chars().count() > 30 {
+                    let tr: String = fl.chars().take(27).collect();
+                    format!("{}... (+{} l.)", tr, line_count - 1)
+                } else {
+                    format!("{} (+{} l.)", fl, line_count - 1)
+                }
+            } else if fl.chars().count() > 40 {
+                let tr: String = fl.chars().take(37).collect();
+                format!("{}...", tr)
+            } else {
+                fl.to_string()
+            }
+        } else {
+            String::new()
+        };
+
+        let msg = if blocks.len() > 1 {
+            if lang == Language::Fr {
+                format!("📋 Code #{}/{} copié : {}", target_idx + 1, blocks.len(), preview)
+            } else {
+                format!("📋 Code #{}/{} copied: {}", target_idx + 1, blocks.len(), preview)
+            }
+        } else {
+            if lang == Language::Fr {
+                format!("📋 Code copié : {}", preview)
+            } else {
+                format!("📋 Code copied: {}", preview)
+            }
+        };
+
+        self.set_toast(msg);
+        true
+    }
+
     pub fn current_active_shell(&self) -> &str {
         match &self.system_context.active_session {
             crate::system::ActiveSession::Ssh { .. } => "bash",
@@ -3446,24 +3857,55 @@ impl App {
                     return;
                 }
                 KeyCode::Left => {
-                    self.chat_search_cursor = self.chat_search_cursor.saturating_sub(1);
+                    if key.modifiers.contains(KeyModifiers::ALT)
+                        || key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        let q = &self.chat_search_query;
+                        let byte_pos = q.char_indices().nth(self.chat_search_cursor).map(|(i, _)| i).unwrap_or(q.len());
+                        let new_byte = prompt_move_cursor_word_backward(q, byte_pos);
+                        self.chat_search_cursor = q[..new_byte].chars().count();
+                    } else {
+                        self.chat_search_cursor = self.chat_search_cursor.saturating_sub(1);
+                    }
                     return;
                 }
                 KeyCode::Right => {
-                    if self.chat_search_cursor < self.chat_search_query.chars().count() {
+                    if key.modifiers.contains(KeyModifiers::ALT)
+                        || key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        let q = &self.chat_search_query;
+                        let byte_pos = q.char_indices().nth(self.chat_search_cursor).map(|(i, _)| i).unwrap_or(q.len());
+                        let new_byte = prompt_move_cursor_word_forward(q, byte_pos);
+                        self.chat_search_cursor = q[..new_byte].chars().count();
+                    } else if self.chat_search_cursor < self.chat_search_query.chars().count() {
                         self.chat_search_cursor += 1;
                     }
                     return;
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    let mut chars: Vec<char> = self.chat_search_query.chars().collect();
-                    chars.insert(self.chat_search_cursor, c);
-                    self.chat_search_query = chars.into_iter().collect();
-                    self.chat_search_cursor += 1;
-                    self.chat_search_match_idx = 0;
+                KeyCode::Char(c) => {
+                    let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                    let is_alt = key.modifiers.contains(KeyModifiers::ALT);
+                    let should_insert = if is_ctrl && is_alt {
+                        true
+                    } else if is_ctrl {
+                        false
+                    } else if is_alt {
+                        !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                    } else {
+                        true
+                    };
+                    if should_insert {
+                        let to_insert = if is_alt || (is_ctrl && is_alt) {
+                            map_azerty_altgr(key.code).unwrap_or(c)
+                        } else {
+                            c
+                        };
+                        let mut chars: Vec<char> = self.chat_search_query.chars().collect();
+                        chars.insert(self.chat_search_cursor, to_insert);
+                        self.chat_search_query = chars.into_iter().collect();
+                        self.chat_search_cursor += 1;
+                        self.chat_search_match_idx = 0;
+                    }
                     return;
                 }
                 _ => {}
@@ -3501,16 +3943,6 @@ impl App {
             return;
         }
 
-        // 3. Alt+1..9 or Alt+&.._ (AZERTY) to execute a specific proposed command card
-        if key.modifiers.contains(KeyModifiers::ALT) {
-            if let Some(idx) = key_to_card_index(key.code) {
-                self.consecutive_auto_proposals = 0;
-                if self.execute_command_by_index(idx, true) {
-                    return;
-                }
-            }
-        }
-
         match key.code {
             KeyCode::Enter => {
                 // Shift+Enter, Alt+Enter or Ctrl+Enter inserts a new line in the multiline prompt
@@ -3536,29 +3968,30 @@ impl App {
                 }
             }
 
-            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.cursor_pos > 0 {
-                    let before = &self.chat_input[..self.cursor_pos];
-                    let trimmed = before.trim_end();
-                    let new_pos = trimmed.rfind(' ').map(|i| i + 1).unwrap_or(0);
-                    self.chat_input.drain(new_pos..self.cursor_pos);
-                    self.cursor_pos = new_pos;
-                }
+            KeyCode::Char('w') | KeyCode::Char('W')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.prompt_backward_kill_word();
             }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.chat_input.drain(..self.cursor_pos);
                 self.cursor_pos = 0;
             }
-            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('k') | KeyCode::Char('K')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.chat_input.truncate(self.cursor_pos);
             }
-            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor_pos = 0;
-            }
-            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor_pos = self.chat_input.len();
-            }
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('j') | KeyCode::Char('J')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 // Ctrl+J is ASCII linefeed (universal multiline newline shortcut)
                 self.chat_input.insert(self.cursor_pos, '\n');
                 self.cursor_pos += 1;
@@ -3568,7 +4001,8 @@ impl App {
                 self.cursor_pos += 1;
             }
             KeyCode::Char('a') | KeyCode::Char('A')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
                 // Readline muscle memory: start of the CURRENT logical line
                 // (not of the whole buffer) so multi-line prompts stay editable.
@@ -3578,7 +4012,8 @@ impl App {
                     .unwrap_or(0);
             }
             KeyCode::Char('e') | KeyCode::Char('E')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
                 let base = self.cursor_pos.min(self.chat_input.len());
                 self.cursor_pos = self.chat_input[base..]
@@ -3586,24 +4021,62 @@ impl App {
                     .map(|i| base + i)
                     .unwrap_or(self.chat_input.len());
             }
-            KeyCode::Char('w') | KeyCode::Char('W')
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            KeyCode::Char('b') | KeyCode::Char('B')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
             {
-                // Ctrl+W: erase word before cursor in prompt input
-                if self.cursor_pos > 0 {
-                    let before = &self.chat_input[..self.cursor_pos];
-                    let trimmed = before.trim_end();
-                    let word_start = trimmed.rfind(' ').map(|p| p + 1).unwrap_or(0);
-                    self.chat_input
-                        .replace_range(word_start..self.cursor_pos, "");
-                    self.cursor_pos = word_start;
-                }
+                self.prompt_word_backward();
+            }
+            KeyCode::Char('f') | KeyCode::Char('F')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.prompt_word_forward();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.prompt_forward_kill_word();
+            }
+            KeyCode::Char('c') | KeyCode::Char('C')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.prompt_capitalize_word();
+            }
+            KeyCode::Char('u') | KeyCode::Char('U')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.prompt_upcase_word();
+            }
+            KeyCode::Char('l') | KeyCode::Char('L')
+                if key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.prompt_downcase_word();
             }
             KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT)
-                {
+                let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                let is_alt = key.modifiers.contains(KeyModifiers::ALT);
+
+                if is_ctrl && is_alt {
+                    // AltGr combination (common on Windows and X11 terminals)
+                    let to_insert = map_azerty_altgr(key.code).unwrap_or(c);
+                    self.chat_input.insert(self.cursor_pos, to_insert);
+                    self.cursor_pos += to_insert.len_utf8();
+                } else if is_ctrl {
+                    // Control keys without Alt are not character input
+                } else if is_alt {
+                    // Alt / AltGr combination (Linux / macOS / terminal)
+                    if let Some(mapped) = map_azerty_altgr(key.code) {
+                        self.chat_input.insert(self.cursor_pos, mapped);
+                        self.cursor_pos += mapped.len_utf8();
+                    } else if !c.is_ascii_alphabetic() && !c.is_ascii_digit() {
+                        // Non-alphanumeric symbols produced with AltGr (e.g. @, ~, #, {, }, [, ], |, \, etc.)
+                        self.chat_input.insert(self.cursor_pos, c);
+                        self.cursor_pos += c.len_utf8();
+                    } else if !c.is_ascii() {
+                        // Non-ASCII characters (e.g. Option-key diacritics / symbols on macOS)
+                        self.chat_input.insert(self.cursor_pos, c);
+                        self.cursor_pos += c.len_utf8();
+                    }
+                } else {
                     self.chat_input.insert(self.cursor_pos, c);
                     self.cursor_pos += c.len_utf8();
                 }
@@ -3617,7 +4090,11 @@ impl App {
                         return;
                     }
                 }
-                if self.cursor_pos > 0 {
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    self.prompt_backward_kill_word();
+                } else if self.cursor_pos > 0 {
                     let prev_idx = self.chat_input[..self.cursor_pos]
                         .char_indices()
                         .next_back()
@@ -3628,12 +4105,20 @@ impl App {
                 }
             }
             KeyCode::Delete => {
-                if self.cursor_pos < self.chat_input.len() {
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    self.prompt_forward_kill_word();
+                } else if self.cursor_pos < self.chat_input.len() {
                     self.chat_input.remove(self.cursor_pos);
                 }
             }
             KeyCode::Left => {
-                if self.cursor_pos > 0 {
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    self.prompt_word_backward();
+                } else if self.cursor_pos > 0 {
                     self.cursor_pos = self.chat_input[..self.cursor_pos]
                         .char_indices()
                         .next_back()
@@ -3642,7 +4127,11 @@ impl App {
                 }
             }
             KeyCode::Right => {
-                if self.cursor_pos < self.chat_input.len() {
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    self.prompt_word_forward();
+                } else if self.cursor_pos < self.chat_input.len() {
                     self.cursor_pos = self.chat_input[self.cursor_pos..]
                         .char_indices()
                         .nth(1)
@@ -4643,6 +5132,69 @@ pub fn extract_command_proposal(text: &str) -> Option<String> {
     extract_all_command_proposals(text).into_iter().next()
 }
 
+/// Extracts all markdown code blocks from text (excluding think deliberation blocks, tool calls, and output)
+pub fn extract_all_code_blocks(text: &str) -> Vec<String> {
+    let stripped = crate::agent::tools::strip_think_blocks(text);
+    let repaired = repair_prematurely_closed_code_blocks(&stripped);
+    let mut list = Vec::new();
+    let mut remaining = repaired.as_str();
+
+    while let Some((_start_idx, fence_tag, code_rest)) = find_opening_code_fence(remaining) {
+        if let Some(end_idx) = find_closing_code_fence(code_rest) {
+            let code_content = code_rest[..end_idx].trim();
+            if !fence_tag.starts_with("tool:")
+                && fence_tag != "output"
+                && fence_tag != "result"
+                && !code_content.is_empty()
+                && !list.contains(&code_content.to_string())
+            {
+                list.push(code_content.to_string());
+            }
+            let after_close = &code_rest[end_idx + 3..];
+            remaining = after_close
+                .strip_prefix('\n')
+                .or_else(|| after_close.strip_prefix("\r\n"))
+                .unwrap_or(after_close);
+        } else {
+            remaining = code_rest;
+        }
+    }
+
+    list
+}
+
+/// Extracts all non-executable code blocks (passive snippets, scripts, configurations, "pavés de code") from text
+pub fn extract_passive_code_blocks(text: &str) -> Vec<String> {
+    let stripped = crate::agent::tools::strip_think_blocks(text);
+    let repaired = repair_prematurely_closed_code_blocks(&stripped);
+    let mut list = Vec::new();
+    let mut remaining = repaired.as_str();
+
+    while let Some((_start_idx, fence_tag, code_rest)) = find_opening_code_fence(remaining) {
+        if let Some(end_idx) = find_closing_code_fence(code_rest) {
+            let code_content = code_rest[..end_idx].trim();
+            if !fence_tag.starts_with("tool:")
+                && fence_tag != "output"
+                && fence_tag != "result"
+                && !is_executable_command_block(fence_tag, code_content)
+                && !code_content.is_empty()
+                && !list.contains(&code_content.to_string())
+            {
+                list.push(code_content.to_string());
+            }
+            let after_close = &code_rest[end_idx + 3..];
+            remaining = after_close
+                .strip_prefix('\n')
+                .or_else(|| after_close.strip_prefix("\r\n"))
+                .unwrap_or(after_close);
+        } else {
+            remaining = code_rest;
+        }
+    }
+
+    list
+}
+
 /// Last-resort recovery for a "dead turn": some reasoning models (e.g. deepseek-flash) stream
 /// their whole answer — command included — as `reasoning_content` and never emit visible
 /// `content`. Once folded into a `<think>` block that command is stripped and the turn ends
@@ -5148,6 +5700,41 @@ fn key_to_card_index(code: KeyCode) -> Option<usize> {
         KeyCode::Char('7') | KeyCode::Char('è') | KeyCode::Char('È') => Some(6),
         KeyCode::Char('8') | KeyCode::Char('_') => Some(7),
         KeyCode::Char('9') | KeyCode::Char('ç') | KeyCode::Char('Ç') => Some(8),
+        _ => None,
+    }
+}
+
+/// Maps keyboard keys pressed with Shift to 0-based card indices (0..8)
+fn key_to_shift_card_index(code: KeyCode) -> Option<usize> {
+    match code {
+        // Direct digits: AZERTY with Shift, keypad digits, or modern terminals with protocol
+        KeyCode::Char('1') => Some(0),
+        KeyCode::Char('2') => Some(1),
+        KeyCode::Char('3') => Some(2),
+        KeyCode::Char('4') => Some(3),
+        KeyCode::Char('5') => Some(4),
+        KeyCode::Char('6') => Some(5),
+        KeyCode::Char('7') => Some(6),
+        KeyCode::Char('8') => Some(7),
+        KeyCode::Char('9') => Some(8),
+        // QWERTY shifted top-row symbols (Shift + 1..9) on legacy terminals without disambiguated keys
+        KeyCode::Char('!') => Some(0),
+        KeyCode::Char('@') => Some(1),
+        KeyCode::Char('#') => Some(2),
+        KeyCode::Char('$') => Some(3),
+        KeyCode::Char('%') => Some(4),
+        KeyCode::Char('^') => Some(5),
+        KeyCode::Char('&') => Some(6),
+        KeyCode::Char('*') => Some(7),
+        KeyCode::Char('(') => Some(8),
+        // AZERTY keys if the terminal reported SHIFT modifier without transforming the character
+        KeyCode::Char('é') | KeyCode::Char('É') => Some(1),
+        KeyCode::Char('"') => Some(2),
+        KeyCode::Char('\'') => Some(3),
+        KeyCode::Char('-') => Some(5),
+        KeyCode::Char('è') | KeyCode::Char('È') => Some(6),
+        KeyCode::Char('_') => Some(7),
+        KeyCode::Char('ç') | KeyCode::Char('Ç') => Some(8),
         _ => None,
     }
 }

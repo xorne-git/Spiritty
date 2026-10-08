@@ -1291,7 +1291,7 @@ fn render_markdown_blocks(
                     // The same command is awaiting consent in the approval card
                     // right below: keep the code visible but demote it to an inert
                     // snippet so the command has exactly ONE actionable surface.
-                    render_code_snippet_box(code_content, fence_tag, panel_width, lines);
+                    render_code_snippet_box(code_content, fence_tag, panel_width, None, lines);
                 } else {
                     render_command_card(
                         *card_counter,
@@ -1303,7 +1303,7 @@ fn render_markdown_blocks(
                     );
                 }
             } else {
-                render_code_snippet_box(code_content, fence_tag, panel_width, lines);
+                render_code_snippet_box(code_content, fence_tag, panel_width, Some(lang), lines);
             }
             let after_close = &code_rest[end_idx + 3..];
             remaining = after_close
@@ -1319,7 +1319,7 @@ fn render_markdown_blocks(
             } else if fence_tag == "output" || fence_tag == "result" {
                 render_tool_output_box(code_content, panel_width, lang, lines);
             } else {
-                render_code_snippet_box(code_content, fence_tag, panel_width, lines);
+                render_code_snippet_box(code_content, fence_tag, panel_width, None, lines);
             }
             remaining = "";
             break;
@@ -2067,6 +2067,7 @@ fn render_framed_snippet_box(
     header: FramedSnippetHeader,
     content: &str,
     panel_width: u16,
+    lang: Option<Language>,
     lines: &mut Vec<Line<'static>>,
 ) {
     if content.is_empty() {
@@ -2195,6 +2196,39 @@ fn render_framed_snippet_box(
         Span::styled("  │", Style::default().fg(outer_border_color)),
     ]));
 
+    // 6.5 Footer action row inside outer card (e.g. [ Alt + Shift + C ] Copier le code)
+    if let Some(lang) = lang {
+        let btn_border_color = Color::Rgb(60, 120, 180);
+        let key_text = "Alt + Shift + C";
+        let usable_w = card_total_w.saturating_sub(6);
+        let label_text = if usable_w >= 38 {
+            lang.t(I18nKey::CodeSnippetActionCopy)
+        } else {
+            lang.t(I18nKey::CommandCardActionCopy)
+        };
+
+        let btn_w = 2 + key_text.chars().count() + 3 + label_text.chars().count();
+        let gap = usable_w.saturating_sub(btn_w);
+
+        lines.push(Line::from(vec![
+            Span::styled("│  ", Style::default().fg(outer_border_color)),
+            Span::raw(" ".repeat(gap)),
+            Span::styled("[ ", Style::default().fg(btn_border_color)),
+            Span::styled(
+                key_text,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ] ", Style::default().fg(btn_border_color)),
+            Span::styled(
+                label_text,
+                Style::default().fg(Color::Rgb(180, 220, 255)),
+            ),
+            Span::styled("  │", Style::default().fg(outer_border_color)),
+        ]));
+    }
+
     // 7. Bottom border of outer card: ╰─...─╯
     lines.push(Line::from(vec![Span::styled(
         format!("╰{}╯", "─".repeat(outer_inner_w)),
@@ -2227,6 +2261,7 @@ fn render_tool_output_box(
         },
         output,
         panel_width,
+        None,
         lines,
     );
 }
@@ -2236,6 +2271,7 @@ fn render_code_snippet_box(
     code: &str,
     tag: &str,
     panel_width: u16,
+    lang: Option<Language>,
     lines: &mut Vec<Line<'static>>,
 ) {
     let clean_tag = if tag.trim().is_empty()
@@ -2258,6 +2294,7 @@ fn render_code_snippet_box(
         },
         code,
         panel_width,
+        lang,
         lines,
     );
 }
@@ -2411,32 +2448,82 @@ fn render_command_card(
         Span::styled("│", Style::default().fg(outer_border_color)),
     ]));
 
-    // 8. Footer line inside outer card: │  Validation requise...   [ Alt + 1 ]  │
+    // 8. Footer line inside outer card:
+    // │  Validation requise...   [ Alt + 1 ] Exécuter  ·  [ Alt + Shift + 1 ] Copier  │
     let hint_text = if lang == Language::Fr {
         "Validation requise avant exécution"
     } else {
         "Confirmation required before execution"
     };
 
-    let btn_text = format!("Alt + {}", card_idx);
-    let btn_border_color = Color::Rgb(180, 130, 30);
-    let footer_fixed_len = 3 + hint_text.chars().count() + 4 + btn_text.chars().count() + 3; // "│  " (3) + hint + "[ " (2) + btn + " ]" (2) + "  │" (3)
-    let footer_gap = card_total_w.saturating_sub(footer_fixed_len);
+    let exec_label = lang.t(I18nKey::CommandCardActionExecute);
+    let copy_label = lang.t(I18nKey::CommandCardActionCopy);
+    let exec_key = format!("Alt + {}", card_idx);
+    let copy_key = format!("Alt + Shift + {}", card_idx);
 
-    lines.push(Line::from(vec![
+    let exec_btn_color = Color::Rgb(180, 130, 30);
+    let copy_btn_color = Color::Rgb(60, 120, 180);
+
+    // Visual widths:
+    // [ Alt + 1 ] Exécuter = 2 + exec_key.len + 3 + exec_label.len
+    let exec_part_w = 2 + exec_key.chars().count() + 3 + exec_label.chars().count();
+    let sep_w = 5; // "  ·  "
+    let copy_part_w = 2 + copy_key.chars().count() + 3 + copy_label.chars().count();
+    let buttons_w = exec_part_w + sep_w + copy_part_w;
+
+    // Inner width available inside "│  " (3) ... "  │" (3):
+    let usable_w = card_total_w.saturating_sub(6);
+
+    let (show_hint, gap) = if usable_w >= hint_text.chars().count() + 2 + buttons_w {
+        let g = usable_w.saturating_sub(hint_text.chars().count() + buttons_w);
+        (true, g)
+    } else {
+        let g = usable_w.saturating_sub(buttons_w);
+        (false, g)
+    };
+
+    let mut footer_spans = vec![
         Span::styled("│  ", Style::default().fg(outer_border_color)),
-        Span::styled(hint_text, Style::default().fg(Color::DarkGray)),
-        Span::raw(" ".repeat(footer_gap)),
-        Span::styled("[ ", Style::default().fg(btn_border_color)),
-        Span::styled(
-            btn_text,
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ]", Style::default().fg(btn_border_color)),
-        Span::styled("  │", Style::default().fg(outer_border_color)),
-    ]));
+    ];
+
+    if show_hint {
+        footer_spans.push(Span::styled(hint_text, Style::default().fg(Color::DarkGray)));
+    }
+    footer_spans.push(Span::raw(" ".repeat(gap)));
+
+    // Execute button: [ Alt + N ] Exécuter
+    footer_spans.push(Span::styled("[ ", Style::default().fg(exec_btn_color)));
+    footer_spans.push(Span::styled(
+        exec_key,
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::styled(" ] ", Style::default().fg(exec_btn_color)));
+    footer_spans.push(Span::styled(
+        exec_label,
+        Style::default().fg(Color::Rgb(220, 200, 150)),
+    ));
+
+    // Separator
+    footer_spans.push(Span::styled("  ·  ", Style::default().fg(Color::DarkGray)));
+
+    // Copy button: [ Alt + Shift + N ] Copier
+    footer_spans.push(Span::styled("[ ", Style::default().fg(copy_btn_color)));
+    footer_spans.push(Span::styled(
+        copy_key,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::styled(" ] ", Style::default().fg(copy_btn_color)));
+    footer_spans.push(Span::styled(
+        copy_label,
+        Style::default().fg(Color::Rgb(180, 220, 255)),
+    ));
+
+    footer_spans.push(Span::styled("  │", Style::default().fg(outer_border_color)));
+    lines.push(Line::from(footer_spans));
 
     // 9. Bottom border of outer card: ╰─...─╯
     lines.push(Line::from(vec![Span::styled(
@@ -3496,6 +3583,54 @@ mod recovered_regression_tests {
         assert_eq!(str_visual_width("abc"), 3);
         assert_eq!(str_visual_width("a b"), 3);
         assert_eq!(str_visual_width(""), 0);
+    }
+
+    #[test]
+    fn render_code_snippet_box_displays_alt_shift_c_badge() {
+        use super::render_code_snippet_box;
+        use crate::i18n::Language;
+
+        let mut lines = Vec::new();
+        render_code_snippet_box(
+            "print('hello world')",
+            "python",
+            80,
+            Some(Language::Fr),
+            &mut lines,
+        );
+        let full_text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            full_text.contains("Alt + Shift + C"),
+            "Code snippet box should render the Alt + Shift + C shortcut badge"
+        );
+        assert!(
+            full_text.contains("Copier le code"),
+            "Code snippet box should render the copy action label in French"
+        );
+
+        let mut lines_en = Vec::new();
+        render_code_snippet_box(
+            "name: test",
+            "yaml",
+            80,
+            Some(Language::En),
+            &mut lines_en,
+        );
+        let full_text_en: String = lines_en
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            full_text_en.contains("Alt + Shift + C"),
+            "Code snippet box should render the Alt + Shift + C shortcut badge"
+        );
+        assert!(
+            full_text_en.contains("Copy code"),
+            "Code snippet box should render the copy action label in English"
+        );
     }
 }
 

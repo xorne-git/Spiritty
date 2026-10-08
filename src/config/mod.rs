@@ -780,14 +780,21 @@ impl Config {
 
     pub fn load_shell_env() {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let env_cmd = if shell.contains("bash") {
+            "if [ -f ~/.bashrc ]; then . ~/.bashrc >/dev/null 2>&1; fi; env"
+        } else if shell.contains("zsh") {
+            "if [ -f ~/.zshrc ]; then . ~/.zshrc >/dev/null 2>&1; fi; env"
+        } else {
+            "env"
+        };
         let output = std::process::Command::new(&shell)
             .stdin(std::process::Stdio::null())
-            .args(["-l", "-i", "-c", "env"])
+            .args(["-l", "-c", env_cmd])
             .output()
             .or_else(|_| {
                 std::process::Command::new(&shell)
                     .stdin(std::process::Stdio::null())
-                    .args(["-l", "-c", "env"])
+                    .args(["-c", "env"])
                     .output()
             });
 
@@ -922,7 +929,7 @@ your_command_to_execute
 Spiritty executes this command live in the terminal (auto-approving safe inspections or requesting approval according to the security policy), captures the output, and returns the result to you in the next turn so you can analyze it immediately. Emit exactly ONE tool block per response: the loop feeds you the real output before the next step, and any second tool block in the same response is ignored.
 
 2. COMMAND PROPOSALS & ACTION CARDS (`bash` code blocks) — FOR USER-DRIVEN COMMANDS & SCRIPTS:
-Whenever a command needs the user's explicit review before running, emit it as a standard markdown bash code block: Spiritty parses it into an interactive action card with safety badges (🟢 Safe / 🟡 Sudo / 🔴 Risky) and an `Alt + 1..9` shortcut button.
+Whenever a command needs the user's explicit review before running, emit it as a standard markdown bash code block: Spiritty parses it into an interactive action card with safety badges (🟢 Safe / 🟡 Sudo / 🔴 Risky) and `Alt + 1..9` / `Alt + X` execution buttons (or `Alt + Shift + 1..9` / `Alt + C` to copy).
 ONE proposal per response when steps are sequential: propose the first command only, let the user run it (output is captured and returned to you), then propose the next step in the following turn — the user must never have to trigger Alt+1, Alt+2, Alt+3 blind without seeing intermediate results. Multiple cards in ONE response are ONLY for ALTERNATIVE ways to achieve the SAME action (e.g. a pacman variant, an apt variant, a dnf variant → the user picks the right one with Alt+1/2/3). For trivially atomic steps that need no intermediate inspection, chain them with `&&` inside a single block instead of stacking cards.
 
 3. WEB SEARCH (`tool:web_search`):
@@ -1096,19 +1103,25 @@ IMPORTANT RULES:
             return cached;
         }
 
-        // Probe default interactive login shell (captures fish / zsh / bash export variables)
+        // Probe default login shell (captures fish / zsh / bash export variables)
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut probed: Option<Option<String>> = None;
-        let probe_cmd = format!("printf '__SPIRITTY__:%s:__SPIRITTY__' \"${}\"", name);
+        let probe_cmd = if shell.contains("bash") {
+            format!("if [ -f ~/.bashrc ]; then . ~/.bashrc >/dev/null 2>&1; fi; printf '__SPIRITTY__:%s:__SPIRITTY__' \"${}\"", name)
+        } else if shell.contains("zsh") {
+            format!("if [ -f ~/.zshrc ]; then . ~/.zshrc >/dev/null 2>&1; fi; printf '__SPIRITTY__:%s:__SPIRITTY__' \"${}\"", name)
+        } else {
+            format!("printf '__SPIRITTY__:%s:__SPIRITTY__' \"${}\"", name)
+        };
 
         let output = std::process::Command::new(&shell)
             .stdin(std::process::Stdio::null())
-            .args(["-l", "-i", "-c", &probe_cmd])
+            .args(["-l", "-c", &probe_cmd])
             .output()
             .or_else(|_| {
                 std::process::Command::new(&shell)
                     .stdin(std::process::Stdio::null())
-                    .args(["-l", "-c", &probe_cmd])
+                    .args(["-c", &probe_cmd])
                     .output()
             });
 

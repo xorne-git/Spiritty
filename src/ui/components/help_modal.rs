@@ -64,7 +64,7 @@ impl HelpModal {
             .clamp(56, 150)
             .min(area.width as u32) as u16;
         let modal_height = ((area.height as u32 * 90) / 100)
-            .clamp(10, 44)
+            .clamp(10, 70)
             .min(area.height as u32) as u16;
 
         let x = area.left() + (area.width.saturating_sub(modal_width)) / 2;
@@ -378,6 +378,46 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
     lines.push(make_help_row(
         diag,
         lang.t(I18nKey::HelpDescDiagnoseError),
+        key_col_w,
+    ));
+
+    let mut exec_cmd = key_pill(
+        format!("{} + 1..9", lang.t(I18nKey::HelpKeyAlt)),
+        Color::Yellow,
+    );
+    exec_cmd.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    exec_cmd.extend(key_pill(
+        format!("{} + X", lang.t(I18nKey::HelpKeyAlt)),
+        Color::Yellow,
+    ));
+    lines.push(make_help_row(
+        exec_cmd,
+        lang.t(I18nKey::HelpDescExecuteCommand),
+        key_col_w,
+    ));
+
+    let mut copy_cmd = key_pill(
+        format!("{} + Shift + 1..9", lang.t(I18nKey::HelpKeyAlt)),
+        Color::Cyan,
+    );
+    copy_cmd.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    copy_cmd.extend(key_pill(
+        format!("{} + C", lang.t(I18nKey::HelpKeyAlt)),
+        Color::Cyan,
+    ));
+    lines.push(make_help_row(
+        copy_cmd,
+        lang.t(I18nKey::HelpDescCopyCommand),
+        key_col_w,
+    ));
+
+    let copy_code = key_pill(
+        format!("{} + Shift + C", lang.t(I18nKey::HelpKeyAlt)),
+        Color::Cyan,
+    );
+    lines.push(make_help_row(
+        copy_code,
+        lang.t(I18nKey::HelpDescCopyCodeBlock),
         key_col_w,
     ));
 

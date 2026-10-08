@@ -158,7 +158,9 @@ OPTIONS:
 
 KEYBOARD SHORTCUTS (TUI):
     Ctrl + Space / Shift + Tab   Switch focus between Chat and Terminal
-    Alt + 1..9 / AZERTY          Execute proposed command card in live shell
+    Alt + 1..9 / Alt + X         Execute proposed command card in live shell
+    Alt + Shift + 1..9 / Alt + C Copy proposed command card to clipboard
+    Alt + Shift + C              Copy Markdown code block to clipboard
     Alt + D                      Proactively diagnose last command failure
     Alt + X / Alt + C / Esc      Dismiss proactive error diagnosis card
     Ctrl + B                     SSH Server Bookmarks & Quick-Connect (with [S] to bookmark active server)

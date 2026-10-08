@@ -274,6 +274,16 @@ pub enum I18nKey {
 
     // Terminal dimension warning
     TerminalTooSmall,
+
+    // Command card & snippet actions
+    CommandCardActionExecute,
+    CommandCardActionCopy,
+    CodeSnippetActionCopy,
+
+    // Help Modal
+    HelpDescExecuteCommand,
+    HelpDescCopyCommand,
+    HelpDescCopyCodeBlock,
 }
 
 pub fn t(key: I18nKey, lang: Language) -> &'static str {
