@@ -44,6 +44,7 @@ pub struct McpModalState {
     pub add_state: AddMcpState,
     pub confirm_delete_name: Option<String>,
     pub status_message: Option<(std::time::Instant, String)>,
+    pub has_modified: bool,
 }
 
 impl McpModalState {
@@ -54,6 +55,7 @@ impl McpModalState {
             add_state: AddMcpState::None,
             confirm_delete_name: None,
             status_message: None,
+            has_modified: false,
         }
     }
 
@@ -156,6 +158,7 @@ impl McpModalState {
                 | KeyCode::Enter => {
                     config.mcp_servers.remove(&name);
                     let _ = config.save();
+                    self.has_modified = true;
                     self.servers.retain(|s| s.name != name);
                     if self.selected_index >= self.servers.len() && !self.servers.is_empty() {
                         self.selected_index = self.servers.len() - 1;
@@ -351,6 +354,7 @@ impl McpModalState {
                         },
                     );
                     let _ = config.save();
+                    self.has_modified = true;
 
                     if let Some(pos) = self.servers.iter().position(|s| s.name == *name) {
                         self.servers[pos] = new_status;
@@ -428,6 +432,16 @@ impl McpModalState {
             return None;
         }
 
+        if key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            if matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M')) {
+                return Some(McpModalAction::Close);
+            }
+            return None;
+        }
+
         // Standard Navigation & Actions
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Some(McpModalAction::Close),
@@ -462,6 +476,7 @@ impl McpModalState {
                             McpStatus::Disabled
                         };
                         let _ = config.save();
+                        self.has_modified = true;
                         return Some(McpModalAction::ServersChanged);
                     }
                 }

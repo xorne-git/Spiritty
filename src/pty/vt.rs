@@ -3,8 +3,18 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
 };
-use std::sync::{Arc, Mutex};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex, MutexGuard};
 use vt100::Parser;
+
+/// Smallest dimension ever handed to the `vt100` parser.
+///
+/// The crate panics on degenerate screens: in `vt100::grid::Grid::col_wrap` the
+/// `prev_pos.row -= scrolled` subtraction underflows (u16 wrap) on a one-row /
+/// one-line-scroll-region grid, and the following `drawing_row_mut(..).unwrap()`
+/// then panics. Every entry point clamps to at least this size, and the parser
+/// is additionally driven behind a `catch_unwind` guard.
+const MIN_DIM: u16 = 2;
 
 /// Wrapper around `vt100::Parser` providing thread-safe screen parsing
 /// and conversion to Ratatui buffer cells.
@@ -15,136 +25,121 @@ pub struct VtScreen {
 
 impl VtScreen {
     pub fn new(rows: u16, cols: u16) -> Self {
-        let parser = Parser::new(rows, cols, 10_000);
+        let parser = Parser::new(rows.max(MIN_DIM), cols.max(MIN_DIM), 10_000);
         Self {
             parser: Arc::new(Mutex::new(parser)),
         }
     }
 
+    /// Locks the parser, transparently recovering from a poisoned mutex.
+    ///
+    /// A panic inside `vt100` would otherwise poison the lock and freeze the
+    /// terminal panel forever (every later `lock()` returns `Err`).
+    fn lock(&self) -> MutexGuard<'_, Parser> {
+        self.parser
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn process(&self, bytes: &[u8]) {
-        if let Ok(mut parser) = self.parser.lock() {
+        let mut parser = self.lock();
+        // `vt100` 0.15/0.16 can panic on tiny screens (`grid.rs::col_wrap`).
+        // Left unguarded, that panic unwinds through the PTY reader thread,
+        // trips the global panic hook and tears down the terminal while the UI
+        // is still running. Swallow it: worst case the panel shows one stale
+        // cell, never a crash or a corrupted tty.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
             parser.process(bytes);
-        }
+        }));
     }
 
     pub fn resize(&self, rows: u16, cols: u16) {
-        if let Ok(mut parser) = self.parser.lock() {
-            parser.set_size(rows.max(1), cols.max(1));
+        let mut parser = self.lock();
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            parser.set_size(rows.max(MIN_DIM), cols.max(MIN_DIM));
             parser.set_scrollback(0);
-        }
+        }));
     }
 
     pub fn scroll_up(&self, lines: usize) {
-        if let Ok(mut parser) = self.parser.lock() {
-            let current = parser.screen().scrollback();
-            let screen_rows = parser.screen().size().0 as usize;
-            let max_safe = screen_rows.saturating_sub(1);
-            let next = current.saturating_add(lines).min(max_safe);
-            parser.set_scrollback(next);
-        }
+        let mut parser = self.lock();
+        let current = parser.screen().scrollback();
+        let screen_rows = parser.screen().size().0 as usize;
+        let max_safe = screen_rows.saturating_sub(1);
+        let next = current.saturating_add(lines).min(max_safe);
+        parser.set_scrollback(next);
     }
 
     pub fn scroll_down(&self, lines: usize) {
-        if let Ok(mut parser) = self.parser.lock() {
-            let current = parser.screen().scrollback();
-            parser.set_scrollback(current.saturating_sub(lines));
-        }
+        let mut parser = self.lock();
+        let current = parser.screen().scrollback();
+        parser.set_scrollback(current.saturating_sub(lines));
     }
 
     pub fn reset_scroll(&self) {
-        if let Ok(mut parser) = self.parser.lock() {
-            parser.set_scrollback(0);
-        }
+        let mut parser = self.lock();
+        parser.set_scrollback(0);
     }
 
     pub fn scroll_offset(&self) -> usize {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().scrollback()
-        } else {
-            0
-        }
+        self.lock().screen().scrollback()
     }
 
     /// Returns `(current_scroll_offset, total_terminal_lines)`
     pub fn scroll_info(&self) -> (usize, usize) {
-        if let Ok(mut parser) = self.parser.lock() {
-            let current = parser.screen().scrollback();
-            let screen_rows = parser.screen().size().0 as usize;
-            parser.set_scrollback(usize::MAX);
-            let max_scrollback = parser.screen().scrollback();
-            parser.set_scrollback(current);
-            (current, screen_rows.saturating_add(max_scrollback))
-        } else {
-            (0, 0)
-        }
+        let mut parser = self.lock();
+        let current = parser.screen().scrollback();
+        let screen_rows = parser.screen().size().0 as usize;
+        parser.set_scrollback(usize::MAX);
+        let max_scrollback = parser.screen().scrollback();
+        parser.set_scrollback(current);
+        (current, screen_rows.saturating_add(max_scrollback))
     }
 
     /// Returns `(col, row, is_visible)` for the terminal cursor.
     pub fn cursor_position(&self) -> (u16, u16, bool) {
-        if let Ok(parser) = self.parser.lock() {
-            let screen = parser.screen();
-            let (row, col) = screen.cursor_position();
-            let hide_cursor = screen.hide_cursor();
-            (col, row, !hide_cursor)
-        } else {
-            (0, 0, false)
-        }
+        let parser = self.lock();
+        let screen = parser.screen();
+        let (row, col) = screen.cursor_position();
+        let hide_cursor = screen.hide_cursor();
+        (col, row, !hide_cursor)
     }
 
     /// Whether the terminal child is currently using the alternate screen buffer (e.g. vim, htop, less).
     pub fn is_alternate_screen(&self) -> bool {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().alternate_screen()
-        } else {
-            false
-        }
+        self.lock().screen().alternate_screen()
     }
 
     /// Whether the terminal child expects application cursor keys (DECCKM).
     pub fn application_cursor(&self) -> bool {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().application_cursor()
-        } else {
-            false
-        }
+        self.lock().screen().application_cursor()
     }
 
     /// Active mouse tracking protocol mode (None, Press, PressRelease, ButtonMotion, AnyMotion).
     pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().mouse_protocol_mode()
-        } else {
-            vt100::MouseProtocolMode::None
-        }
+        self.lock().screen().mouse_protocol_mode()
     }
 
     /// Active mouse protocol encoding (Default, Utf8, Sgr).
     pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().mouse_protocol_encoding()
-        } else {
-            vt100::MouseProtocolEncoding::Default
-        }
+        self.lock().screen().mouse_protocol_encoding()
     }
 
     /// Whether the terminal child enabled bracketed paste mode (\x1b[?2004h).
     pub fn bracketed_paste(&self) -> bool {
-        if let Ok(parser) = self.parser.lock() {
-            parser.screen().bracketed_paste()
-        } else {
-            false
-        }
+        self.lock().screen().bracketed_paste()
     }
 
     /// Renders the virtual VT100 screen buffer directly onto a Ratatui `Buffer`.
     pub fn render_to_buffer(&self, area: Rect, buf: &mut Buffer) {
+        // Clamp to the actual buffer: a stale/over-large layout area must never
+        // make `set_string` write outside the buffer (which panics in ratatui).
+        let area = area.intersection(buf.area);
         if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let Ok(parser) = self.parser.lock() else {
-            return;
-        };
+        let parser = self.lock();
         let screen = parser.screen();
 
         for row in 0..area.height {
@@ -206,5 +201,29 @@ fn convert_vt_color(color: vt100::Color) -> Option<Color> {
         vt100::Color::Default => None,
         vt100::Color::Idx(idx) => Some(Color::Indexed(idx)),
         vt100::Color::Rgb(r, g, b) => Some(Color::Rgb(r, g, b)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the crash users hit on small terminals: `vt100` panics in
+    /// `grid.rs::col_wrap` when a line wraps on a degenerate (0/1-row) screen.
+    /// `VtScreen` must clamp the size and swallow the panic instead of letting
+    /// it unwind into the PTY reader thread.
+    #[test]
+    fn degenerate_screen_never_panics() {
+        // Constructor must clamp a 1x1 request to a safe size.
+        let screen = VtScreen::new(1, 1);
+
+        // Long wrapping line on a tiny screen...
+        screen.process(b"abcdefghijklmnopqrstuvwxyz0123456789\n\n\n");
+        // ...and a one-line scroll region (DECSTBM), the known trigger.
+        screen.process(b"\x1b[1;1rABC\r\nDEF\r\nGHI\r\n");
+
+        // Mutating entry points must be panic-safe too.
+        screen.resize(1, 1);
+        let _ = screen.scroll_info();
     }
 }

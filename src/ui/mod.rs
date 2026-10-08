@@ -23,11 +23,26 @@ use crate::{
 use chat_panel::ChatPanel;
 use terminal_panel::TerminalPanel;
 
-/// Accent colour for the local voice-input shortcut in the footer.
-const VOICE_COLOR: Color = Color::Cyan;
+
+/// Minimum terminal size at which the full split-screen layout is drawn.
+///
+/// Below these dimensions the layout math produces zero-height / overlapping
+/// areas and widgets end up writing outside the buffer, which panics inside
+/// `ratatui` (`buffer.rs`: "index outside of buffer"). A minimal message is
+/// shown instead, and a `Resize` event redraws the real UI once the terminal
+/// grows again.
+const MIN_TERMINAL_WIDTH: u16 = 20;
+const MIN_TERMINAL_HEIGHT: u16 = 8;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
+
+    if size.width < MIN_TERMINAL_WIDTH || size.height < MIN_TERMINAL_HEIGHT {
+        app.chat_area = Rect::default();
+        app.terminal_area = Rect::default();
+        render_too_small(frame, size, app);
+        return;
+    }
 
     // 1. Split screen vertically into Main workspace, Footer Divider Line, and 1-line Info Footer
     let vertical_chunks = Layout::vertical([
@@ -261,6 +276,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 }
 
+/// Minimal, panic-free screen shown while the terminal is smaller than the
+/// layout can handle. Uses only a clipped `Paragraph`, which is safe on any
+/// non-empty area.
+fn render_too_small(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let lang = app.config.get_language();
+    let msg = lang.t(I18nKey::TerminalTooSmall);
+
+    let paragraph = Paragraph::new(msg)
+        .style(Style::default().fg(Color::White).bg(Color::Rgb(15, 23, 42)))
+        .alignment(ratatui::layout::Alignment::Center);
+    frame.render_widget(paragraph, area);
+}
+
 const SPINNER_FRAMES: &[&str] = &["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 
 /// Returns the current spinner frame for smooth continuous rotation
@@ -352,7 +384,7 @@ fn render_toast_popup(app: &App, area: Rect, buf: &mut Buffer) {
                     return;
                 }
             } else if let Some((time, ref msg)) = app.toast_message {
-                if time.elapsed().as_millis() < 4500 {
+                if time.elapsed().as_millis() < 2500 {
                     ("", msg.clone(), Color::Cyan)
                 } else {
                     return;
@@ -392,21 +424,14 @@ fn render_toast_popup(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 fn build_right_shortcuts(app: &App, lang: Language, available_width: usize) -> Vec<Span<'static>> {
-    right_shortcut_spans(
-        lang,
-        app.config.auto_approve,
-        app.voice_state,
-        available_width,
-    )
+    right_shortcut_spans(lang, app.config.auto_approve, available_width)
 }
 
-/// Builds the right-hand footer shortcuts in exact order:
-/// **F3 approval, F7/F8 voice, F4 layout, F5 swap, F1 help**.
-/// All `Ctrl+*` shortcuts have been removed. F1 is always present at the end of the line.
+/// Builds the right-hand footer shortcuts: **F3 approval and F1 help**.
+/// All other shortcuts are removed to keep the status bar uncluttered and lightweight.
 fn right_shortcut_spans(
     lang: Language,
     auto_approve: crate::config::AutoApproveLevel,
-    voice_state: VoiceState,
     available_width: usize,
 ) -> Vec<Span<'static>> {
     use crate::config::AutoApproveLevel;
@@ -422,14 +447,13 @@ fn right_shortcut_spans(
         AutoApproveLevel::Off => (Color::DarkGray, "Off"),
     };
     let help_label = if lang == Language::Fr { "Aide" } else { "Help" };
-    let voice_label = lang.t(I18nKey::FooterVoiceLabel);
 
     struct Item {
-        /// Rich: `[ F4/F5 ] Layout/Switch `.
+        /// Rich: `[ F1 ] Aide `.
         pill: Vec<Span<'static>>,
-        /// Compact: `[F4/F5] Layout/Switch `.
+        /// Compact: `[F1] Aide `.
         compact: Vec<Span<'static>>,
-        /// Bare key: `[F4/F5]`.
+        /// Bare key: `[F1]`.
         keys: Vec<Span<'static>>,
     }
 
@@ -459,33 +483,7 @@ fn right_shortcut_spans(
         )]
     };
 
-    // Voice shortcut: while dictating, the item becomes a live state badge so the user can
-    // see the sentence is being recorded / transcribed; otherwise it advertises `F7/F8`.
-    let (voice_pill, voice_compact, voice_keys) = match voice_state {
-        VoiceState::Recording | VoiceState::Transcribing => {
-            let recording = voice_state == VoiceState::Recording;
-            let label = lang.t(if recording {
-                I18nKey::VoiceBadgeRecording
-            } else {
-                I18nKey::VoiceBadgeTranscribing
-            });
-            let color = if recording {
-                Color::Red
-            } else {
-                Color::Yellow
-            };
-            let mut spans = key_pill(label.to_string(), color);
-            spans.push(Span::raw(" "));
-            (spans.clone(), spans.clone(), spans)
-        }
-        _ => (
-            pill("F7/F8".to_string(), VOICE_COLOR, voice_label),
-            compact("[F7/F8]", VOICE_COLOR, voice_label),
-            bare("[F7/F8]", VOICE_COLOR),
-        ),
-    };
-
-    // Display order: F3 approval | F7/F8 voice | F4/F5 layout/switch | F1 help.
+    // Display items: 0=F3 approval, 1=F1 help.
     let items: Vec<Item> = vec![
         Item {
             pill: {
@@ -519,16 +517,6 @@ fn right_shortcut_spans(
             )],
         },
         Item {
-            pill: voice_pill.clone(),
-            compact: voice_compact.clone(),
-            keys: voice_keys.clone(),
-        },
-        Item {
-            pill: pill("F4/F5".to_string(), Color::Cyan, "Layout/Switch"),
-            compact: compact("[F4/F5]", Color::Cyan, "Layout/Switch"),
-            keys: bare("[F4/F5]", Color::Cyan),
-        },
-        Item {
             pill: pill("F1".to_string(), Color::LightYellow, help_label),
             compact: compact("[F1]", Color::LightYellow, help_label),
             keys: bare("[F1]", Color::LightYellow),
@@ -550,7 +538,7 @@ fn right_shortcut_spans(
         body + idxs.len().saturating_sub(1)
     };
 
-    let all_items = [0usize, 1, 2, 3]; // F3, F7/F8, F4/F5, F1
+    let all_items = [0usize, 1]; // F3, F1
 
     // Richest style whose items fit; falls back to bare keys.
     let style = (0..3)
@@ -559,18 +547,12 @@ fn right_shortcut_spans(
 
     let mut chosen: Vec<usize> = all_items.to_vec();
 
-    // If even the bare keys do not fit, drop in order: F4/F5 then F7/F8 then F3.
-    // F1 is ALWAYS kept at the end of the line.
+    // If even the bare keys do not fit, drop F3 (index 0). F1 is ALWAYS kept at the end.
     if group_total(style, &chosen) > available_width {
-        for &drop in &[2usize, 1, 0] {
-            if group_total(style, &chosen) <= available_width {
-                break;
-            }
-            chosen.retain(|&i| i != drop);
-        }
+        chosen.retain(|&i| i != 0);
     }
 
-    // Assemble in display order (ascending item index: 0=F3, 1=F7/F8, 2=F4/F5, 3=F1).
+    // Assemble in display order (ascending item index: 0=F3, 1=F1).
     chosen.sort_unstable();
     let mut right: Vec<Span<'static>> = Vec::new();
     for (n, &idx) in chosen.iter().enumerate() {
@@ -1146,73 +1128,40 @@ mod tests {
     }
 
     #[test]
-    fn footer_prioritizes_f3_f7_f8_f4_f5_f1() {
-        let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 240);
+    fn footer_displays_f3_and_f1() {
+        let spans = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 240);
         let t = text(&spans);
-        for expected in ["F3", "F7/F8", "F4/F5", "F1", "Layout/Switch"] {
-            assert!(t.contains(expected), "footer missing `{expected}`: {t}");
-        }
+        assert!(t.contains("F3"), "footer missing F3: {t}");
+        assert!(t.contains("F1"), "footer missing F1: {t}");
+        assert!(t.contains("Help"), "footer missing Help label: {t}");
+        assert!(!t.contains("F7/F8"), "footer must not contain F7/F8: {t}");
+        assert!(!t.contains("F4/F5"), "footer must not contain F4/F5: {t}");
         assert!(!t.contains("Config"));
         assert!(!t.contains("Ctrl"));
         let i_f3 = t.find("F3").expect("F3");
-        let i_voice = t.find("F7/F8").expect("F7/F8");
-        let i_layout = t.find("F4/F5").expect("F4/F5");
         let i_f1 = t.find("F1").expect("F1");
-        assert!(
-            i_f3 < i_voice && i_voice < i_layout && i_layout < i_f1,
-            "footer order must be F3 -> F7/F8 -> F4/F5 -> F1: {t}"
-        );
+        assert!(i_f3 < i_f1, "footer order must be F3 -> F1: {t}");
     }
 
     #[test]
     fn footer_keeps_essentials_when_narrow() {
-        // Mid width: all 4 shortcuts fit (compact style).
-        let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 90);
+        // Mid width: both shortcuts fit.
+        let mid = right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 90);
         let mt = text(&mid);
-        for expected in ["F3", "F7/F8", "F4/F5", "F1"] {
-            assert!(
-                mt.contains(expected),
-                "shortcut `{expected}` missing in mid-width: {mt}"
-            );
-        }
-        assert!(!mt.contains("Ctrl"), "Ctrl+* must not be present: {mt}");
+        assert!(mt.contains("F3"));
+        assert!(mt.contains("F1"));
+        assert!(!mt.contains("Ctrl"));
 
-        // Very narrow: F1 and F3 always survive, F1 at the end.
+        // Very narrow: F1 always survives at the end.
         let tiny = text(&right_shortcut_spans(
             Language::En,
             AutoApproveLevel::Safe,
-            VoiceState::Idle,
             5,
         ));
         assert!(tiny.contains("F1"), "F1 must always be kept: {tiny}");
-        assert!(!tiny.contains("F4/F5"));
+        assert!(!tiny.contains("F3"));
 
         // Below the floor: nothing is rendered.
-        assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, VoiceState::Idle, 2)
-            .is_empty());
-    }
-
-
-    #[test]
-    fn footer_shows_voice_state_badge_while_dictating() {
-        let recording = text(&right_shortcut_spans(
-            Language::En,
-            AutoApproveLevel::Safe,
-            VoiceState::Recording,
-            200,
-        ));
-        assert!(recording.contains("REC"), "expected REC badge: {recording}");
-        assert!(recording.contains("F1"));
-
-        let transcribing = text(&right_shortcut_spans(
-            Language::En,
-            AutoApproveLevel::Safe,
-            VoiceState::Transcribing,
-            200,
-        ));
-        assert!(
-            transcribing.contains("Transcribing"),
-            "expected Transcribing badge: {transcribing}"
-        );
+        assert!(right_shortcut_spans(Language::En, AutoApproveLevel::Safe, 2).is_empty());
     }
 }

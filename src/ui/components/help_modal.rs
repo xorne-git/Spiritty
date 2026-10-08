@@ -38,7 +38,7 @@ impl HelpModal {
     pub fn handle_key(key: KeyEvent, state: &mut HelpModalState) -> bool {
         let max = state.max_scroll.get();
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => return true,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) => return true,
             KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
                 state.scroll = state.scroll.saturating_sub(1);
             }
@@ -465,6 +465,192 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         key_col_w,
     ));
 
+    // --- Slash Commands (Prompt) ---
+    lines.push(Line::from(""));
+    lines.push(make_section_header(
+        lang.t(I18nKey::HelpSectionSlashCommands),
+        Color::Magenta,
+        header_w,
+    ));
+    lines.push(Line::from(""));
+
+    let mut help_slash = key_pill("/help", Color::Magenta);
+    help_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    help_slash.extend(key_pill("/?", Color::Magenta));
+    lines.push(make_help_row(
+        help_slash,
+        lang.t(I18nKey::HelpDescSlashHelp),
+        key_col_w,
+    ));
+
+    let mut config_slash = key_pill("/config", Color::Magenta);
+    config_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    config_slash.extend(key_pill("/settings", Color::Magenta));
+    lines.push(make_help_row(
+        config_slash,
+        lang.t(I18nKey::HelpDescConfigModal),
+        key_col_w,
+    ));
+
+    let mut skills_slash = key_pill("/skills", Color::Magenta);
+    skills_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    skills_slash.extend(key_pill("/skill", Color::Magenta));
+    lines.push(make_help_row(
+        skills_slash,
+        lang.t(I18nKey::HelpDescSlashSkills),
+        key_col_w,
+    ));
+
+    let mut sessions_slash = key_pill("/sessions", Color::Magenta);
+    sessions_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    sessions_slash.extend(key_pill("/history", Color::Magenta));
+    lines.push(make_help_row(
+        sessions_slash,
+        lang.t(I18nKey::HelpDescSessionModal),
+        key_col_w,
+    ));
+
+    let mut bookmarks_slash = key_pill("/bookmarks", Color::Magenta);
+    bookmarks_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    bookmarks_slash.extend(key_pill(lang.t(I18nKey::HelpKeySlashSsh), Color::Magenta));
+    lines.push(make_help_row(
+        bookmarks_slash,
+        lang.t(I18nKey::HelpDescSlashBookmarks),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("/mcp", Color::Magenta),
+        lang.t(I18nKey::HelpDescMcpModal),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill(lang.t(I18nKey::HelpKeySlashExport), Color::Magenta),
+        lang.t(I18nKey::HelpDescSlashExport),
+        key_col_w,
+    ));
+
+    let mut new_slash = key_pill("/new", Color::Magenta);
+    new_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    new_slash.extend(key_pill("/clear", Color::Magenta));
+    lines.push(make_help_row(
+        new_slash,
+        lang.t(I18nKey::HelpDescNewSession),
+        key_col_w,
+    ));
+
+    let mut search_slash = key_pill(lang.t(I18nKey::HelpKeySlashSearch), Color::Magenta);
+    search_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    search_slash.extend(key_pill("/find", Color::Magenta));
+    lines.push(make_help_row(
+        search_slash,
+        lang.t(I18nKey::HelpDescSlashSearch),
+        key_col_w,
+    ));
+
+    let mut tab_slash = key_pill("/tab", Color::Magenta);
+    tab_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    tab_slash.extend(key_pill("/newtab", Color::Magenta));
+    lines.push(make_help_row(
+        tab_slash,
+        lang.t(I18nKey::HelpDescNewTab),
+        key_col_w,
+    ));
+
+    let mut close_tab_slash = key_pill("/closetab", Color::Magenta);
+    close_tab_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    close_tab_slash.extend(key_pill("/close", Color::Magenta));
+    lines.push(make_help_row(
+        close_tab_slash,
+        lang.t(I18nKey::HelpDescCloseTab),
+        key_col_w,
+    ));
+
+    let mut next_tab_slash = key_pill("/nexttab", Color::Magenta);
+    next_tab_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    next_tab_slash.extend(key_pill("/prevtab", Color::Magenta));
+    lines.push(make_help_row(
+        next_tab_slash,
+        lang.t(I18nKey::HelpDescSlashNextPrevTab),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill(lang.t(I18nKey::HelpKeySlashRename), Color::Magenta),
+        lang.t(I18nKey::HelpDescSlashRename),
+        key_col_w,
+    ));
+
+    let mut layout_slash = key_pill("/layout", Color::Magenta);
+    layout_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    layout_slash.extend(key_pill("/split", Color::Magenta));
+    lines.push(make_help_row(
+        layout_slash,
+        lang.t(I18nKey::HelpDescToggleOrientation),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("/swap", Color::Magenta),
+        lang.t(I18nKey::HelpDescSwapPanels),
+        key_col_w,
+    ));
+
+    let mut focus_slash = key_pill("/focus", Color::Magenta);
+    focus_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    focus_slash.extend(key_pill("/toggle", Color::Magenta));
+    lines.push(make_help_row(
+        focus_slash,
+        lang.t(I18nKey::HelpDescToggleFocus),
+        key_col_w,
+    ));
+
+    let mut approve_slash = key_pill(lang.t(I18nKey::HelpKeySlashApprove), Color::Magenta);
+    approve_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    approve_slash.extend(key_pill("/yolo", Color::Magenta));
+    lines.push(make_help_row(
+        approve_slash,
+        lang.t(I18nKey::HelpDescSlashApprove),
+        key_col_w,
+    ));
+
+    let mut diag_slash = key_pill("/diagnose", Color::Magenta);
+    diag_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    diag_slash.extend(key_pill("/fix", Color::Magenta));
+    lines.push(make_help_row(
+        diag_slash,
+        lang.t(I18nKey::HelpDescDiagnoseError),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("/voice", Color::Magenta),
+        lang.t(I18nKey::HelpDescSlashVoice),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill("/scan", Color::Magenta),
+        lang.t(I18nKey::HelpDescScanHost),
+        key_col_w,
+    ));
+
+    let mut quit_slash = key_pill("/quit", Color::Magenta);
+    quit_slash.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    quit_slash.extend(key_pill("/exit", Color::Magenta));
+    lines.push(make_help_row(
+        quit_slash,
+        lang.t(I18nKey::HelpDescQuit),
+        key_col_w,
+    ));
+
+    lines.push(make_help_row(
+        key_pill(lang.t(I18nKey::HelpKeySlashTab), Color::Cyan),
+        lang.t(I18nKey::HelpDescSlashTab),
+        key_col_w,
+    ));
+
     // --- General & Control ---
     lines.push(Line::from(""));
     lines.push(make_section_header(
@@ -480,8 +666,14 @@ fn build_help_lines(lang: Language, width: usize) -> Vec<Line<'static>> {
         key_col_w,
     ));
 
+    let mut quit_keys = key_pill(format!("{} + Q", lang.t(I18nKey::HelpKeyCtrl)), Color::Red);
+    quit_keys.push(Span::raw(lang.t(I18nKey::HelpKeyOr)));
+    quit_keys.extend(key_pill(
+        format!("2x {} + C", lang.t(I18nKey::HelpKeyCtrl)),
+        Color::Red,
+    ));
     lines.push(make_help_row(
-        key_pill(format!("{} + Q", lang.t(I18nKey::HelpKeyCtrl)), Color::Red),
+        quit_keys,
         lang.t(I18nKey::HelpDescQuit),
         key_col_w,
     ));

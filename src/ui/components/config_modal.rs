@@ -716,8 +716,16 @@ impl ConfigModalState {
             }
         }
 
+        if key.code == KeyCode::Esc
+            || (key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')))
+        {
+            return ConfigModalAction::Close;
+        }
+
         match key.code {
-            KeyCode::Esc => return ConfigModalAction::Close,
             KeyCode::Tab | KeyCode::Down => {
                 self.active_field = self.active_field.next();
             }
@@ -896,7 +904,14 @@ impl ConfigModalState {
                 }
                 _ => {}
             },
-            KeyCode::Char(c) if !c.is_control() && c != '\n' && c != '\r' => {
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && !c.is_control()
+                    && c != '\n'
+                    && c != '\r' =>
+            {
                 match self.active_field {
                     ConfigField::BaseUrl => {
                         insert_char_at(&mut self.base_url_input, self.url_cursor, c);
@@ -1241,7 +1256,7 @@ impl ConfigModalState {
         let mut save_spans = vec![Span::styled(lang.t(I18nKey::ConfigButtonSave), save_style)];
 
         if let Some((time, ref status_text, color)) = self.pricing_status {
-            if time.elapsed().as_secs() < 8 {
+            if time.elapsed().as_secs() < 3 {
                 save_spans.push(Span::raw("   "));
                 save_spans.push(Span::styled(
                     status_text.clone(),

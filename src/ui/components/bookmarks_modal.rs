@@ -41,6 +41,7 @@ pub struct BookmarksModalState {
     pub add_state: AddHostState,
     pub confirm_delete_target: Option<String>,
     pub active_ssh_target: Option<String>,
+    pub has_modified: bool,
 }
 
 impl BookmarksModalState {
@@ -52,6 +53,7 @@ impl BookmarksModalState {
             add_state: AddHostState::None,
             confirm_delete_target: None,
             active_ssh_target,
+            has_modified: false,
         }
     }
 
@@ -104,6 +106,7 @@ impl BookmarksModalState {
                 | KeyCode::Char('O')
                 | KeyCode::Enter => {
                     let _ = hosts_store.remove_bookmark(&target);
+                    self.has_modified = true;
                     self.confirm_delete_target = None;
                     self.refresh(hosts_store);
                     return None;
@@ -214,6 +217,7 @@ impl BookmarksModalState {
                             Some(input.trim().to_string())
                         };
                         let _ = hosts_store.add_bookmark(target.clone(), alias);
+                        self.has_modified = true;
                         self.add_state = AddHostState::None;
                         self.refresh(hosts_store);
                         return None;
@@ -263,6 +267,17 @@ impl BookmarksModalState {
                 return None;
             }
             AddHostState::None => {}
+        }
+
+        if self.add_state == AddHostState::None
+            && key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            if matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B')) {
+                return Some(BookmarksModalAction::Close);
+            }
+            return None;
         }
 
         // Navigation mode

@@ -384,6 +384,7 @@ pub struct App {
     /// Hit regions for terminal tabs
     pub terminal_tab_hits: std::cell::RefCell<Vec<TerminalTabHit>>,
     pub should_quit: bool,
+    pub last_ctrl_c: Option<std::time::Instant>,
     pub split_ratio: u16,
     /// Current split orientation (horizontal = chat on top, vertical = side by side).
     pub split_orientation: SplitOrientation,
@@ -725,6 +726,7 @@ impl App {
             next_tab_id,
             terminal_tab_hits: std::cell::RefCell::new(Vec::new()),
             should_quit: false,
+            last_ctrl_c: None,
             split_ratio,
             split_orientation,
             split_swapped: config.get_split_swapped(),
@@ -842,11 +844,12 @@ impl App {
                 if let ModalState::Config(ref mut config_state) = self.modal {
                     config_state.pricing_status = Some((
                         std::time::Instant::now(),
-                        msg.clone(),
+                        msg,
                         ratatui::style::Color::Green,
                     ));
+                } else {
+                    self.set_toast(msg);
                 }
-                self.set_toast(msg);
             }
             Err(err) => {
                 let msg = format!(
@@ -857,11 +860,12 @@ impl App {
                 if let ModalState::Config(ref mut config_state) = self.modal {
                     config_state.pricing_status = Some((
                         std::time::Instant::now(),
-                        msg.clone(),
+                        msg,
                         ratatui::style::Color::Red,
                     ));
+                } else {
+                    self.set_toast(msg);
                 }
-                self.set_toast(msg);
             }
         }
     }
@@ -1107,6 +1111,19 @@ impl App {
         match outcome {
             ModalOutcome::None => {}
             ModalOutcome::Close => {
+                let lang = self.config.get_language();
+                match self.modal {
+                    ModalState::Skills(ref s) if s.has_modified => {
+                        self.set_toast(lang.t(I18nKey::ToastSkillsSaved).to_string());
+                    }
+                    ModalState::Mcp(ref m) if m.has_modified => {
+                        self.set_toast(lang.t(I18nKey::ToastMcpSaved).to_string());
+                    }
+                    ModalState::Bookmarks(ref b) if b.has_modified => {
+                        self.set_toast(lang.t(I18nKey::ToastBookmarksSaved).to_string());
+                    }
+                    _ => {}
+                }
                 self.modal = ModalState::None;
             }
             ModalOutcome::LoadSession(id) => {
@@ -1187,6 +1204,8 @@ impl App {
                 self.current_session.model = self.config.get_active_provider_config().model.clone();
                 self.save_current_session();
                 self.modal = ModalState::None;
+                let lang = self.config.get_language();
+                self.set_toast(lang.t(I18nKey::ToastConfigSaved).to_string());
             }
             ModalOutcome::UpdatePricing => {
                 if let ModalState::Config(ref config_state) = self.modal {
@@ -1218,6 +1237,8 @@ impl App {
                     self.save_current_session();
                 }
                 self.modal = ModalState::None;
+                let lang = self.config.get_language();
+                self.set_toast(lang.t(I18nKey::ToastTabRenamed).to_string());
             }
         }
     }
@@ -1599,6 +1620,253 @@ impl App {
         self.voice_continuous = false;
     }
 
+    /// Autocompletes slash command in chat_input when Tab is pressed.
+    pub fn complete_slash_command(&mut self) {
+        const ALL_SLASH_COMMANDS: &[&str] = &[
+            "/approve",
+            "/bookmarks",
+            "/clear",
+            "/closetab",
+            "/config",
+            "/diagnose",
+            "/exit",
+            "/export",
+            "/focus",
+            "/help",
+            "/history",
+            "/layout",
+            "/mcp",
+            "/new",
+            "/nexttab",
+            "/prevtab",
+            "/quit",
+            "/rename",
+            "/reset",
+            "/scan",
+            "/search",
+            "/sessions",
+            "/settings",
+            "/skills",
+            "/split",
+            "/ssh",
+            "/swap",
+            "/tab",
+            "/voice",
+            "/yolo",
+        ];
+
+        let prefix = self.chat_input.to_lowercase();
+        let matches: Vec<&&str> = ALL_SLASH_COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(&prefix))
+            .collect();
+
+        if matches.is_empty() {
+            return;
+        }
+
+        if matches.len() == 1 {
+            self.chat_input = format!("{} ", matches[0]);
+            self.cursor_pos = self.chat_input.len();
+        } else {
+            let first = matches[0];
+            let mut common_len = first.len();
+            for m in &matches[1..] {
+                common_len = common_len.min(m.len());
+                while !m.starts_with(&first[..common_len]) {
+                    common_len -= 1;
+                }
+            }
+            if common_len > prefix.len() {
+                self.chat_input = first[..common_len].to_string();
+                self.cursor_pos = self.chat_input.len();
+            }
+
+            let list: Vec<String> = matches.iter().take(6).map(|s| s.to_string()).collect();
+            let mut summary = list.join("  ");
+            if matches.len() > 6 {
+                summary.push_str(" …");
+            }
+            self.set_toast(summary);
+        }
+    }
+
+    /// Dispatches a prompt slash command (`/help`, `/config`, `/skills`, etc.).
+    /// Returns `true` if handled, preventing the input from submitting to the LLM agent.
+    pub fn handle_slash_command(&mut self, input: &str) -> bool {
+        let trimmed = input.trim();
+        if !trimmed.starts_with('/') {
+            return false;
+        }
+
+        // Avoid capturing file/directory paths like /var/log or /home/user
+        if trimmed[1..].contains('/') {
+            return false;
+        }
+
+        let (cmd, args) = trimmed
+            .split_once(char::is_whitespace)
+            .map(|(c, a)| (c, a.trim()))
+            .unwrap_or((trimmed, ""));
+
+        let cmd_lower = cmd.to_lowercase();
+        let lang = self.config.get_language();
+
+        match cmd_lower.as_str() {
+            "/" => {
+                self.set_toast(if lang == Language::Fr {
+                    "Commandes : /help  /config  /skills  /sessions  /bookmarks  /mcp  /export  /tab …".to_string()
+                } else {
+                    "Commands: /help  /config  /skills  /sessions  /bookmarks  /mcp  /export  /tab …".to_string()
+                });
+            }
+            "/help" | "/?" => {
+                self.open_help_modal();
+            }
+            "/config" | "/settings" => {
+                self.open_config_modal();
+            }
+            "/skills" | "/skill" => {
+                self.open_skills_modal();
+            }
+            "/sessions" | "/session" | "/history" => {
+                self.open_sessions_modal();
+            }
+            "/bookmarks" | "/hosts" => {
+                self.open_bookmarks_modal();
+            }
+            "/ssh" => {
+                if !args.is_empty() {
+                    let cmd = format!("ssh {}\n", args);
+                    let _ = self.pty_mut().write_all(cmd.as_bytes());
+                    self.focus = Focus::Terminal;
+                    self.set_toast(if lang == Language::Fr {
+                        format!("🔗 Connexion à {}…", args)
+                    } else {
+                        format!("🔗 Connecting to {}…", args)
+                    });
+                } else {
+                    self.open_bookmarks_modal();
+                }
+            }
+            "/mcp" => {
+                self.open_mcp_modal();
+            }
+            "/export" => {
+                if !args.is_empty() {
+                    match self.export_current_session_markdown_to(args) {
+                        Ok(resolved_path) => {
+                            let compact = crate::system::format_compact_path(&resolved_path);
+                            self.set_toast(format!("📝 Rapport exporté : {}", compact));
+                        }
+                        Err(e) => {
+                            self.set_toast(format!("❌ Erreur export : {}", e));
+                        }
+                    }
+                } else {
+                    self.open_export_modal();
+                }
+            }
+            "/new" | "/clear" | "/reset" => {
+                self.new_session();
+            }
+            "/search" | "/find" => {
+                self.chat_search_active = true;
+                if !args.is_empty() {
+                    self.chat_search_query = args.to_string();
+                    self.chat_search_cursor = args.chars().count();
+                    self.chat_search_match_idx = 0;
+                } else {
+                    self.chat_search_query.clear();
+                    self.chat_search_cursor = 0;
+                    self.chat_search_match_idx = 0;
+                }
+                self.focus = Focus::Chat;
+            }
+            "/tab" | "/newtab" => {
+                let _ = self.new_tab();
+                self.focus = Focus::Terminal;
+            }
+            "/closetab" | "/close" => {
+                self.close_active_tab();
+            }
+            "/nexttab" => {
+                self.next_tab();
+            }
+            "/prevtab" => {
+                self.previous_tab();
+            }
+            "/rename" | "/renametab" => {
+                if !args.is_empty() {
+                    self.active_tab_mut().custom_title = Some(args.to_string());
+                    self.save_current_session();
+                    self.set_toast(lang.t(I18nKey::ToastTabRenamed).to_string());
+                } else {
+                    self.open_rename_tab_modal();
+                }
+            }
+            "/layout" | "/split" => {
+                self.toggle_split_orientation();
+            }
+            "/swap" => {
+                self.toggle_split_swapped();
+            }
+            "/focus" | "/toggle" => {
+                self.toggle_focus();
+            }
+            "/approve" | "/safety" | "/yolo" => {
+                if args.is_empty() {
+                    if cmd_lower == "/yolo" {
+                        self.set_auto_approve_level(crate::config::AutoApproveLevel::Yolo);
+                    } else {
+                        let next = self.cycle_auto_approve();
+                        let name = match next {
+                            crate::config::AutoApproveLevel::Safe => "Safe",
+                            crate::config::AutoApproveLevel::Sudo => "Sudo",
+                            crate::config::AutoApproveLevel::Yolo => "YOLO",
+                            crate::config::AutoApproveLevel::Off => "Off",
+                        };
+                        self.set_toast(if lang == Language::Fr {
+                            format!("🛡️ Approbation : {}", name)
+                        } else {
+                            format!("🛡️ Approval: {}", name)
+                        });
+                    }
+                } else {
+                    let level = match args.to_lowercase().as_str() {
+                        "safe" => Some(crate::config::AutoApproveLevel::Safe),
+                        "sudo" => Some(crate::config::AutoApproveLevel::Sudo),
+                        "yolo" => Some(crate::config::AutoApproveLevel::Yolo),
+                        "off" => Some(crate::config::AutoApproveLevel::Off),
+                        _ => None,
+                    };
+                    if let Some(lvl) = level {
+                        self.set_auto_approve_level(lvl);
+                    } else {
+                        self.cycle_auto_approve();
+                    }
+                }
+            }
+            "/diagnose" | "/diag" | "/fix" => {
+                self.trigger_proactive_diagnosis();
+            }
+            "/voice" => {
+                self.toggle_voice_continuous();
+            }
+            "/scan" => {
+                self.trigger_host_scan();
+            }
+            "/quit" | "/exit" => {
+                self.should_quit = true;
+            }
+            _ => {
+                self.set_toast(lang.t(I18nKey::ToastUnknownSlashCommand).to_string());
+            }
+        }
+
+        true
+    }
+
     /// Submits the current chat input as a user turn. Shared by the `Enter` key and the
     /// local voice transcript auto-submit (so both paths cannot diverge). No-op on blank
     /// input (without a pending attachment) or while the agent is already generating.
@@ -1609,17 +1877,13 @@ impl App {
             return;
         }
 
-        // Slash command to open Skills management modal
-        if input.eq_ignore_ascii_case("/skills") || input.eq_ignore_ascii_case("/skill") {
+        // Slash commands mapping to application actions and shortcuts
+        if self.handle_slash_command(&input) {
             self.chat_input.clear();
             self.cursor_pos = 0;
             self.chat_input_scroll.set(0);
-            if let Ok(mut sm) = self.agent.skills_manager.write() {
-                sm.reload();
-            }
-            self.modal = ModalState::Skills(crate::ui::components::SkillsModalState::new(
-                &self.config.skills,
-            ));
+            self.history_index = None;
+            self.input_draft.clear();
             return;
         }
 
@@ -2328,8 +2592,128 @@ impl App {
         next_level
     }
 
+    pub fn open_help_modal(&mut self) {
+        self.modal = ModalState::Help(HelpModalState::new());
+    }
+
+    pub fn open_config_modal(&mut self) {
+        self.probe_provider_models(ProviderType::LmStudio);
+        self.probe_provider_models(ProviderType::Ollama);
+        if self.config.default_provider != ProviderType::LmStudio
+            && self.config.default_provider != ProviderType::Ollama
+        {
+            self.probe_provider_models(self.config.default_provider);
+        }
+        self.modal = ModalState::Config(ConfigModalState::from_config(&self.config));
+    }
+
+    pub fn open_sessions_modal(&mut self) {
+        self.save_current_session();
+        self.modal = ModalState::Sessions(SessionModalState::new(self.current_session.id.clone()));
+    }
+
+    pub fn open_bookmarks_modal(&mut self) {
+        let active_ssh = self
+            .system_context
+            .active_session
+            .ssh_target()
+            .map(|s| s.to_string());
+        self.modal = ModalState::Bookmarks(BookmarksModalState::new(
+            &self.system_supervisor.hosts_store,
+            active_ssh,
+        ));
+    }
+
+    pub fn open_export_modal(&mut self) {
+        let default_path = self.default_export_path();
+        self.modal = ModalState::Export(ExportModalState::new(default_path));
+    }
+
+    pub fn open_mcp_modal(&mut self) {
+        let cached = self.agent.mcp_manager.get_server_statuses_cached();
+        let mut server_statuses = Vec::new();
+        for (name, s_cfg) in &self.config.mcp_servers {
+            if let Some(existing) = cached.iter().find(|s| s.name == *name) {
+                server_statuses.push(existing.clone());
+            } else {
+                server_statuses.push(crate::agent::mcp::manager::McpServerStatus {
+                    name: name.clone(),
+                    command: s_cfg.command.clone(),
+                    args: s_cfg.args.clone(),
+                    enabled: s_cfg.enabled,
+                    status: if s_cfg.enabled {
+                        crate::agent::mcp::manager::McpStatus::Connected(0)
+                    } else {
+                        crate::agent::mcp::manager::McpStatus::Disabled
+                    },
+                    tools: Vec::new(),
+                });
+            }
+        }
+        self.modal = ModalState::Mcp(crate::ui::components::McpModalState::new(server_statuses));
+    }
+
+    pub fn open_skills_modal(&mut self) {
+        if let Ok(mut sm) = self.agent.skills_manager.write() {
+            sm.reload();
+        }
+        self.modal = ModalState::Skills(crate::ui::components::SkillsModalState::new(
+            &self.config.skills,
+        ));
+    }
+
+    pub fn open_rename_tab_modal(&mut self) {
+        let current_title = self.active_tab().custom_title.clone().unwrap_or_default();
+        self.modal = ModalState::RenameTab(crate::ui::components::RenameTabModalState::new(
+            self.active_tab_index,
+            current_title,
+        ));
+    }
+
+    pub fn set_auto_approve_level(&mut self, level: crate::config::AutoApproveLevel) {
+        self.config.auto_approve = level;
+        self.agent
+            .reload_config(self.config.clone(), Some(self.event_tx.clone()));
+        let _ = self.config.save();
+        self.save_current_session();
+        let lang = self.config.get_language();
+        let name = match level {
+            crate::config::AutoApproveLevel::Safe => "Safe",
+            crate::config::AutoApproveLevel::Sudo => "Sudo",
+            crate::config::AutoApproveLevel::Yolo => "YOLO",
+            crate::config::AutoApproveLevel::Off => "Off",
+        };
+        self.set_toast(if lang == Language::Fr {
+            format!("🛡️ Approbation : {}", name)
+        } else {
+            format!("🛡️ Approval: {}", name)
+        });
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // 0. F10 fast-track approval of a pending command card — works from BOTH panes
+        // 0. If a modal is open, it captures all keys
+        if self.modal.is_open() {
+            let outcome = self.modal.handle_key(
+                key,
+                &mut self.config,
+                &mut self.system_supervisor.hosts_store,
+            );
+            if outcome != ModalOutcome::None {
+                self.apply_modal_outcome(outcome);
+            }
+            self.last_ctrl_c = None;
+            return;
+        }
+
+        let is_ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'));
+
+        // Any key other than Ctrl+C (or any key while terminal is focused) cancels the double-press quit arming
+        if !is_ctrl_c || self.focus != Focus::Chat {
+            self.last_ctrl_c = None;
+        }
+
+        // 1. F10 fast-track approval of a pending command card — works from BOTH panes
         // (typing ok/oui + Enter every time gets tedious during long audit sessions).
         if key.code == KeyCode::F(10) && self.pending_tool_approval.is_some() {
             self.chat_input.clear();
@@ -2342,12 +2726,9 @@ impl App {
             return;
         }
 
-        // 1. Global modal triggers & shortcuts
+        // 2. Global modal triggers & shortcuts (modal is guaranteed to be ModalState::None here)
         if key.code == KeyCode::F(1) {
-            self.modal = match self.modal {
-                ModalState::Help(_) => ModalState::None,
-                _ => ModalState::Help(HelpModalState::new()),
-            };
+            self.open_help_modal();
             return;
         }
 
@@ -2363,112 +2744,42 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
         {
-            self.modal = match self.modal {
-                ModalState::Config(_) => ModalState::None,
-                _ => {
-                    self.probe_provider_models(ProviderType::LmStudio);
-                    self.probe_provider_models(ProviderType::Ollama);
-                    if self.config.default_provider != ProviderType::LmStudio
-                        && self.config.default_provider != ProviderType::Ollama
-                    {
-                        self.probe_provider_models(self.config.default_provider);
-                    }
-                    ModalState::Config(ConfigModalState::from_config(&self.config))
-                }
-            };
+            self.open_config_modal();
             return;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H'))
         {
-            self.save_current_session();
-            self.modal = match self.modal {
-                ModalState::Sessions(_) => ModalState::None,
-                _ => ModalState::Sessions(SessionModalState::new(self.current_session.id.clone())),
-            };
+            self.open_sessions_modal();
             return;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
         {
-            self.modal = match self.modal {
-                ModalState::Bookmarks(_) => ModalState::None,
-                _ => {
-                    let active_ssh = self
-                        .system_context
-                        .active_session
-                        .ssh_target()
-                        .map(|s| s.to_string());
-                    ModalState::Bookmarks(BookmarksModalState::new(
-                        &self.system_supervisor.hosts_store,
-                        active_ssh,
-                    ))
-                }
-            };
+            self.open_bookmarks_modal();
             return;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
         {
-            self.modal = match self.modal {
-                ModalState::Export(_) => ModalState::None,
-                _ => {
-                    let default_path = self.default_export_path();
-                    ModalState::Export(ExportModalState::new(default_path))
-                }
-            };
+            self.open_export_modal();
             return;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('m') | KeyCode::Char('M'))
         {
-            self.modal = match self.modal {
-                ModalState::Mcp(_) => ModalState::None,
-                _ => {
-                    let cached = self.agent.mcp_manager.get_server_statuses_cached();
-                    let mut server_statuses = Vec::new();
-                    for (name, s_cfg) in &self.config.mcp_servers {
-                        if let Some(existing) = cached.iter().find(|s| s.name == *name) {
-                            server_statuses.push(existing.clone());
-                        } else {
-                            server_statuses.push(crate::agent::mcp::manager::McpServerStatus {
-                                name: name.clone(),
-                                command: s_cfg.command.clone(),
-                                args: s_cfg.args.clone(),
-                                enabled: s_cfg.enabled,
-                                status: if s_cfg.enabled {
-                                    crate::agent::mcp::manager::McpStatus::Connected(0)
-                                } else {
-                                    crate::agent::mcp::manager::McpStatus::Disabled
-                                },
-                                tools: Vec::new(),
-                            });
-                        }
-                    }
-                    ModalState::Mcp(crate::ui::components::McpModalState::new(server_statuses))
-                }
-            };
+            self.open_mcp_modal();
             return;
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
         {
-            self.modal = match self.modal {
-                ModalState::Skills(_) => ModalState::None,
-                _ => {
-                    if let Ok(mut sm) = self.agent.skills_manager.write() {
-                        sm.reload();
-                    }
-                    ModalState::Skills(crate::ui::components::SkillsModalState::new(
-                        &self.config.skills,
-                    ))
-                }
-            };
+            self.open_skills_modal();
             return;
         }
 
@@ -2546,18 +2857,6 @@ impl App {
             }
         }
 
-        // 2. If a modal is open, it captures all keys
-        if self.modal.is_open() {
-            let outcome = self.modal.handle_key(
-                key,
-                &mut self.config,
-                &mut self.system_supervisor.hosts_store,
-            );
-            if outcome != ModalOutcome::None {
-                self.apply_modal_outcome(outcome);
-            }
-            return;
-        }
 
         // 3. Alt + D for proactive error diagnosis, Alt + X/C to dismiss, Alt + 1..9 / AZERTY to execute proposed command cards, and Alt+Left / Alt+Right for split resize
         if key.modifiers.contains(KeyModifiers::ALT) {
@@ -2578,12 +2877,7 @@ impl App {
             }
 
             if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
-                let current_title = self.active_tab().custom_title.clone().unwrap_or_default();
-                self.modal =
-                    ModalState::RenameTab(crate::ui::components::RenameTabModalState::new(
-                        self.active_tab_index,
-                        current_title,
-                    ));
+                self.open_rename_tab_modal();
                 return;
             }
 
@@ -2782,6 +3076,18 @@ impl App {
     pub fn on_tick(&mut self) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
 
+        // Expire transient toasts after their timeout (2.5s) so the screen repaints and dismisses them
+        if let Some((time, _)) = self.toast_message {
+            if time.elapsed() >= std::time::Duration::from_millis(2500) {
+                self.toast_message = None;
+            }
+        }
+        if let Some((time, _)) = self.clipboard_toast {
+            if time.elapsed() >= std::time::Duration::from_millis(2500) {
+                self.clipboard_toast = None;
+            }
+        }
+
         // Periodically poll active foreground session (every ~360ms)
         if self.spinner_frame.is_multiple_of(4) {
             self.poll_active_session();
@@ -2889,6 +3195,12 @@ impl App {
 
     pub fn set_toast(&mut self, msg: String) {
         self.toast_message = Some((std::time::Instant::now(), msg));
+    }
+
+    pub fn has_active_toast(&self) -> bool {
+        self.toast_message.is_some()
+            || self.clipboard_toast.is_some()
+            || matches!(self.voice_state, VoiceState::Recording | VoiceState::Transcribing)
     }
 
     pub fn find_search_matches(&self) -> Vec<usize> {
@@ -3045,6 +3357,9 @@ impl App {
     }
 
     fn handle_chat_key(&mut self, key: KeyEvent) {
+        let is_ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'));
+
         // 1. If there is a pending tool execution approval, intercept decisions & natural phrases
         if self.pending_tool_approval.is_some() {
             if key.code == KeyCode::Enter && !key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3077,7 +3392,7 @@ impl App {
                         }
                     }
                 }
-            } else if key.code == KeyCode::Esc {
+            } else if key.code == KeyCode::Esc || is_ctrl_c {
                 self.chat_input.clear();
                 self.cursor_pos = 0;
                 if let Some(mut pending) = self.pending_tool_approval.take() {
@@ -3085,12 +3400,19 @@ impl App {
                         let _ = tx.send(false);
                     }
                 }
+                self.last_ctrl_c = None;
                 return;
             }
         }
 
         // 2. Chat Search input interceptor (Ctrl+F active)
         if self.chat_search_active {
+            if is_ctrl_c {
+                self.chat_search_active = false;
+                self.chat_search_query.clear();
+                self.last_ctrl_c = None;
+                return;
+            }
             match key.code {
                 KeyCode::Esc => {
                     self.chat_search_active = false;
@@ -3149,12 +3471,33 @@ impl App {
         }
 
         // 3. Esc or Ctrl+C cancels active generation or active PTY tool
-        let is_stop_key = key.code == KeyCode::Esc
-            || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && key.code == KeyCode::Char('c'));
+        let is_stop_key = key.code == KeyCode::Esc || is_ctrl_c;
 
         if is_stop_key && self.agent.is_generating {
             self.stop_agent_generation();
+            self.last_ctrl_c = None;
+            return;
+        }
+
+        // 4. Double Ctrl+C to quit cleanly from Chat panel (standard CLI/REPL shortcut)
+        if is_ctrl_c {
+            let now = std::time::Instant::now();
+            let double_press_window = std::time::Duration::from_millis(2000);
+            if let Some(prev) = self.last_ctrl_c.take() {
+                if prev.elapsed() <= double_press_window {
+                    self.should_quit = true;
+                    return;
+                }
+            }
+            self.last_ctrl_c = Some(now);
+            if !self.chat_input.is_empty() {
+                self.chat_input.clear();
+                self.cursor_pos = 0;
+                self.history_index = None;
+                self.input_draft.clear();
+            }
+            let lang = self.config.get_language();
+            self.set_toast(lang.t(I18nKey::ToastPressCtrlCAgainToQuit).to_string());
             return;
         }
 
@@ -3181,6 +3524,16 @@ impl App {
                 }
 
                 self.submit_chat_input();
+            }
+
+            KeyCode::Tab => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && self.chat_input.starts_with('/')
+                    && !self.chat_input.contains(' ')
+                {
+                    self.complete_slash_command();
+                }
             }
 
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -5812,6 +6165,7 @@ mod tests {
 
         let (event_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(event_tx, 60, 110).unwrap();
+        app.config.language = Some("fr".to_string());
         // Session resumed with -c: it WAS remote, PTY is local right now.
         app.current_session.last_ssh_target = Some("vps".to_string());
 
@@ -5872,6 +6226,7 @@ mod tests {
 
         let (event_tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(event_tx, 60, 110).unwrap();
+        app.config.language = Some("fr".to_string());
         app.current_session.last_ssh_target = Some("xorne@prod".to_string());
 
         // Simulate the terminal panel of a 120-col terminal: the split gives it

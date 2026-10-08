@@ -44,6 +44,42 @@ async fn test_app_ctrl_s_toggles_skills_modal() {
 }
 
 #[tokio::test]
+async fn test_ctrl_s_in_config_modal_saves_and_does_not_open_skills() {
+    let mut app = create_test_app();
+    assert!(matches!(app.modal, ModalState::None));
+
+    // Open Config modal with Ctrl+P
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    assert!(matches!(app.modal, ModalState::Config(_)));
+
+    // Modify a setting inside the modal
+    if let ModalState::Config(ref mut config_state) = app.modal {
+        config_state.voice_enabled = true;
+    }
+
+    // Press Ctrl+S
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+    // Must save and close, NOT switch to Skills modal
+    assert!(matches!(app.modal, ModalState::None));
+    assert!(app.config.voice.enabled);
+}
+
+#[tokio::test]
+async fn test_ctrl_p_toggles_config_modal() {
+    let mut app = create_test_app();
+    assert!(matches!(app.modal, ModalState::None));
+
+    // Open Config modal with Ctrl+P
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    assert!(matches!(app.modal, ModalState::Config(_)));
+
+    // Press Ctrl+P again to close
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    assert!(matches!(app.modal, ModalState::None));
+}
+
+#[tokio::test]
 async fn test_slash_skills_commands_open_modal() {
     let mut app = create_test_app();
     assert!(matches!(app.modal, ModalState::None));

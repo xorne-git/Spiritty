@@ -983,8 +983,8 @@ async fn test_responsive_footer_rendering_at_various_widths() {
         }
 
         if width >= 140 {
-            // Priority shortcuts (F3 approval, F7/F8 voice, F4/F5 layout/switch, F1 help)
-            for expected in ["F3", "F7/F8", "F4/F5", "F1", "Layout/Switch"] {
+            // Priority shortcuts (F3 approval, F1 help)
+            for expected in ["F3", "F1"] {
                 assert!(
                     footer_text.contains(expected),
                     "Width {} should contain {}! Rendered: '{}'",
@@ -993,6 +993,8 @@ async fn test_responsive_footer_rendering_at_various_widths() {
                     footer_text
                 );
             }
+            assert!(!footer_text.contains("F7/F8"));
+            assert!(!footer_text.contains("F4/F5"));
         }
     }
 }

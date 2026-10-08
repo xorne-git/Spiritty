@@ -89,6 +89,25 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpFooterPromptSuffix => " pour fermer",
         I18nKey::HelpFooterScroll => "Défiler",
 
+        // Help Modal Slash Commands
+        I18nKey::HelpSectionSlashCommands => "⚡ Commandes Slash (Prompt)",
+        I18nKey::HelpKeySlashSsh => "/ssh [hôte]",
+        I18nKey::HelpKeySlashExport => "/export [chemin]",
+        I18nKey::HelpKeySlashSearch => "/search [texte]",
+        I18nKey::HelpKeySlashRename => "/rename [titre]",
+        I18nKey::HelpKeySlashApprove => "/approve [niveau]",
+        I18nKey::HelpKeySlashTab => "/... + Tab",
+        I18nKey::HelpDescSlashHelp => "Ouvrir cette modale d'aide",
+        I18nKey::HelpDescSlashSkills => "Gestionnaire de skills & directives",
+        I18nKey::HelpDescSlashBookmarks => "Favoris SSH ou connexion directe",
+        I18nKey::HelpDescSlashExport => "Exporter la session en Markdown",
+        I18nKey::HelpDescSlashSearch => "Rechercher dans l'historique du chat",
+        I18nKey::HelpDescSlashNextPrevTab => "Naviguer vers l'onglet suivant / précédent",
+        I18nKey::HelpDescSlashRename => "Renommer l'onglet actif du terminal",
+        I18nKey::HelpDescSlashApprove => "Niveau d'approbation (safe / sudo / yolo / off)",
+        I18nKey::HelpDescSlashVoice => "Activer ou désactiver la dictée vocale",
+        I18nKey::HelpDescSlashTab => "Autocompléter la commande (ou afficher suggestions)",
+
         // Sessions Modal
         I18nKey::SshReconnectTitle => " 🔗 Reconnexion SSH ",
         I18nKey::SshReconnectBody => "Cette session était connectée à :",
@@ -182,11 +201,11 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SkillsSourceBuiltin => "Intégré",
         I18nKey::SkillsSourceGlobal => "Global",
         I18nKey::SkillsSourceProject => "Projet",
-        I18nKey::SkillsHelpToggleState => "[Espace] Basculer état",
-        I18nKey::SkillsHelpToggleMode => "[Tab/M] Mode",
-        I18nKey::SkillsHelpNew => "[N] Nouveau",
-        I18nKey::SkillsHelpScroll => "[Shift+↑/↓] Défiler",
-        I18nKey::SkillsHelpClose => "[Esc] Fermer",
+        I18nKey::SkillsHelpToggleState => "Basculer état",
+        I18nKey::SkillsHelpToggleMode => "Mode",
+        I18nKey::SkillsHelpNew => "Nouveau",
+        I18nKey::SkillsHelpScroll => "Défiler",
+        I18nKey::SkillsHelpClose => "Fermer",
         I18nKey::SkillsDetailTriggers => "Mots-clés déclencheurs :",
         I18nKey::SkillsDetailDescription => "Description :",
         I18nKey::SkillsDetailDirectives => "Directives appliquées à l'agent :",
@@ -196,5 +215,15 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SkillsCreatedSuccess => "Skill créé avec succès dans ~/.config/spiritty/skills/",
         I18nKey::SkillsTypeLabel => "Type : ",
         I18nKey::SkillsNewModalHint => "[ Entrée: Créer | Échap: Annuler ]",
+
+        // Modal save toasts & slash commands
+        I18nKey::ToastConfigSaved => "✓ Configuration enregistrée",
+        I18nKey::ToastSkillsSaved => "✓ Configuration des skills enregistrée",
+        I18nKey::ToastMcpSaved => "✓ Configuration MCP enregistrée",
+        I18nKey::ToastBookmarksSaved => "✓ Favoris SSH enregistrés",
+        I18nKey::ToastTabRenamed => "✓ Titre de l'onglet enregistré",
+        I18nKey::ToastUnknownSlashCommand => "Commande inconnue. Tapez /help pour l'aide.",
+        I18nKey::ToastPressCtrlCAgainToQuit => "Appuyez à nouveau sur Ctrl+C pour quitter",
+        I18nKey::TerminalTooSmall => "Terminal trop petit — minimum 20x8",
     }
 }

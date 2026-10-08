@@ -77,6 +77,16 @@ impl SessionModalState {
             }
         }
 
+        if key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
+            if matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H')) {
+                return Some(SessionModalAction::Close);
+            }
+            return None;
+        }
+
         match key.code {
             KeyCode::Esc => Some(SessionModalAction::Close),
             KeyCode::Up | KeyCode::Char('k') => {

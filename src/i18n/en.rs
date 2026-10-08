@@ -89,6 +89,25 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::HelpFooterPromptSuffix => " to close",
         I18nKey::HelpFooterScroll => "Scroll",
 
+        // Help Modal Slash Commands
+        I18nKey::HelpSectionSlashCommands => "⚡ Slash Commands (Prompt)",
+        I18nKey::HelpKeySlashSsh => "/ssh [host]",
+        I18nKey::HelpKeySlashExport => "/export [path]",
+        I18nKey::HelpKeySlashSearch => "/search [query]",
+        I18nKey::HelpKeySlashRename => "/rename [title]",
+        I18nKey::HelpKeySlashApprove => "/approve [level]",
+        I18nKey::HelpKeySlashTab => "/... + Tab",
+        I18nKey::HelpDescSlashHelp => "Open this help window",
+        I18nKey::HelpDescSlashSkills => "Skills manager & directives",
+        I18nKey::HelpDescSlashBookmarks => "SSH bookmarks or direct connect",
+        I18nKey::HelpDescSlashExport => "Export session to Markdown",
+        I18nKey::HelpDescSlashSearch => "Search chat history",
+        I18nKey::HelpDescSlashNextPrevTab => "Navigate to next / previous shell tab",
+        I18nKey::HelpDescSlashRename => "Rename active terminal tab",
+        I18nKey::HelpDescSlashApprove => "Approval level (safe / sudo / yolo / off)",
+        I18nKey::HelpDescSlashVoice => "Toggle voice dictation",
+        I18nKey::HelpDescSlashTab => "Autocomplete command (or show suggestions)",
+
         // Sessions Modal
         I18nKey::SshReconnectTitle => " 🔗 SSH Reconnect ",
         I18nKey::SshReconnectBody => "This session was connected to:",
@@ -174,11 +193,11 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SkillsSourceBuiltin => "Built-in",
         I18nKey::SkillsSourceGlobal => "Global",
         I18nKey::SkillsSourceProject => "Project",
-        I18nKey::SkillsHelpToggleState => "[Space] Toggle state",
-        I18nKey::SkillsHelpToggleMode => "[Tab/M] Mode",
-        I18nKey::SkillsHelpNew => "[N] New",
-        I18nKey::SkillsHelpScroll => "[Shift+↑/↓] Scroll",
-        I18nKey::SkillsHelpClose => "[Esc] Close",
+        I18nKey::SkillsHelpToggleState => "Toggle state",
+        I18nKey::SkillsHelpToggleMode => "Mode",
+        I18nKey::SkillsHelpNew => "New",
+        I18nKey::SkillsHelpScroll => "Scroll",
+        I18nKey::SkillsHelpClose => "Close",
         I18nKey::SkillsDetailTriggers => "Trigger keywords:",
         I18nKey::SkillsDetailDescription => "Description:",
         I18nKey::SkillsDetailDirectives => "Directives applied to agent:",
@@ -188,5 +207,15 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::SkillsCreatedSuccess => "Skill successfully created in ~/.config/spiritty/skills/",
         I18nKey::SkillsTypeLabel => "Type: ",
         I18nKey::SkillsNewModalHint => "[ Enter: Create | Esc: Cancel ]",
+
+        // Modal save toasts & slash commands
+        I18nKey::ToastConfigSaved => "✓ Configuration saved",
+        I18nKey::ToastSkillsSaved => "✓ Skills configuration saved",
+        I18nKey::ToastMcpSaved => "✓ MCP configuration saved",
+        I18nKey::ToastBookmarksSaved => "✓ SSH bookmarks saved",
+        I18nKey::ToastTabRenamed => "✓ Tab title saved",
+        I18nKey::ToastUnknownSlashCommand => "Unknown command. Type /help for help.",
+        I18nKey::ToastPressCtrlCAgainToQuit => "Press Ctrl+C again to quit",
+        I18nKey::TerminalTooSmall => "Terminal too small — minimum 20x8",
     }
 }

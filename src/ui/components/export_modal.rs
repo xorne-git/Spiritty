@@ -65,6 +65,14 @@ impl ExportModalState {
             }
         }
 
+        if key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E'))
+        {
+            return Some(ExportModalAction::Close);
+        }
+
         match key.code {
             KeyCode::Esc => Some(ExportModalAction::Close),
             KeyCode::Enter => {

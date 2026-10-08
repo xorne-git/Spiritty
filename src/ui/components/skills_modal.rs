@@ -26,6 +26,7 @@ pub struct SkillsModalState {
     pub new_id_input: String,
     pub status_message: Option<(std::time::Instant, String)>,
     pub skills_config: SkillsConfig,
+    pub has_modified: bool,
 }
 
 impl SkillsModalState {
@@ -39,6 +40,7 @@ impl SkillsModalState {
             new_id_input: String::new(),
             status_message: None,
             skills_config: skills_config.clone(),
+            has_modified: false,
         }
     }
 
@@ -103,6 +105,7 @@ triggers: [{}]
                                     std::time::Instant::now(),
                                     clean_id,
                                 ));
+                                self.has_modified = true;
                             }
                         }
                     }
@@ -124,11 +127,18 @@ triggers: [{}]
             }
         }
 
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S'))
+        {
+            return Some(SkillsModalAction::Close);
+        }
+
         match key.code {
             KeyCode::Esc => Some(SkillsModalAction::Close),
             KeyCode::Tab | KeyCode::Char('m') | KeyCode::Char('M') => {
                 config.skills.mode = config.skills.mode.toggle();
                 self.skills_config = config.skills.clone();
+                self.has_modified = true;
                 let _ = config.save();
                 Some(SkillsModalAction::SkillsChanged)
             }
@@ -182,6 +192,7 @@ triggers: [{}]
                         }
                     }
                     self.skills_config = config.skills.clone();
+                    self.has_modified = true;
                     let _ = config.save();
                     Some(SkillsModalAction::SkillsChanged)
                 } else {
@@ -541,7 +552,10 @@ impl<'a> SkillsModal<'a> {
     fn render_footer(&self, area: Rect, buf: &mut Buffer) {
         let mut spans = Vec::new();
 
-        spans.extend(key_pill("Space", Color::Cyan));
+        let space_key = if self.lang == Language::Fr { "Espace" } else { "Space" };
+        let esc_key = if self.lang == Language::Fr { "Échap" } else { "Esc" };
+
+        spans.extend(key_pill(space_key, Color::Cyan));
         spans.push(Span::styled(
             format!(" {}  ", self.lang.t(I18nKey::SkillsHelpToggleState)),
             Style::default().fg(Color::White),
@@ -565,7 +579,7 @@ impl<'a> SkillsModal<'a> {
             Style::default().fg(Color::DarkGray),
         ));
 
-        spans.extend(key_pill("Esc", Color::DarkGray));
+        spans.extend(key_pill(esc_key, Color::DarkGray));
         spans.push(Span::styled(
             format!(" {}", self.lang.t(I18nKey::SkillsHelpClose)),
             Style::default().fg(Color::DarkGray),

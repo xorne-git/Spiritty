@@ -14,6 +14,27 @@ This changelog follows the [Keep a Changelog](https://keepachangelog.com/fr/1.1.
 ---
 
 ## Unreleased
+
+---
+
+## v0.12.1 — 2026-10-08
+
+### Added
+- **Double Ctrl+C pour quitter proprement Spiritty** : ajout du raccourci standard double `Ctrl+C` depuis le panneau Chat. Un premier appui sur `Ctrl+C` efface la ligne de saisie courante (ou interrompt la génération du modèle sans armer la fermeture) et affiche un toast invitant à réappuyer (« Appuyez à nouveau sur Ctrl+C pour quitter » / « Press Ctrl+C again to quit »). Un second appui consécutif dans une fenêtre de 2 secondes quitte proprement l'application. Tout autre appui de touche réinitialise l'armement, et le panneau terminal PTY conserve son comportement natif de signalement shell (`SIGINT` / `\x03`) sans interférence.
+- **Notifications toast à l'enregistrement des modales** : affichage immédiat d'un toast de confirmation lors de l'enregistrement de la configuration (`✓ Configuration enregistrée`), du renommage d'onglet (`✓ Titre de l'onglet enregistré`), ainsi que lors de la fermeture avec modifications des modales Skills (`✓ Configuration des skills enregistrée`), MCP (`✓ Configuration MCP enregistrée`) et Favoris SSH (`✓ Favoris SSH enregistrés`).
+- **Commandes slash complètes dans le prompt et autocomplétion par Tabulation** : prise en charge d'un jeu complet de commandes `/` directement saisissables dans le prompt du chat en correspondance avec les raccourcis clavier de l'application (`/help`, `/config`, `/skills`, `/sessions`, `/bookmarks`, `/mcp`, `/export`, `/new`, `/search`, `/tab`, `/closetab`, `/nexttab`, `/prevtab`, `/rename`, `/layout`, `/swap`, `/focus`, `/approve`, `/diagnose`, `/voice`, `/scan`, `/quit`), avec support des arguments (ex. `/rename mon-onglet`, `/approve yolo`, `/ssh user@serveur`) et autocomplétion dynamique par la touche `Tab` (affichage des suggestions et complétion au préfixe commun le plus long).
+- **Section dédiée aux commandes slash dans la modale d'aide (`F1`)** : ajout d'une section `⚡ Commandes Slash (Prompt)` listant l'ensemble des commandes disponibles, leurs variantes/alias, leurs paramètres optionnels et la complétion `Tab`, avec descriptions bilingues FR et EN.
+
+### Changed
+- **Allègement de la barre d'état (footer)** : suppression des raccourcis secondaires (`F7/F8` voix STT, `F4/F5` disposition/interversion) du footer principal en bas d'écran afin d'épurer l'interface. Seuls `F3` (Approbation) et `F1` (Aide) sont désormais conservés à droite.
+- **Barre d'état de la modale des skills dédoublonnée** : suppression des préfixes entre crochets redondants dans les traductions FR et EN (`[Espace]`, `[Tab/M]`, `[N]`, `[Shift+↑/↓]`, `[Échap]`) affichés en doublon à côté des badges `[ Key ]`. Les touches `Espace`/`Space` et `Échap`/`Esc` sont désormais proprement localisées selon la langue active.
+
+### Fixed
+- **Crash et terminal corrompu sur les petites fenêtres** : Spiritty ne plante plus au démarrage quand le terminal (ou le panneau shell) est trop petit. La bibliothèque `vt100` paniquait dans `grid.rs::col_wrap` sur un écran dégénéré (dimension 0 ou 1 ligne), et `ratatui` paniquait (`index outside of buffer`) sur une zone trop étroite. L'émulateur VT borne désormais sa taille minimale à 2x2, encapsule son parsing et son redimensionnement dans `catch_unwind` et récupère de façon transparente tout mutex empoisonné. De plus, sous une dimension de 20x8, un écran minimaliste « Terminal trop petit — minimum 20x8 » remplace la mise en page complète au lieu de planter.
+- **Restauration du terminal réservée aux panics du thread principal** : un panic dans un thread de travail d'arrière-plan (ex. le lecteur PTY) ne quitte plus l'écran alterné ni ne repasse le TTY en mode cuit au milieu d'une session en cours (ce qui laissait l'interface afficher des caractères corrompus). La restauration complète (`PopKeyboardEnhancementFlags` et curseur visible) est désormais garantie lors d'un panic du thread principal.
+- **Priorité des touches modales & sauvegarde par `Ctrl+S`** : correction d'un conflit où presser `Ctrl+S` dans la modale de configuration ouvrait la modale des skills au lieu d'enregistrer les paramètres. Les modales actives capturent désormais l'intégralité des saisies en priorité, garantissant que `Ctrl+S` sauvegarde et ferme bien la configuration. Les raccourcis de bascule (`Ctrl+P`, `Ctrl+S`, `Ctrl+H`, `Ctrl+B`, `Ctrl+E`, `Ctrl+M`, `F1`) ferment proprement leur modale respective sans interférer avec d'autres fenêtres.
+- **Disparition automatique et non-duplication des toasts** : réduction du délai d'affichage des popups toast à 2,5 secondes (au lieu de 4,5 s), avec déclenchement d'un re-rendu automatique à l'expiration même en l'absence d'appui touche. Lors de la synchronisation des tarifs LLM avec la modale de configuration ouverte, le toast central flottant n'est plus émis en surimpression sur les champs de saisie, seul le statut contextuel de la modale étant affiché.
+
 ---
 ## v0.12.0 — 2026-10-07
 ### Added

@@ -296,8 +296,23 @@ fn handle_app_event(
             *immediate_render = true;
         }
         AppEvent::Tick => {
+            let had_active_toast = app.has_active_toast();
             app.on_tick();
-            if app.agent.is_generating || app.active_pty_tool.is_some() || app.is_dragging_split {
+            let has_active_toast_now = app.has_active_toast();
+
+            let modal_needs_tick = match app.modal {
+                spiritty::ui::components::ModalState::Config(ref cs) => cs.pricing_status.is_some(),
+                spiritty::ui::components::ModalState::Skills(ref ss) => ss.status_message.is_some(),
+                _ => false,
+            };
+
+            if app.agent.is_generating
+                || app.active_pty_tool.is_some()
+                || app.is_dragging_split
+                || had_active_toast
+                || has_active_toast_now
+                || modal_needs_tick
+            {
                 *should_render = true;
             }
         }
@@ -373,15 +388,27 @@ async fn run_loop(
 fn setup_panic_hook() {
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
-        // Restore terminal so the error doesn't corrupt the terminal screen
-        let _ = disable_raw_mode();
-        let _ = execute!(
-            io::stdout(),
-            LeaveAlternateScreen,
-            DisableBracketedPaste,
-            DisableMouseCapture,
-            SetCursorStyle::DefaultUserShape
-        );
+        // Only a panic that actually ends the process (the main thread) should
+        // tear the terminal down. A panic on a worker thread (e.g. a library
+        // bug while parsing PTY output) must NOT drop the alternate screen or
+        // restore cooked mode in the middle of a running UI: doing so left the
+        // app rendering into a broken terminal (garbage characters).
+        let on_main_thread = thread::current().name() == Some("main");
+        if on_main_thread {
+            // Restore terminal so the error doesn't corrupt the terminal screen
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                DisableBracketedPaste,
+                DisableMouseCapture,
+                SetCursorStyle::DefaultUserShape
+            );
+            // Undo the startup sequence that the plain exit paths also undo,
+            // otherwise the shell is left in a shifted/cursor-less state.
+            let _ = execute!(io::stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+            let _ = execute!(io::stdout(), crossterm::cursor::Show);
+        }
 
         // Write panic details to ~/.config/spiritty/crash.log
         if let Some(config_dir) = dirs::config_dir() {

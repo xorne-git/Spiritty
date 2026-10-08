@@ -149,6 +149,25 @@ pub enum I18nKey {
     HelpFooterPromptSuffix,
     HelpFooterScroll,
 
+    // Help Modal Slash Commands
+    HelpSectionSlashCommands,
+    HelpKeySlashSsh,
+    HelpKeySlashExport,
+    HelpKeySlashSearch,
+    HelpKeySlashRename,
+    HelpKeySlashApprove,
+    HelpKeySlashTab,
+    HelpDescSlashHelp,
+    HelpDescSlashSkills,
+    HelpDescSlashBookmarks,
+    HelpDescSlashExport,
+    HelpDescSlashSearch,
+    HelpDescSlashNextPrevTab,
+    HelpDescSlashRename,
+    HelpDescSlashApprove,
+    HelpDescSlashVoice,
+    HelpDescSlashTab,
+
     // Sessions Modal
     SessionModalTitle,
     // SSH reconnect modal
@@ -243,6 +262,18 @@ pub enum I18nKey {
     SkillsCreatedSuccess,
     SkillsTypeLabel,
     SkillsNewModalHint,
+
+    // Modal save toasts & slash commands
+    ToastConfigSaved,
+    ToastSkillsSaved,
+    ToastMcpSaved,
+    ToastBookmarksSaved,
+    ToastTabRenamed,
+    ToastUnknownSlashCommand,
+    ToastPressCtrlCAgainToQuit,
+
+    // Terminal dimension warning
+    TerminalTooSmall,
 }
 
 pub fn t(key: I18nKey, lang: Language) -> &'static str {
