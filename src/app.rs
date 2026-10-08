@@ -616,25 +616,6 @@ pub fn prompt_move_cursor_word_forward(text: &str, cursor_byte: usize) -> usize 
     text.len()
 }
 
-/// Maps raw French AZERTY keys to their AltGr symbols if a terminal sends un-translated keys with Alt/AltGr.
-pub fn map_azerty_altgr(code: KeyCode) -> Option<char> {
-    match code {
-        KeyCode::Char('2') | KeyCode::Char('é') => Some('~'),
-        KeyCode::Char('3') | KeyCode::Char('"') => Some('#'),
-        KeyCode::Char('4') | KeyCode::Char('\'') => Some('{'),
-        KeyCode::Char('5') | KeyCode::Char('(') => Some('['),
-        KeyCode::Char('6') | KeyCode::Char('-') => Some('|'),
-        KeyCode::Char('7') | KeyCode::Char('è') => Some('`'),
-        KeyCode::Char('8') | KeyCode::Char('_') => Some('\\'),
-        KeyCode::Char('9') | KeyCode::Char('ç') => Some('^'),
-        KeyCode::Char('0') | KeyCode::Char('à') => Some('@'),
-        KeyCode::Char(')') | KeyCode::Char('°') => Some(']'),
-        KeyCode::Char('=') | KeyCode::Char('+') => Some('}'),
-        KeyCode::Char('e') | KeyCode::Char('E') => Some('€'),
-        _ => None,
-    }
-}
-
 impl App {
     /// Spawns a new PTY process and wires up asynchronous event forwarding with tab_id.
     pub fn spawn_tab_pty(
@@ -3074,33 +3055,48 @@ impl App {
             // Alt + X: Fast-execute proposed command card #1
             if !is_shift
                 && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
-                && self.execute_command_by_index(0, true)
             {
+                if !self.execute_command_by_index(0, true) {
+                    let lang = self.config.get_language();
+                    self.set_toast(format!("{} #1", lang.t(I18nKey::ToastNoCommandProposed)));
+                }
                 return;
             }
 
             // Alt + Shift + X: Fast-copy proposed command card #1
             if is_shift
                 && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X'))
-                && self.copy_command_by_index(0)
             {
+                if !self.copy_command_by_index(0) {
+                    let lang = self.config.get_language();
+                    self.set_toast(format!("{} #1", lang.t(I18nKey::ToastNoCommandProposed)));
+                }
                 return;
             }
 
             // Alt + Shift + C: Dedicated shortcut to copy code blocks ("pavés de code")
             if is_shift
                 && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
-                && self.copy_code_block()
             {
+                if !self.copy_code_block() {
+                    let lang = self.config.get_language();
+                    self.set_toast(lang.t(I18nKey::ToastNoCodeBlockFound).to_string());
+                }
                 return;
             }
 
             // Alt + C (without Shift): Fast-copy proposed command card #1 or fallback code block
+            // When editing prompt text with no command proposed, falls through to readline capitalize word.
             if !is_shift
                 && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
-                && self.copy_command_by_index(0)
             {
-                return;
+                if self.copy_command_by_index(0) {
+                    return;
+                } else if self.chat_input.is_empty() {
+                    let lang = self.config.get_language();
+                    self.set_toast(format!("{} #1", lang.t(I18nKey::ToastNoCommandProposed)));
+                    return;
+                }
             }
 
             if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
@@ -3108,21 +3104,36 @@ impl App {
                 return;
             }
 
-            // Alt + Shift + 1..9: Copy proposal #N (0-based) to clipboard
-            if is_shift {
+            let is_en = self.config.get_language() == Language::En;
+            let is_qwerty_shift = is_en
+                && matches!(
+                    key.code,
+                    KeyCode::Char('!')
+                        | KeyCode::Char('@')
+                        | KeyCode::Char('#')
+                        | KeyCode::Char('$')
+                        | KeyCode::Char('%')
+                        | KeyCode::Char('^')
+                        | KeyCode::Char('*')
+                );
+
+            if is_shift || is_qwerty_shift {
+                // Alt + Shift + 1..9: Copy proposal #N (0-based) to clipboard
                 if let Some(idx) = key_to_shift_card_index(key.code) {
-                    if self.copy_command_by_index(idx) {
-                        return;
+                    if !self.copy_command_by_index(idx) {
+                        let lang = self.config.get_language();
+                        self.set_toast(format!("{} #{}", lang.t(I18nKey::ToastNoCommandProposed), idx + 1));
                     }
+                    return;
                 }
-            } else {
+            } else if let Some(idx) = key_to_card_index(key.code) {
                 // Alt + 1..9 / AZERTY unshifted: Execute proposal #N (0-based) in terminal
-                if let Some(idx) = key_to_card_index(key.code) {
-                    self.consecutive_auto_proposals = 0;
-                    if self.execute_command_by_index(idx, true) {
-                        return;
-                    }
+                self.consecutive_auto_proposals = 0;
+                if !self.execute_command_by_index(idx, true) {
+                    let lang = self.config.get_language();
+                    self.set_toast(format!("{} #{}", lang.t(I18nKey::ToastNoCommandProposed), idx + 1));
                 }
+                return;
             }
 
             if self.focus == Focus::Terminal {
@@ -3886,22 +3897,17 @@ impl App {
                     let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
                     let is_alt = key.modifiers.contains(KeyModifiers::ALT);
                     let should_insert = if is_ctrl && is_alt {
-                        true
+                        !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                     } else if is_ctrl {
                         false
                     } else if is_alt {
-                        !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                        !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                     } else {
                         true
                     };
                     if should_insert {
-                        let to_insert = if is_alt || (is_ctrl && is_alt) {
-                            map_azerty_altgr(key.code).unwrap_or(c)
-                        } else {
-                            c
-                        };
                         let mut chars: Vec<char> = self.chat_search_query.chars().collect();
-                        chars.insert(self.chat_search_cursor, to_insert);
+                        chars.insert(self.chat_search_cursor, c);
                         self.chat_search_query = chars.into_iter().collect();
                         self.chat_search_cursor += 1;
                         self.chat_search_match_idx = 0;
@@ -4056,23 +4062,19 @@ impl App {
                 let is_alt = key.modifiers.contains(KeyModifiers::ALT);
 
                 if is_ctrl && is_alt {
-                    // AltGr combination (common on Windows and X11 terminals)
-                    let to_insert = map_azerty_altgr(key.code).unwrap_or(c);
-                    self.chat_input.insert(self.cursor_pos, to_insert);
-                    self.cursor_pos += to_insert.len_utf8();
+                    // AltGr combination on Windows or raw terminal: insert symbol if non-alphanumeric or non-ascii
+                    if !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii() {
+                        self.chat_input.insert(self.cursor_pos, c);
+                        self.cursor_pos += c.len_utf8();
+                    }
                 } else if is_ctrl {
                     // Control keys without Alt are not character input
                 } else if is_alt {
-                    // Alt / AltGr combination (Linux / macOS / terminal)
-                    if let Some(mapped) = map_azerty_altgr(key.code) {
-                        self.chat_input.insert(self.cursor_pos, mapped);
-                        self.cursor_pos += mapped.len_utf8();
-                    } else if !c.is_ascii_alphabetic() && !c.is_ascii_digit() {
-                        // Non-alphanumeric symbols produced with AltGr (e.g. @, ~, #, {, }, [, ], |, \, etc.)
-                        self.chat_input.insert(self.cursor_pos, c);
-                        self.cursor_pos += c.len_utf8();
-                    } else if !c.is_ascii() {
-                        // Non-ASCII characters (e.g. Option-key diacritics / symbols on macOS)
+                    // Keystrokes with Alt modifier:
+                    // 1. Non-alphanumeric symbols produced via AltGr (e.g. @, ~, #, {, }, [, ], |, \, etc.)
+                    // 2. Non-ASCII characters produced via Option on macOS
+                    // Note: Alphanumeric characters with Alt are shortcuts/navigation, NEVER inserted.
+                    if !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii() {
                         self.chat_input.insert(self.cursor_pos, c);
                         self.cursor_pos += c.len_utf8();
                     }

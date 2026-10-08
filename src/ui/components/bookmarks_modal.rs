@@ -189,22 +189,17 @@ impl BookmarksModalState {
                         let is_ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
                         let is_alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                         let should_insert = if is_ctrl && is_alt {
-                            true
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                         } else if is_ctrl {
                             false
                         } else if is_alt {
-                            !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                         } else {
                             true
                         };
                         if should_insert {
-                            let to_insert = if is_alt || (is_ctrl && is_alt) {
-                                crate::app::map_azerty_altgr(key.code).unwrap_or(c)
-                            } else {
-                                c
-                            };
                             let mut chars: Vec<char> = input.chars().collect();
-                            chars.insert(*cursor, to_insert);
+                            chars.insert(*cursor, c);
                             *input = chars.into_iter().collect();
                             *cursor += 1;
                         }
@@ -268,22 +263,17 @@ impl BookmarksModalState {
                         let is_ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
                         let is_alt = key.modifiers.contains(crossterm::event::KeyModifiers::ALT);
                         let should_insert = if is_ctrl && is_alt {
-                            true
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                         } else if is_ctrl {
                             false
                         } else if is_alt {
-                            !c.is_ascii_alphabetic() && !c.is_ascii_digit()
+                            !c.is_ascii_alphabetic() && !c.is_ascii_digit() || !c.is_ascii()
                         } else {
                             true
                         };
                         if should_insert {
-                            let to_insert = if is_alt || (is_ctrl && is_alt) {
-                                crate::app::map_azerty_altgr(key.code).unwrap_or(c)
-                            } else {
-                                c
-                            };
                             let mut chars: Vec<char> = input.chars().collect();
-                            chars.insert(*cursor, to_insert);
+                            chars.insert(*cursor, c);
                             *input = chars.into_iter().collect();
                             *cursor += 1;
                         }

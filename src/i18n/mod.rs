@@ -271,6 +271,8 @@ pub enum I18nKey {
     ToastTabRenamed,
     ToastUnknownSlashCommand,
     ToastPressCtrlCAgainToQuit,
+    ToastNoCommandProposed,
+    ToastNoCodeBlockFound,
 
     // Terminal dimension warning
     TerminalTooSmall,

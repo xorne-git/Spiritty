@@ -216,6 +216,8 @@ pub fn translate(key: I18nKey) -> &'static str {
         I18nKey::ToastTabRenamed => "✓ Tab title saved",
         I18nKey::ToastUnknownSlashCommand => "Unknown command. Type /help for help.",
         I18nKey::ToastPressCtrlCAgainToQuit => "Press Ctrl+C again to quit",
+        I18nKey::ToastNoCommandProposed => "No proposed command",
+        I18nKey::ToastNoCodeBlockFound => "No code block to copy",
         I18nKey::TerminalTooSmall => "Terminal too small — minimum 20x8",
         I18nKey::CommandCardActionExecute => "Execute",
         I18nKey::CommandCardActionCopy => "Copy",

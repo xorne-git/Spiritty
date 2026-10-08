@@ -1,6 +1,6 @@
 [package]
 name = "spiritty"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2021"
 authors = ["Spiritty Contributors"]
 description = "AI-powered split-screen terminal companion for sysadmins and power users"
@@ -32,6 +32,7 @@ dirs = "5.0"
 signal-hook = "0.3"
 arboard = { version = "3.4", features = ["wayland-data-control"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+libc = "0.2.190"
 
 [dev-dependencies]
 tempfile = "3.10"

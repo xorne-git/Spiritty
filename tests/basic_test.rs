@@ -2139,13 +2139,12 @@ async fn test_chat_prompt_alt_word_navigation_and_editing() {
     }
     assert_eq!(app.chat_input, "@~#{}[]|\\€");
 
-    // As untranslated AZERTY keys with ALT (e.g. '0' -> '@', '5' -> '[', 'e' -> '€')
+    // Alphanumeric keys with ALT/CONTROL should NOT be artificially mapped to punctuation
     app.chat_input.clear();
     app.cursor_pos = 0;
     app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::ALT | KeyModifiers::CONTROL));
     app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::ALT | KeyModifiers::CONTROL));
-    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT | KeyModifiers::CONTROL));
-    assert_eq!(app.chat_input, "@[€");
+    assert_eq!(app.chat_input, "");
 
     // 4. Alt+c, Alt+u, Alt+l case transformations
     app.chat_input = "test word".to_string();
@@ -2398,5 +2397,70 @@ async fn test_alt_x_and_alt_shift_command_shortcuts() {
         .as_ref()
         .map(|(_, m)| m.contains("Code #2/2") && m.contains("[server]"))
         .unwrap_or(false));
+
+    // 11. Regression test: Alt + Shift + 2 when no proposal #2 exists must NOT leak '~' into chat input
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(
+        app.chat_input, "",
+        "Alt+Shift+2 must never insert a tilde '~' into the chat prompt"
+    );
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("#2"))
+            .unwrap_or(false),
+        "Alt+Shift+2 without proposal #2 should display a missing command toast"
+    );
+
+    // 12. Also test Alt + 2 in French (where '2' on AZERTY without Shift modifier reported by terminal is copy, and does not leak '~')
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::ALT,
+    ));
+    assert_eq!(
+        app.chat_input, "",
+        "Alt+2 in French locale must never insert a tilde '~' into the chat prompt"
+    );
+
+    // 13. AltGr typing ~ (code '~' with ALT) still properly inserts '~'
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('~'),
+        KeyModifiers::ALT,
+    ));
+    assert_eq!(
+        app.chat_input, "~",
+        "AltGr key typing '~' must insert '~' into prompt"
+    );
+
+    // 14. Alt + Shift + 2 when proposal #2 DOES exist copies proposal #2
+    app.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: "Voici deux commandes :\n```bash\necho premier\n```\nEt :\n```bash\necho second\n```".to_string(),
+        command_proposal: None,
+        attachments: Vec::new(),
+    });
+    app.chat_input.clear();
+    app.cursor_pos = 0;
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('2'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(app.chat_input, "");
+    assert!(
+        app.toast_message
+            .as_ref()
+            .map(|(_, m)| m.contains("Commande #2") && m.contains("echo second"))
+            .unwrap_or(false),
+        "Alt+Shift+2 must copy command #2 when present"
+    );
 }
 
